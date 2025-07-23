@@ -2,7 +2,7 @@
 name = "python-ldraw"
 version = "0.10.0"
 description = "Python wrapper for LDraw library."
-authors = ["David Boddie <david@boddie.org.uk>", "Matthieu Berthomé <rienafairefr@gmail.com>"]
+authors = ["David Boddie <david@boddie.org.uk>", "Matthieu Berthomé <rienafairefr@gmail.com>", "Harold Martin <harold.martin@gmail.com>"]
 packages = [ { include = "ldraw" } ]
 exclude = ["ldraw/library/**/*"]
 
