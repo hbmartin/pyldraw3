@@ -2,94 +2,75 @@ import logging
 import os
 import shutil
 import zipfile
-from datetime import timedelta
-from urllib.request import urlretrieve
-from xml.etree import ElementTree as ET
-
+from download_updates import get_latest_release_id
 import requests
-import requests_cache
-from mklist.generate import generate_parts_lst
+from ldraw.generate import generate_parts_lst
+from pathlib import Path
 
 from ldraw.dirs import get_cache_dir
-from ldraw.utils import path_insensitive
+from progress.bar import Bar
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_URL = "https://github.com/rienafairefr/ldraw-parts/archive/%s.zip"
-LDRAW_PTRELEASES = "https://www.ldraw.org/cgi-bin/ptreleases.cgi?type=ZIP"
-cache_ldraw = get_cache_dir()
+COMPLETE_VERSION = "complete"
+LDRAW_URL = "https://library.ldraw.org/library/updates/"
+cache_ldraw = Path(get_cache_dir())
 
-
-def get_ptreleases():
-    requests_cache.install_cache(
-        os.path.join(cache_ldraw, "requests-cache"), expire_after=timedelta(weeks=2)
-    )
-
-    ptreleases = ET.parse(requests.get(LDRAW_PTRELEASES).raw)
-    return [
-        {ch.tag: ch.text for ch in el} for el in ptreleases.findall(".//distribution")
-    ]
-
-
-PTRELEASES = get_ptreleases()
-BASE = "2002-00"  # version 0.27
-UPDATES = (
-    ["0.27"]
-    + [el["release_id"] for el in PTRELEASES if el["release_id"] >= BASE]
-    + ["latest"]
-)
-
-
-def unpack_version(version_zip, version):
-    print(f"unzipping the zip {version_zip}...")
+def unpack_version(version_zip: Path, version: str) -> Path:
+    print(f"Unzipping {version_zip}...")
+    destination = cache_ldraw / version
     zip_ref = zipfile.ZipFile(version_zip, "r")
-    zip_ref.extractall(cache_ldraw)
+    zip_ref.extractall(destination)
     zip_ref.close()
-    shutil.move(
-        os.path.join(cache_ldraw, f"ldraw-parts-{version}"),
-        os.path.join(cache_ldraw, version)
-    )
+    version_zip.unlink()
+
+    return destination
 
 
-def download_version(version):
-    filename = f"{version}.zip"
+def _download(url: str, filename: str, chunk_size=1024) -> Path:
+    retrieved = cache_ldraw / filename
+    if retrieved.exists():
+        return retrieved
 
-    archive_url = ARCHIVE_URL % version
+    response = requests.get(url, stream=True)
 
-    retrieved = os.path.join(cache_ldraw, filename)
-    if not os.path.exists(retrieved):
-        retrieved_, _ = urlretrieve(archive_url)
-        shutil.copy(retrieved_, retrieved)
+    with open(retrieved, 'wb') as file:
+        for data in response.iter_content(chunk_size=chunk_size):
+            file.write(data)
 
     return retrieved
 
+def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
+    retrieved = cache_ldraw / filename
+    if retrieved.exists():
+        print(f"File {retrieved} already exists")
+        return retrieved
 
-def download(version):
-    release_id = version
-    if version == "latest":
-        for el in PTRELEASES:
-            if el["release_type"] == "COMPLETE":
-                release_id = el["release_id"]
-                break
+    response = requests.get(url, stream=True)
+    total = int(response.headers.get('content-length', 0))
+    bar = Bar(f"Downloading {url} ...", max=total)
 
-    if os.path.exists(os.path.join(cache_ldraw, version)):
-        if version == "latest":
-            print(f'latest({release_id}) already downloaded')
-        else:
-            print(f'{version} already downloaded')
-        return release_id
-    unpack_version(download_version(release_id), release_id)
+    with open(retrieved, 'wb') as file:
+        for data in response.iter_content(chunk_size=chunk_size):
+            size = file.write(data)
+            bar.next(size)
 
-    # copy_tree(os.path.join(version_dir, 'ldraw', 'p'), os.path.join(version_dir, 'p'))
-    # copy_tree(os.path.join(version_dir, 'ldraw', 'parts'), os.path.join(version_dir, 'parts'))
-    # shutil.rmtree(os.path.join(version_dir, 'ldraw'))
+    bar.finish()
+    return retrieved
 
-    version_dir = os.path.join(cache_ldraw, release_id)
+def download(show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
+    filename = f"{version}.zip"
+    retrieved = _download_progress(f"{LDRAW_URL}/{filename}", filename) if show_progress else _download(f"{LDRAW_URL}/{filename}", filename)
 
-    print("mklist...")
+    version_dir = unpack_version(retrieved, version)
+
+    print("Running mklist to generate parts.lst ...")
     generate_parts_lst(
-        "description",
-        path_insensitive(os.path.join(version_dir, "ldraw", "parts")),
-        path_insensitive(os.path.join(version_dir, "ldraw", "parts.lst")),
+        mode="description",
+        version_dir=version_dir,
     )
-    return release_id
+    if version == COMPLETE_VERSION:
+        version = get_latest_release_id()
+        (Path(version_dir) / "ldraw" / "_release.txt").write_text(version)
+    
+    return version

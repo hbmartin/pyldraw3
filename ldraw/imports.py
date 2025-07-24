@@ -1,7 +1,7 @@
-import imp
 import logging
 import os
 import sys
+import importlib.util
 
 from ldraw.config import Config
 
@@ -11,22 +11,39 @@ logger = logging.getLogger('ldraw')
 
 
 def load_lib(library_path, fullname):
-    # Use importlib if python 3.4+, else imp
-    #if sys.version_info[0] > 3 or (sys.version_info[0] == 3 and sys.version_info[1] >= 4):
-    #    # submodule_name = fullname[len("ldraw") + 1:]
-    #    from importlib.machinery import FileFinder, SourceFileLoader, SOURCE_SUFFIXES
-    #    file_finder = FileFinder(library_path, (SourceFileLoader, SOURCE_SUFFIXES))
-#
-    #    result = file_finder.find_spec(fullname)
-    #    return result.loader.load_module(fullname)
-    #else:
     dot_split = fullname.split('.')
-    dot_split.pop(0)
+    dot_split.pop(0)  # Remove 'ldraw'
+    
+    # Build the path components
     lib_name = dot_split[-1]
-    lib_dir = os.path.join(library_path, *tuple(dot_split[:-1]))
-    info = imp.find_module(lib_name, [lib_dir])
-    library_module = imp.load_module(fullname, *info)
-
+    lib_dir = os.path.join(library_path, *tuple(dot_split[:-1])) if len(dot_split) > 1 else library_path
+    
+    # Try directory with __init__.py first, then .py file
+    init_path = os.path.join(lib_dir, lib_name, "__init__.py")
+    py_path = os.path.join(lib_dir, f"{lib_name}.py")
+    
+    if os.path.exists(init_path):
+        module_path = init_path
+    elif os.path.exists(py_path):
+        module_path = py_path
+    else:
+        raise ImportError(f"Could not find module {fullname} at {init_path} or {py_path}")
+    
+    spec = importlib.util.spec_from_file_location(fullname, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load spec for {fullname}")
+    library_module = importlib.util.module_from_spec(spec)
+    
+    # Add to sys.modules BEFORE executing to prevent infinite recursion
+    sys.modules[fullname] = library_module
+    try:
+        spec.loader.exec_module(library_module)
+    except Exception:
+        # If execution fails, remove from sys.modules
+        if fullname in sys.modules:
+            del sys.modules[fullname]
+        raise
+    
     return library_module
 
 
@@ -74,12 +91,22 @@ class LibraryImporter:
         return None
 
     @classmethod
+    def find_spec(cls, fullname, path, target=None):
+        # PEP 451: find_spec should return a ModuleSpec if the module can be handled
+        if cls.valid_module(fullname):
+            # Use importlib.util.spec_from_loader for compatibility
+            return importlib.util.spec_from_loader(fullname, cls())
+        return None
+
+    @classmethod
     def clean(cls):
         for fullname in list(sys.modules.keys()):
             if cls.valid_module(fullname):
                 del sys.modules[fullname]
-        if 'ldraw' in sys.modules and 'library' in sys.modules['ldraw'].__dict__:
-            del sys.modules['ldraw'].library
+        if 'ldraw' in sys.modules:
+            ldraw_mod = sys.modules['ldraw']
+            if hasattr(ldraw_mod, 'library'):
+                delattr(ldraw_mod, 'library')
 
     def get_code(self, fullname):
         return None
@@ -97,12 +124,16 @@ class LibraryImporter:
             # simple example, but it's included here for completeness. :)
             raise ImportError(fullname)
 
+        # Check if module is already loaded to prevent infinite recursion
+        if fullname in sys.modules:
+            return sys.modules[fullname]
+
         # if the library already exists and correctly generated,
         # the __hash__ will prevent re-generation
         config = self.config if self.config is not None else Config.load()
         logger.debug(f'loading {fullname} from {config.generated_path}')
         mod = load_lib(config.generated_path, fullname)
-        sys.modules[fullname] = mod
+        # Module is already added to sys.modules in load_lib
         return mod
 
 

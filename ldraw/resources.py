@@ -1,10 +1,9 @@
 import codecs
-
-import pkg_resources
+from importlib import resources
 
 
 def get_resource(filename):
-    return pkg_resources.resource_filename("ldraw", filename)
+    return str(resources.files("ldraw") / filename)
 
 
 def get_resource_content(filename):

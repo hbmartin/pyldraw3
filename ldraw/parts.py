@@ -27,7 +27,7 @@ import re
 from collections import defaultdict
 
 import inflect
-from attrdict import AttrDict
+from attridict import AttriDict
 
 from ldraw.colour import Colour
 from ldraw.config import Config
@@ -144,8 +144,8 @@ class Parts:
         self.colours_by_name = {}
         self.colours_by_code = {}
 
-        self.parts = AttrDict(
-            minifig=AttrDict(
+        self.parts = AttriDict(
+            minifig=AttriDict(
                 hats={},
                 heads={},
                 torsos={},
@@ -228,6 +228,8 @@ class Parts:
 
         for code, description in self.by_code_name:
             part = self.part(code=code)
+            if part is None:
+                raise PartError(f"Part {code} not found in {self.path}")
             self.by_code_name[(code, description)] = part
             # read from the part, meta comment CATEGORY
             category = part.category
@@ -280,13 +282,8 @@ class Parts:
                 self.parts["minifig"]["accessories"][description] = code
         return code, description
 
-    def part(self, description=None, code=None):
-        """
-        Gets a Part from its description or code
-        :param description:
-        :param code:
-        :return:
-        """
+    def part(self, description=None, code=None) -> Part | None:
+        """Get a Part from its description or code."""
         if not self.path:
             return None
         if description:
@@ -306,7 +303,7 @@ class Parts:
                 self.parts_subdirs[item.lower()] = obj
                 self.parts_subdirs[item.upper()] = obj
 
-    def _load_part(self, code):
+    def _load_part(self, code) -> Part | None:
         code = code.replace("\\", os.sep)
         code = code.replace("/", os.sep)
         if os.sep in code:

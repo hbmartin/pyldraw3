@@ -7,7 +7,7 @@ import os
 import sys
 
 import pystache
-from attrdict import AttrDict
+from attridict import AttriDict
 from progress.bar import Bar
 
 from ldraw.parts import PartError
@@ -27,7 +27,7 @@ def gen_parts(parts, library_path):
 def recursive_gen_parts(parts_parts, directory):
 
     for name, value in list(parts_parts.items()):
-        if isinstance(value, AttrDict):
+        if isinstance(value, AttriDict):
             recurse = False
             for k,v in value.items():
                 if len(v) > 0:
@@ -39,7 +39,7 @@ def recursive_gen_parts(parts_parts, directory):
                 recursive_gen_parts(value, subdir)
 
     sections = {
-        name: value for name, value in parts_parts.items() if not isinstance(value, AttrDict)
+        name: value for name, value in parts_parts.items() if not isinstance(value, AttriDict)
     }
 
     module_parts = {}

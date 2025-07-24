@@ -5,11 +5,10 @@ import argparse
 import os
 import typing
 
-import inquirer
 import yaml
 
 from ldraw import download
-from ldraw.dirs import get_cache_dir, get_config_dir
+from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
 
 
 CONFIG_FILE = os.path.join(get_config_dir(), 'config.yml')
@@ -21,7 +20,7 @@ def is_valid_config_file(parser, arg):
     else:
         try:
             with open(arg, 'r') as f:
-                result = yaml.load(f)
+                result = yaml.load(f, Loader=yaml.SafeLoader)
                 assert result is not None
             return arg
         except:
@@ -32,7 +31,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--config', type=lambda x: is_valid_config_file(parser, x))
 
 
-def get_config(config_file=None):
+def get_config(config_file: str | None = None) -> str:
     if config_file is None:
         args, unknown = parser.parse_known_args()
         return args.config if args.config is not None else CONFIG_FILE
@@ -41,16 +40,16 @@ def get_config(config_file=None):
 
 
 class Config:
-    ldraw_library_path: typing.Optional[str]
-    generated_path: typing.Optional[str]
+    ldraw_library_path: str
+    generated_path: str
 
-    def __init__(self, ldraw_library_path=None, generated_path=None):
-        self.ldraw_library_path = ldraw_library_path
-        self.generated_path = generated_path
+    def __init__(self, ldraw_library_path: str | None = None, generated_path: str | None = None):
+        self.ldraw_library_path = ldraw_library_path if ldraw_library_path is not None else os.path.join(get_cache_dir(), "complete")
+        self.generated_path = generated_path if generated_path is not None else os.path.join(get_data_dir(), "generated")
 
     @classmethod
     def load(cls, config_file=None):
-        config_path = get_config(config_file=config_file)
+        config_path = get_config(config_file)
 
         try:
             with open(config_path, "r") as config_file:
@@ -61,6 +60,9 @@ class Config:
                 )
         except FileNotFoundError:
             return cls()
+    
+    def __str__(self):
+        return f"Config({self.ldraw_library_path=}, {self.generated_path=})"
 
     def write(self, config_file=None):
         """ write the config to config.yml """

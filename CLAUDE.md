@@ -8,11 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-This project uses uv for dependency management and packaging:
+This project uses uv for dependency management and packaging.
+Before running any commands be sure sure to active the venv `source .venv/bin/activate`
+
 
 ### Setup and Installation
 ```bash
-uv install                    # Install dependencies
+uv sync                    # Install dependencies
 uv run ldraw download --version 2018-02 --yes  # Download LDraw library
 uv run ldraw generate --yes   # Generate ldraw.library package
 ```
@@ -89,11 +91,10 @@ uv build                     # Build package
 - Always use or add type hints
 - Prefer @dataclasses where applicable
 - Always prefer f-string over string formatting or concatentation
-- Use async generators / comprehensions when they might provide benefits
+- Use async generators and comprehensions when they might provide benefits
 - Use underscores in large numeric literals
 - Use walrus assignment := where applicable
-- Use "*" in method signatures before boolean arguments
-- Prefer to use named arguments when calling a method with more than one argument of the same type
+- Prefer to use named arguments when calling a method with more than one argument
 - Use "list" instead of "List" and "dict" instead of "Dict" and "|" instead of "Union" for types
 - Use "Self" for applicable types
 - Use Structural Pattern Matching (match...case) where applicable
