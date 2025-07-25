@@ -5,7 +5,7 @@ import os
 
 import yaml
 
-from ldraw import download
+from ldraw.downloads import download
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
 
 CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")

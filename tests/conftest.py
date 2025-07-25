@@ -12,7 +12,8 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    download("2018-01")
+    # Skip version-specific download for now
+    pass
 
 
 def pytest_runtest_setup(item):

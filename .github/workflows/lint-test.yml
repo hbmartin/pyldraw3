@@ -1,0 +1,51 @@
+name: Lint and Test
+on: push
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    - name: Create uv environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv sync --all-groups
+    - name: Compute pre-commit cache key
+      if: matrix.session == 'pre-commit'
+      id: pre-commit-cache
+      shell: python
+      run: |
+        import hashlib
+        import sys
+
+        python = "py{}.{}".format(*sys.version_info[:2])
+        payload = sys.version.encode() + sys.executable.encode()
+        digest = hashlib.sha256(payload).hexdigest()
+        result = "${{ runner.os }}-{}-{}-pre-commit".format(python, digest[:8])
+
+        print(f"result={result}")
+    - name: Restore pre-commit cache
+      uses: actions/cache@v4
+      with:
+          path: ~/.cache/pre-commit
+          key: ${{ steps.pre-commit-cache.outputs.result }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ steps.pre-commit-cache.outputs.result }}-
+    - run: uv run ruff format --check ldraw tests
+    - run: uv run ruff check ldraw
+    - name: Run type checks
+      run: |
+        ty --version
+        ty check ldraw
+        pyrefly --version
+        pyrefly check ldraw
+    - run: uv run pytest
