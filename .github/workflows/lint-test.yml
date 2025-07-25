@@ -39,8 +39,7 @@ jobs:
           key: ${{ steps.pre-commit-cache.outputs.result }}-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
             ${{ steps.pre-commit-cache.outputs.result }}-
-    - run: uv run ruff format --check ldraw tests
-    - run: uv run ruff check ldraw
+    - run: uv run ruff check .
     - name: Run type checks
       run: |
         ty --version

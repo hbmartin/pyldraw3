@@ -3,7 +3,7 @@
 from ldraw.colour import Colour
 
 
-def test_colour_equality():
+def test_colour_equality() -> None:
 
     c1 = Colour(code=12)
     c2 = Colour(code=12)
@@ -15,7 +15,7 @@ def test_colour_equality():
     assert c2 == 12
 
 
-def test_colour_hash():
+def test_colour_hash() -> None:
     c1 = Colour(code=12)
     c2 = Colour(code=12)
 

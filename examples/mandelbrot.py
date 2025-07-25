@@ -50,7 +50,7 @@ colours = [
 ]
 
 
-def draw_mandelbrot(x1, z1, x2, z2, r1, i1, r2, i2):
+def draw_mandelbrot(x1, z1, x2, z2, r1, i1, r2, i2) -> None:
     y = 0
     z = z1
     while z <= z2:
@@ -69,10 +69,7 @@ def draw_mandelbrot(x1, z1, x2, z2, r1, i1, r2, i2):
                 c = c * c + ci
                 count += 1
 
-            if count == 10:
-                colour = Black
-            else:
-                colour = colours[count]
+            colour = Black if count == 10 else colours[count]
 
             print(Piece(colour, Vector(x * 20, y, z * 20), Identity(), Brick1X1))
             x += 1

@@ -4,21 +4,21 @@ import os
 
 import pytest
 
-from ldraw import LibraryImporter, download, generate
+from ldraw import LibraryImporter, generate
 from ldraw.config import use
 from ldraw.utils import ensure_exists
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser) -> None:
     parser.addoption("--integration", action="store_true", help="run integration tests")
 
 
-def pytest_configure(config):
+def pytest_configure(config) -> None:
     # Skip version-specific download for now
     pass
 
 
-def pytest_runtest_setup(item):
+def pytest_runtest_setup(item) -> None:
 
     run_integration = item.config.getoption("--integration")
 

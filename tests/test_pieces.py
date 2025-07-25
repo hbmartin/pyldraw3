@@ -17,7 +17,7 @@ Flipper = "2599"
 CameraMovie = "30148"
 
 
-def test_add_piece():
+def test_add_piece() -> None:
     group1 = Group()
     group2 = Group()
     piece = Piece(White, Vector(0, 0, 0), Identity(), Brick1X1, group=group1)
@@ -47,16 +47,16 @@ def full_figure(figure):
     return figure
 
 
-def test_add_hat_valid_head(figure):
+def test_add_hat_valid_head(figure) -> None:
     assert figure.hat(White, HelmetClassic) is None
 
 
-def test_add_hat_no_head(figure):
+def test_add_hat_no_head(figure) -> None:
     assert figure.head(Yellow, 30) is not None
     assert figure.hat(White, HelmetClassic) is not None
 
 
-def test_add_lh_item_nopart(figure, full_figure):
+def test_add_lh_item_nopart(figure, full_figure) -> None:
     assert full_figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15) is None
     assert (
         full_figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie)
@@ -64,7 +64,7 @@ def test_add_lh_item_nopart(figure, full_figure):
     )
 
 
-def test_add_rh_item_nopart(figure, full_figure):
+def test_add_rh_item_nopart(figure, full_figure) -> None:
     assert full_figure.right_hand_item(Light_Grey, Vector(0, 0, -12), -15) is None
     assert (
         full_figure.right_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie)
@@ -72,11 +72,11 @@ def test_add_rh_item_nopart(figure, full_figure):
     )
 
 
-def test_add_ls_item_nopart(figure, full_figure):
+def test_add_ls_item_nopart(figure, full_figure) -> None:
     assert full_figure.left_shoe(Black, 10) is None
     assert full_figure.left_shoe(Black, 10, Flipper) is not None
 
 
-def test_add_rs_item_nopart(figure, full_figure):
+def test_add_rs_item_nopart(figure, full_figure) -> None:
     assert full_figure.right_shoe(Black, 10) is None
     assert full_figure.right_shoe(Black, 10, Flipper) is not None

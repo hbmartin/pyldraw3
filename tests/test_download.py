@@ -1,11 +1,7 @@
 """Tests for download functionality."""
 
-import os
 import zipfile
 from unittest.mock import *
-
-import platformdirs
-from downloads import LDRAW_URL
 
 from ldraw import download
 
@@ -20,7 +16,7 @@ def test_download(
     zip_mock,
     os_path_exists_mock,
     tmp_path,
-):
+) -> None:
     download()
 
     download_progress_mock.assert_called_once()

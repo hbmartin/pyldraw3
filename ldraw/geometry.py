@@ -28,49 +28,33 @@ from numbers import Number
 class MatrixError(Exception):
     """Exception raised for matrix operation errors."""
 
-    pass
-
 
 class Axis:
     """Base class for axis representations."""
-
-    pass
 
 
 class XAxis(Axis):
     """X-axis representation."""
 
-    pass
-
 
 class YAxis(Axis):
     """Y-axis representation."""
-
-    pass
 
 
 class ZAxis(Axis):
     """Z-axis representation."""
 
-    pass
-
 
 class AngleUnits:
     """Base class for angle unit representations."""
-
-    pass
 
 
 class Radians(AngleUnits):
     """Radian angle units."""
 
-    pass
-
 
 class Degrees(AngleUnits):
     """Degree angle units."""
-
-    pass
 
 
 def _rows_multiplication(r1, r2):

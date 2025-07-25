@@ -125,7 +125,7 @@ class LibraryImporter:
 
     def get_code(self, fullname):
         """Get the code object for a module (not used in this implementation)."""
-        return None
+        return
 
     def load_module(self, fullname):
         """Load module if CustomImporter.find_module does not return None.

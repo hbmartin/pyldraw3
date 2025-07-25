@@ -24,7 +24,6 @@ def gen_parts(parts, library_path):
 
 def recursive_gen_parts(parts_parts, directory):
     """Recursively generate parts modules for nested part categories."""
-
     for name, value in list(parts_parts.items()):
         if isinstance(value, AttriDict):
             recurse = False

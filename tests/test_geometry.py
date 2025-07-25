@@ -17,7 +17,7 @@ from ldraw.geometry import (
 )
 
 
-def test_matrix_rmul():
+def test_matrix_rmul() -> None:
     m = Identity().scale(1, 2, 3)
     v = Vector(3, 2, 1)
 
@@ -25,7 +25,7 @@ def test_matrix_rmul():
     assert mul == Vector(3, 4, 3)
 
 
-def test_mulothers():
+def test_mulothers() -> None:
     m = Identity()
     pytest.raises(MatrixError, lambda: m * 2)
     pytest.raises(MatrixError, lambda: 2 * m)
@@ -43,12 +43,12 @@ def random_matrix():
     return Matrix(rows=[row(), row(), row()])
 
 
-def test_copy(random_matrix):
+def test_copy(random_matrix) -> None:
     assert random_matrix.copy() == random_matrix
 
 
 @pytest.mark.parametrize("axis", [XAxis, YAxis, ZAxis])
-def test_rotate_radians(random_matrix, axis):
+def test_rotate_radians(random_matrix, axis) -> None:
     original = random_matrix.copy()
     rotated = original.rotate(90, axis=axis)
 
@@ -56,18 +56,18 @@ def test_rotate_radians(random_matrix, axis):
     assert str(original) == str(rotated)
 
 
-def test_rotate_wrong_axis(random_matrix):
+def test_rotate_wrong_axis(random_matrix) -> None:
     pytest.raises(MatrixError, lambda: random_matrix.rotate(444, axis=None))
 
 
-def test_mul_matrix():
+def test_mul_matrix() -> None:
     m1 = Matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
     m2 = Matrix([[10, 11, 12], [13, 14, 15], [16, 17, 18]])
     m12 = m1 * m2
     assert m12.rows == [[84, 90, 96], [201, 216, 231], [318, 342, 366]]
 
 
-def test_mul_matrix_vector():
+def test_mul_matrix_vector() -> None:
     m = Matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
     v = Vector(42, 1, 0)
     v2 = m * v

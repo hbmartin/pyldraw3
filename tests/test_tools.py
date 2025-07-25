@@ -13,7 +13,7 @@ from PIL import ImageColor
 INPUT_PATH = "tests/test_data/car.ldr"
 
 
-def tool_test(func, suffix):
+def tool_test(func, suffix) -> None:
     fd, file = tempfile.mkstemp(prefix="pyldraw-result-", suffix=suffix)
     fde, tmp_expected_file = tempfile.mkstemp(prefix="pyldraw-expected-", suffix=suffix)
     func(file)
@@ -30,7 +30,7 @@ def tool_test(func, suffix):
 
 
 @pytest.mark.skip(reason="Library version dependencies not available")
-def test_ldr2inv(library_version):
+def test_ldr2inv(library_version) -> None:
     from ldraw.tools.ldr2inv import ldr2inv
 
     tool_test(
@@ -44,7 +44,7 @@ def test_ldr2inv(library_version):
 
 
 @pytest.mark.skip(reason="Library version dependencies not available")
-def test_ldr2png(library_version):
+def test_ldr2png(library_version) -> None:
     from ldraw.tools import vector_position, widthxheight
     from ldraw.tools.ldr2png import ldr2png
     from ldraw.writers.png import PNGArgs
@@ -68,7 +68,7 @@ def test_ldr2png(library_version):
 
 
 @pytest.mark.skip(reason="Library version dependencies not available")
-def test_ldr2pov(library_version):
+def test_ldr2pov(library_version) -> None:
     from ldraw.tools import vector_position
     from ldraw.tools.ldr2pov import ldr2pov
 
@@ -86,7 +86,7 @@ def test_ldr2pov(library_version):
 
 
 @pytest.mark.skip(reason="Library version dependencies not available")
-def test_ldr2svg(library_version):
+def test_ldr2svg(library_version) -> None:
     from ldraw.tools import vector_position
     from ldraw.tools.ldr2svg import ldr2svg
     from ldraw.writers.svg import SVGArgs

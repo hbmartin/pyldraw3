@@ -15,7 +15,7 @@ from ldraw.config import Config
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def test_ldraw_library():
     generated_path = tempfile.mkdtemp(prefix=datetime.utcnow().isoformat())
     logger.debug(f"generated_path={generated_path}")
@@ -28,7 +28,7 @@ def test_ldraw_library():
     return config.generated_path
 
 
-def test_library_gen_files(test_ldraw_library):
+def test_library_gen_files(test_ldraw_library) -> None:
     """Generated library contains the right files."""
     content = {
         os.path.relpath(os.path.join(dp, f), test_ldraw_library)
@@ -49,7 +49,7 @@ def test_library_gen_files(test_ldraw_library):
 
 
 @pytest.mark.skip(reason="Library import issues with missing modules")
-def test_library_gen_import(test_ldraw_library):
+def test_library_gen_import(test_ldraw_library) -> None:
     """Generated library is importable."""
     from ldraw import library
 

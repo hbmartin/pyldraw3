@@ -57,8 +57,8 @@ all_examples = [
 ]
 
 
-def exec_example(name, save=False):
-    script_file = os.path.join(examples_dir, "%s.py" % name)
+def exec_example(name, save=False) -> None:
+    script_file = os.path.join(examples_dir, f"{name}.py")
 
     d = dict(locals(), **globals())
 
@@ -67,7 +67,7 @@ def exec_example(name, save=False):
             code = compile(f.read(), script_file, "exec")
         exec(code, d, d)
     content = s.getvalue()
-    expected_path = os.path.join("tests", "test_data", "examples", "%s.ldr" % name)
+    expected_path = os.path.join("tests", "test_data", "examples", f"{name}.ldr")
     # uncomment to save
     # open(expected_path, 'w').write(content)
 
@@ -78,5 +78,5 @@ def exec_example(name, save=False):
 
 
 @pytest.mark.parametrize("example", all_examples, ids=all_examples)
-def test_examples(test_ldraw2_config, example):
+def test_examples(test_ldraw2_config, example) -> None:
     exec_example(example)
