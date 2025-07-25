@@ -1,5 +1,4 @@
-"""
-__init__.py - Package file for the ldraw Python package.
+"""__init__.py - Package file for the ldraw Python package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -21,8 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys
 
-from ldraw.downloads import download
 from ldraw.config import use
+from ldraw.downloads import download
 from ldraw.generation import generate
 from ldraw.imports import LibraryImporter
 

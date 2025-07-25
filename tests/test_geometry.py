@@ -1,17 +1,17 @@
 import math
-import pytest
 import random
+
+import pytest
 
 from ldraw.geometry import (
     Identity,
-    Vector,
-    MatrixError,
     Matrix,
+    MatrixError,
+    Radians,
+    Vector,
     XAxis,
     YAxis,
     ZAxis,
-    _rows_multiplication,
-    Radians,
 )
 
 

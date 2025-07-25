@@ -1,13 +1,10 @@
-"""
-Module tasked with generating python files for the ldraw.library namespace
-"""
+"""Module tasked with generating python files for the ldraw.library namespace"""
 
 import hashlib
 import os
 import shutil
 import sys
 import traceback
-
 import typing
 
 from ldraw.config import Config
@@ -20,7 +17,7 @@ from ldraw.utils import ensure_exists
 
 
 def generate(config: Config, force=False, warn=True):
-    """main function for the library generation"""
+    """Main function for the library generation"""
     generated_library_path = os.path.join(config.generated_path, "library")
     ensure_exists(generated_library_path)
 
@@ -32,7 +29,7 @@ def generate(config: Config, force=False, warn=True):
     md5_parts_lst = hashlib.md5(open(parts_lst, "rb").read()).hexdigest()
 
     if os.path.exists(hash_path):
-        md5 = open(hash_path, "r").read()
+        md5 = open(hash_path).read()
         if md5 == md5_parts_lst and not force and warn:
             print("already generated there")
             return

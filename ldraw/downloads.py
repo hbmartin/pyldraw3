@@ -1,14 +1,13 @@
 import logging
-import os
-import shutil
 import zipfile
-from download_updates import get_latest_release_id
-import requests
-from ldraw.generate import generate_parts_lst
 from pathlib import Path
 
-from ldraw.dirs import get_cache_dir
+import requests
+from download_updates import get_latest_release_id
 from progress.bar import Bar
+
+from ldraw.dirs import get_cache_dir
+from ldraw.generate import generate_parts_lst
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +35,7 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
     response = requests.get(url, stream=True)
 
     with open(retrieved, "wb") as file:
-        for data in response.iter_content(chunk_size=chunk_size):
-            file.write(data)
+        file.writelines(response.iter_content(chunk_size=chunk_size))
 
     return retrieved
 

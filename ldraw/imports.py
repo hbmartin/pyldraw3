@@ -1,7 +1,7 @@
+import importlib.util
 import logging
 import os
 import sys
-import importlib.util
 
 from ldraw.config import Config
 
@@ -32,7 +32,7 @@ def load_lib(library_path, fullname):
         module_path = py_path
     else:
         raise ImportError(
-            f"Could not find module {fullname} at {init_path} or {py_path}"
+            f"Could not find module {fullname} at {init_path} or {py_path}",
         )
 
     spec = importlib.util.spec_from_file_location(fullname, module_path)
@@ -72,8 +72,7 @@ class LibraryImporter:
 
     @classmethod
     def find_module(cls, fullname, path=None):  # pylint:disable=unused-argument
-        """
-        This method is called by Python if this class
+        """This method is called by Python if this class
         is on sys.path. fullname is the fully-qualified
         name of the module to look for, and path is either
         __path__ (for submodules and subpackages) or None (for
@@ -118,12 +117,10 @@ class LibraryImporter:
         return None
 
     def load_module(self, fullname):
-        """
-        This method is called by Python if CustomImporter.find_module
+        """This method is called by Python if CustomImporter.find_module
         does not return None. fullname is the fully-qualified name
         of the module/package that was requested.
         """
-
         if not self.valid_module(fullname):
             # Raise ImportError as per PEP #302 if the requested module/package
             # couldn't be loaded. This should never be reached in this

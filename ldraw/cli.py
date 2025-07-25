@@ -1,15 +1,12 @@
 import logging
-import os
 
 import click
 import yaml
 
 from ldraw import generate as do_generate
-from ldraw.config import use as do_use, Config
-from ldraw.dirs import get_data_dir
+from ldraw.config import Config
 from ldraw.downloads import download as do_download
 from ldraw.generation.exceptions import UnwritableOutput
-from ldraw.utils import prompt
 
 
 @click.group()
@@ -40,7 +37,7 @@ def generate(force, yes):
         do_generate(rw_config, force, False)
     except UnwritableOutput:
         print(
-            f"{rw_config.generated_path} is unwritable, select another output directory"
+            f"{rw_config.generated_path} is unwritable, select another output directory",
         )
 
 

@@ -1,5 +1,4 @@
-"""
-pieces.py - Classes representing pieces and groups for the ldraw Python package.
+"""pieces.py - Classes representing pieces and groups for the ldraw Python package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -21,12 +20,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # pylint: disable=too-many-arguments, too-few-public-methods
 from functools import reduce
+
 from ldraw.geometry import Identity, Vector
 
 
 class Piece:
-    """
-    a Piece, which is a Part with a certain colour
+    """a Piece, which is a Part with a certain colour
     at a certain position and rotation
     """
 
@@ -70,13 +69,13 @@ class Group:
         return "\n".join(text)
 
     def add_piece(self, piece):
-        """add a piece to the group"""
+        """Add a piece to the group"""
         self.pieces.append(piece)
         if piece.group and piece.group != self:
             piece.group.remove_piece(piece)
         piece.group = self
 
     def remove_piece(self, piece):
-        """remove a piece from the group"""
+        """Remove a piece from the group"""
         self.pieces.remove(piece)
         piece.group = None

@@ -1,20 +1,16 @@
 """Some geometry elements used in Writers"""
 
 
-class Edge(object):
+class Edge:
     # pylint:disable=too-few-public-methods
-    """
-    Holds an edge of a polygon, used during pixel rendering
-    """
+    """Holds an edge of a polygon, used during pixel rendering"""
 
     def __init__(self, point1, point2):
-        """
-        :param point1:
+        """:param point1:
         :type point1: Vector
         :param point2:
         :type point2: Vector
         """
-
         self.point1 = point1
         self.point2 = point2
 
@@ -23,7 +19,7 @@ class Edge(object):
 
     @property
     def sort_key(self):
-        """used for sorting the edges before rendering"""
+        """Used for sorting the edges before rendering"""
         return (
             self.point1.y,
             self.point2.y,

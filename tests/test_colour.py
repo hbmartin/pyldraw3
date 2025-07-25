@@ -9,8 +9,8 @@ def test_colour_equality():
     assert c1 == c2
     assert c1 == 12
     assert c2 == 12
-    assert 12 == c1
-    assert 12 == c2
+    assert c1 == 12
+    assert c2 == 12
 
 
 def test_colour_hash():

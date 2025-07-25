@@ -2,8 +2,8 @@ import os
 
 import pytest
 
-from ldraw import download, generate, LibraryImporter
-from ldraw.config import Config, use
+from ldraw import LibraryImporter, download, generate
+from ldraw.config import use
 from ldraw.utils import ensure_exists
 
 

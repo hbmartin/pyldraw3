@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-moon_landing.py - An example of figure construction.
+"""moon_landing.py - An example of figure construction.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -20,37 +19,37 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import traceback
 
 from ldraw.figure import *
 from ldraw.library.colours import (
-    Yellow,
-    White,
-    Light_Grey,
     Black,
-    Trans_Green,
     Green,
+    Light_Grey,
     Red,
+    Trans_Green,
+    White,
+    Yellow,
 )
-from ldraw.library.parts import Antenna4HWithRoundedTop
-from ldraw.library.parts import Baseplate32X32WithCraters
 from ldraw.library.parts import (
-    Brick1X2WithClassicSpaceLogoPattern,
+    Antenna4HWithRoundedTop,
+    Baseplate32X32WithCraters,
     Brick1X1RoundWithSolidStud,
+    Brick1X2WithClassicSpaceLogoPattern,
+    CarSteeringStandAndWheel_Complete_,
+    Plate2X2,
+    Plate2X2WithRedWheels_Complete_,
+    SlopeBrick452X2,
+    Tyre6_50X8OffsetTread,
 )
-from ldraw.library.parts import CarSteeringStandAndWheel_Complete_
 from ldraw.library.parts.minifig.accessories import (
     HelmetClassicWithThickChinGuardAndVisorDimples as HelmetClassic,
-    Torch,
+)
+from ldraw.library.parts.minifig.accessories import (
     Seat2X2,
+    Torch,
 )
 from ldraw.library.parts.minifig.torsos import TorsoWithClassicSpacePattern
-from ldraw.library.parts import Plate2X2WithRedWheels_Complete_, Plate2X2
-
-from ldraw.library.parts import SlopeBrick452X2
-from ldraw.library.parts import Tyre6_50X8OffsetTread
 from ldraw.pieces import Group, Piece
-
 
 figure = Person(Vector(0, 0, -10))
 print(figure.head(Yellow, 30))
@@ -65,13 +64,17 @@ print(figure.left_hand(White, 0))
 print(figure.left_hand_item(Light_Grey, Vector(0, -11, -12), 0, Torch))  # Torch
 print(figure.right_arm(White, 0))
 print(figure.right_hand(White, 0))
-print("")
+print()
 rover = Group(Vector(80, 48, 20), Identity())
 
 print(
     Piece(
-        Light_Grey, Vector(0, 0, 0), Identity(), Plate2X2WithRedWheels_Complete_, rover
-    )
+        Light_Grey,
+        Vector(0, 0, 0),
+        Identity(),
+        Plate2X2WithRedWheels_Complete_,
+        rover,
+    ),
 )
 print(
     Piece(
@@ -80,7 +83,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -89,7 +92,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -98,7 +101,7 @@ print(
         Identity(),
         Plate2X2WithRedWheels_Complete_,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -107,7 +110,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -116,7 +119,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 
 print(Piece(Light_Grey, Vector(0, 0, -40), Identity(), Plate2X2, rover))
@@ -128,7 +131,7 @@ print(
         Identity().rotate(180, YAxis),
         SlopeBrick452X2,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -137,12 +140,16 @@ print(
         Identity().rotate(180, YAxis),
         CarSteeringStandAndWheel_Complete_,
         rover,
-    )
+    ),
 )
 print(
     Piece(
-        Light_Grey, Vector(0, -24, -60), Identity().rotate(180, YAxis), Seat2X2, rover
-    )
+        Light_Grey,
+        Vector(0, -24, -60),
+        Identity().rotate(180, YAxis),
+        Seat2X2,
+        rover,
+    ),
 )
 print(Piece(Light_Grey, Vector(0, -8, -60), Identity(), Plate2X2, rover))
 print(Piece(Light_Grey, Vector(0, -16, -60), Identity(), Plate2X2, rover))
@@ -153,15 +160,25 @@ print(
         Identity(),
         Brick1X2WithClassicSpaceLogoPattern,
         rover,
-    )
-)
-print(
-    Piece(Light_Grey, Vector(-10, -32, -90), Identity(), Antenna4HWithRoundedTop, rover)
+    ),
 )
 print(
     Piece(
-        Trans_Green, Vector(10, -48, -90), Identity(), Brick1X1RoundWithSolidStud, rover
-    )
+        Light_Grey,
+        Vector(-10, -32, -90),
+        Identity(),
+        Antenna4HWithRoundedTop,
+        rover,
+    ),
+)
+print(
+    Piece(
+        Trans_Green,
+        Vector(10, -48, -90),
+        Identity(),
+        Brick1X1RoundWithSolidStud,
+        rover,
+    ),
 )
 print(Piece(Green, Vector(10, -52, -90), Identity(), "LIGHT", rover))
 
@@ -185,7 +202,7 @@ print(figure.left_arm(Red, -35))
 print(figure.left_hand(Red, 0))
 print(figure.right_arm(Red, -35))
 print(figure.right_hand(Red, 0))
-print("")
+print()
 # print(Piece(Grey, Vector(0, 72, 0), Identity(), "3867"))
 print(Piece(White, Vector(200, -300, -400), Identity(), "LIGHT"))
 print(Piece(Light_Grey, Vector(0, 72, 0), Identity(), Baseplate32X32WithCraters))

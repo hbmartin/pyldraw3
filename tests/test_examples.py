@@ -7,8 +7,8 @@ from datetime import datetime
 from io import StringIO
 
 import pytest
-from ldraw import generate, LibraryImporter
 
+from ldraw import LibraryImporter, generate
 from ldraw.config import Config
 
 
@@ -27,10 +27,7 @@ def test_ldraw2_config():
 
 
 def _unidiff_output(expected, actual):
-    """
-    Helper function. Returns a string containing the unified diff of two multiline strings.
-    """
-
+    """Helper function. Returns a string containing the unified diff of two multiline strings."""
     import difflib
 
     expected = expected.splitlines()
@@ -72,7 +69,7 @@ def exec_example(name, save=False):
     # uncomment to save
     # open(expected_path, 'w').write(content)
 
-    expected = open(expected_path, "r").read()
+    expected = open(expected_path).read()
     if expected != content:
         print(_unidiff_output(expected, content))
     assert expected == content

@@ -5,21 +5,20 @@ from ldraw.colour import Colour
 from ldraw.errors import PartError
 from ldraw.geometry import Matrix, Vector
 from ldraw.lines import (
+    Comment,
+    Line,
+    MetaCommand,
     OptionalLine,
     Quadrilateral,
-    Line,
     Triangle,
-    MetaCommand,
-    Comment,
 )
 from ldraw.pieces import Piece
-
 
 ENDS_DOT_DAT = re.compile(r"\.DAT$", flags=re.IGNORECASE)
 
 
 def colour_from_str(colour_str):
-    """gets a Colour from a string"""
+    """Gets a Colour from a string"""
     try:
         return int(colour_str)
     except ValueError:
@@ -30,7 +29,7 @@ def colour_from_str(colour_str):
 def _comment_or_meta(pieces):
     if not pieces:
         return Comment("")
-    elif pieces[0][:1] == "!":
+    if pieces[0][:1] == "!":
         return MetaCommand(pieces[0][1:], " ".join(pieces[1:]))
     return Comment(" ".join(pieces))
 
@@ -114,10 +113,8 @@ HANDLERS = {
 }
 
 
-class Part(object):
-    """
-    Contains data from a LDraw part file
-    """
+class Part:
+    """Contains data from a LDraw part file"""
 
     def __init__(self, path=None, file=None):
         if path is None and file is None:
@@ -142,7 +139,7 @@ class Part(object):
                 for line in self.file:
                     yield line
                 self.file.seek(0)
-        except IOError:
+        except OSError:
             raise PartError("Failed to read part file: %s" % self.path)
 
     @property
@@ -158,13 +155,13 @@ class Part(object):
             except KeyError:
                 raise PartError(
                     "Unknown command (%s) in %s at line %i"
-                    % (pieces[0], self.path, number)
+                    % (pieces[0], self.path, number),
                 )
             try:
                 yield handler(pieces[1:])
             except PartError as parse_error:
                 raise PartError(
-                    parse_error.message + " in %s at line %i" % (self.path, number)
+                    parse_error.message + " in %s at line %i" % (self.path, number),
                 )
 
     @property
@@ -180,7 +177,7 @@ class Part(object):
                 if not isinstance(obj, Comment) and not isinstance(obj, MetaCommand):
                     self._category = None
                     break
-                elif isinstance(obj, MetaCommand) and obj.type == "CATEGORY":
+                if isinstance(obj, MetaCommand) and obj.type == "CATEGORY":
                     self._category = obj.text
                     break
 

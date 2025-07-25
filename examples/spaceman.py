@@ -1,11 +1,9 @@
 import random
 
-from ldraw.geometry import Identity, XAxis, YAxis, ZAxis, Vector
 from ldraw.figure import Person
-
-from ldraw.library.colours import Yellow, Light_Green, Blue, Red, Green
+from ldraw.geometry import Identity, Vector, XAxis, YAxis, ZAxis
+from ldraw.library.colours import Blue, Green, Light_Green, Red, Yellow
 from ldraw.library.parts.minifig.torsos import TorsoWithClassicSpacePattern
-
 
 random.seed(12345)
 

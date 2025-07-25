@@ -1,5 +1,4 @@
-"""
-figure.py - Mini-figure construction classes for the ldraw Python package.
+"""figure.py - Mini-figure construction classes for the ldraw Python package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -20,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 # pylint: disable=missing-docstring
-from ldraw.geometry import Vector, Identity, XAxis, YAxis, ZAxis
+from ldraw.geometry import Identity, Vector, XAxis, YAxis, ZAxis
 from ldraw.pieces import Piece
 
 
@@ -51,7 +50,7 @@ Torso = "973"
 Head = HeadWithSwSmirkAndBrownEyebrowsPattern = "3626bps5"
 
 
-class Person(object):
+class Person:
     def __init__(self, position=Vector(0, 0, 0), matrix=Identity(), group=None):
         self.position = position
         self.matrix = matrix
@@ -79,28 +78,40 @@ class Person(object):
         return piece
 
     def torso(self, colour, part=Torso):
-        """torso piece"""
+        """Torso piece"""
         return Piece(colour, self.position, self.matrix, part, self.group)
 
     def backpack(self, colour, displacement=Vector(0, 0, 0), part=Airtanks):
         """Displacement from torso"""
         displacement = self.matrix * displacement
         return Piece(
-            colour, self.position + displacement, self.matrix, part, self.group
+            colour,
+            self.position + displacement,
+            self.matrix,
+            part,
+            self.group,
         )
 
     def hips_and_legs(self, colour, part=HipsAndLegs):
         """Displacement from torso"""
         displacement = self.matrix * Vector(0, 32, 0)
         return Piece(
-            colour, self.position + displacement, self.matrix, part, self.group
+            colour,
+            self.position + displacement,
+            self.matrix,
+            part,
+            self.group,
         )
 
     def hips(self, colour, part=Hips):
         """Displacement from torso"""
         displacement = self.matrix * Vector(0, 32, 0)
         return Piece(
-            colour, self.position + displacement, self.matrix, part, self.group
+            colour,
+            self.position + displacement,
+            self.matrix,
+            part,
+            self.group,
         )
 
     def left_arm(self, colour, angle=0, part=ArmLeft):

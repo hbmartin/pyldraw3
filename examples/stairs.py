@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-stairs.py - An example using groups to duplicate parts of a scene.
+"""stairs.py - An example using groups to duplicate parts of a scene.
 
 Copyright (C) 2010 David Boddie <david@boddie.org.uk>
 
@@ -23,15 +22,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from ldraw.figure import *
 from ldraw.geometry import Identity
 from ldraw.library.colours import *
-from ldraw.library.parts import Arch1X6
-from ldraw.library.parts import Brick2X3, Brick1X1
+from ldraw.library.parts import Arch1X6, Brick1X1, Brick2X3, Plate6X6
 from ldraw.library.parts.minifig.accessories import ToolMagnifyingGlass
 from ldraw.library.parts.minifig.hats import TopHat
 from ldraw.library.parts.minifig.heads import HeadWithMonocle_Scar_AndMoustachePattern
 from ldraw.library.parts.minifig.torsos import (
     TorsoWithBlackSuit_RedShirt_GoldClaspsPattern,
 )
-from ldraw.library.parts import Plate6X6
 from ldraw.pieces import Group, Piece
 
 group = Group(Vector(0, 0, -40), Identity())
@@ -62,7 +59,7 @@ y = 144
 z = -160
 steps = 5
 Piece(Dark_Blue, Vector(x, y, z + 40), Identity(), Plate6X6, group=stairs)
-for i in range(0, steps):
+for i in range(steps):
     for pz in range(z, z + 120, 40):
         Piece(
             Dark_Blue,

@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-ldr2inv.py - Create parts lists from LDraw models.
+"""ldr2inv.py - Create parts lists from LDraw models.
 
 Copyright (C) 2012 David Boddie <david@boddie.org.uk>
 
@@ -20,9 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import argparse
 import codecs
 import sys
-import argparse
 
 from ldraw.config import Config
 from ldraw.lines import Comment
@@ -77,7 +76,7 @@ def ldr2inv(config, ldraw_model_file, inventory_path):
                 padding = " " * (length - len(name))
                 inv_file.write("%s%s%i\n" % (name, padding, number))
 
-    except IOError:
+    except OSError:
         sys.stderr.write("Failed to write inventory file: %s\n" % inventory_path)
         sys.exit(1)
 

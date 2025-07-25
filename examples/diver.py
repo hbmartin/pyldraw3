@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-diver.py - An example of figure construction.
+"""diver.py - An example of figure construction.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -20,15 +19,14 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.library.colours import *
 from ldraw.figure import *
+from ldraw.library.colours import *
 from ldraw.library.parts.minifig.accessories import (
-    DiverMask,
-    HairMale,
     Airtanks,
-    Flipper,
     CameraMovie,
-    Hips,
+    DiverMask,
+    Flipper,
+    HairMale,
 )
 from ldraw.library.parts.minifig.torsos import Torso
 from ldraw.pieces import Piece
@@ -47,11 +45,11 @@ print(figure.right_shoe(Black, -10, Flipper))
 print(figure.left_arm(Yellow, -45))
 print(figure.left_hand(Yellow, 10))
 print(
-    figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie)
+    figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie),
 )  # Camera Movie
 print(figure.right_arm(Yellow, 60))
 print(figure.right_hand(Yellow, 0))
-print("")
+print()
 print(Piece(White, Vector(-50, -200, -50), Identity(), "LIGHT"))
 print(Piece(White, Vector(50, -200, 0), Identity(), "LIGHT"))
 print(Piece(White, Vector(0, -200, 50), Identity(), "LIGHT"))

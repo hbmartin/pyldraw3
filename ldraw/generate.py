@@ -1,5 +1,5 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
 FORMAT_STRING = "{filename:<30} {description}"
 alphanum = re.compile(r"[\W_]+", re.UNICODE)
@@ -29,7 +29,7 @@ def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
 
     for part in parts:
         try:
-            with open(part, "r", encoding="utf-8") as part_file:
+            with open(part, encoding="utf-8") as part_file:
                 header = part_file.readline()
                 header_description = header[2:]
                 if "~Moved" in header:

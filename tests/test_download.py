@@ -1,9 +1,9 @@
 import os
 import zipfile
+from unittest.mock import *
 
-from downloads import LDRAW_URL
 import platformdirs
-from mock import *
+from downloads import LDRAW_URL
 
 from ldraw import download
 
@@ -28,7 +28,8 @@ def test_download(
     download(output_dir)
 
     urlretrieve_mock.assert_called_once_with(
-        LDRAW_URL, filename=os.path.join(tmp_ldraw, "complete.zip")
+        LDRAW_URL,
+        filename=os.path.join(tmp_ldraw, "complete.zip"),
     )
 
     zip_mock.assert_called_once_with(os.path.join(tmp_ldraw, "complete.zip"), "r")
@@ -36,5 +37,7 @@ def test_download(
     copy_tree_mock.assert_called_once_with(os.path.join(tmp_ldraw, "ldraw"), output_dir)
 
     generate_parts_lst_mock.assert_called_once_with(
-        "description", output_2, parts_lst_path
+        "description",
+        output_2,
+        parts_lst_path,
     )

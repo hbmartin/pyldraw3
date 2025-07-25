@@ -7,9 +7,7 @@ TARGET_HREF = "https://library.ldraw.org/library/updates/complete.zip"
 
 
 class AnchorTagParser(html.parser.HTMLParser):
-    """
-    A custom HTML parser to find the data-pan attribute of a specific anchor tag.
-    """
+    """A custom HTML parser to find the data-pan attribute of a specific anchor tag."""
 
     def __init__(self):
         super().__init__()
@@ -34,8 +32,7 @@ class AnchorTagParser(html.parser.HTMLParser):
 
 
 def extract_data_pan_from_html(html_content):
-    """
-    Parses HTML content to extract the 'data-pan' attribute from the first
+    """Parses HTML content to extract the 'data-pan' attribute from the first
     anchor tag with a specific href.
 
     Args:
@@ -44,6 +41,7 @@ def extract_data_pan_from_html(html_content):
 
     Returns:
         str or None: The value of the 'data-pan' attribute, or None if not found.
+
     """
     parser = AnchorTagParser()
     parser.feed(html_content)

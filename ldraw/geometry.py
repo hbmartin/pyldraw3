@@ -1,5 +1,4 @@
-"""
-geometry.py - Geometry classes for the ldraw Python package.
+"""geometry.py - Geometry classes for the ldraw Python package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -22,15 +21,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # pylint: disable=invalid-name, too-few-public-methods, missing-docstring
 import copy
 import math
-from numbers import Number
 from functools import reduce
+from numbers import Number
 
 
 class MatrixError(Exception):
     pass
 
 
-class Axis(object):
+class Axis:
     pass
 
 
@@ -46,7 +45,7 @@ class ZAxis(Axis):
     pass
 
 
-class AngleUnits(object):
+class AngleUnits:
     pass
 
 
@@ -79,7 +78,7 @@ def _rows_multiplication(r1, r2):
     return rows
 
 
-class Matrix(object):
+class Matrix:
     """a transformation matrix"""
 
     def __init__(self, rows):
@@ -87,7 +86,7 @@ class Matrix(object):
 
     def __repr__(self):
         values = reduce(lambda x, y: x + y, self.rows)
-        format_string = "((%f, %f, %f),\n" " (%f, %f, %f),\n" " (%f, %f, %f))"
+        format_string = "((%f, %f, %f),\n (%f, %f, %f),\n (%f, %f, %f))"
         return format_string % tuple(values)
 
     def __mul__(self, other):
@@ -95,7 +94,7 @@ class Matrix(object):
             r1 = self.rows
             r2 = other.rows
             return Matrix(_rows_multiplication(r1, r2))
-        elif isinstance(other, Vector):
+        if isinstance(other, Vector):
             r = self.rows
             x, y, z = other.x, other.y, other.z
             return Vector(
@@ -103,15 +102,14 @@ class Matrix(object):
                 r[1][0] * x + r[1][1] * y + r[1][2] * z,
                 r[2][0] * x + r[2][1] * y + r[2][2] * z,
             )
-        else:
-            raise MatrixError
+        raise MatrixError
 
     def __rmul__(self, other):
         if isinstance(other, Matrix):
             r1 = other.rows
             r2 = self.rows
             return Matrix(_rows_multiplication(r1, r2))
-        elif isinstance(other, Vector):
+        if isinstance(other, Vector):
             r = self.rows
             x, y, z = other.x, other.y, other.z
             return Vector(
@@ -119,15 +117,14 @@ class Matrix(object):
                 x * r[0][1] + y * r[1][1] + z * r[2][1],
                 x * r[0][2] + y * r[1][2] + z * r[2][2],
             )
-        else:
-            raise MatrixError
+        raise MatrixError
 
     def copy(self):
-        """make a copy of this matrix"""
+        """Make a copy of this matrix"""
         return Matrix(copy.deepcopy(self.rows))
 
     def rotate(self, angle, axis, units=Degrees):
-        """rotate the matrix by an angle around an axis"""
+        """Rotate the matrix by an angle around an axis"""
         if units == Degrees:
             c = math.cos(angle / 180.0 * math.pi)
             s = math.sin(angle / 180.0 * math.pi)
@@ -145,22 +142,22 @@ class Matrix(object):
         return self * rotation
 
     def scale(self, sx, sy, sz):
-        """scale the matrix by a number"""
+        """Scale the matrix by a number"""
         return Matrix([[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) * self
 
     def transpose(self):
-        """transpose"""
+        """Transpose"""
         r = self.rows
         return Matrix(
             [
                 [r[0][0], r[1][0], r[2][0]],
                 [r[0][1], r[1][1], r[2][1]],
                 [r[0][2], r[1][2], r[2][2]],
-            ]
+            ],
         )
 
     def det(self):
-        """determinant of the matrix"""
+        """Determinant of the matrix"""
         r = self.rows
         terms = [
             r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]),
@@ -170,7 +167,7 @@ class Matrix(object):
         return sum(terms)
 
     def flatten(self):
-        """flatten the matrix"""
+        """Flatten the matrix"""
         return tuple(reduce(lambda x, y: x + y, self.rows))
 
     def fix_diagonal(self):
@@ -189,11 +186,11 @@ class Matrix(object):
 
 
 def Identity():
-    """a transformation matrix representing Identity"""
+    """A transformation matrix representing Identity"""
     return Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
-class Vector(object):
+class Vector:
     """a Vector in 3D"""
 
     def __init__(self, x, y, z):
@@ -256,14 +253,14 @@ class Vector(object):
         raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
 
     def copy(self):
-        """vector = copy(self)
+        """Vector = copy(self)
         Copy the vector so that new vectors containing the same values
         are passed around rather than references to the same object.
         """
         return Vector(self.x, self.y, self.z)
 
     def cross(self, other):
-        """cross product"""
+        """Cross product"""
         return Vector(
             self.y * other.z - self.z * other.y,
             self.z * other.x - self.x * other.z,
@@ -271,18 +268,18 @@ class Vector(object):
         )
 
     def dot(self, other):
-        """dot product"""
+        """Dot product"""
         return self.x * other.x + self.y * other.y + self.z * other.z
 
     def norm(self):
-        """normalized"""
+        """Normalized"""
         _length = abs(self)
         self.x = self.x / _length
         self.y = self.y / _length
         self.z = self.z / _length
 
 
-class Vector2D(object):
+class Vector2D:
     """a Vector in 2D"""
 
     def __init__(self, x, y):
@@ -333,21 +330,23 @@ class Vector2D(object):
         raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
 
     def copy(self):
-        """
-        vector = copy(self)
+        """Vector = copy(self)
         Copy the vector so that new vectors containing the same values
         are passed around rather than references to the same object.
         """
         return Vector2D(self.x, self.y)
 
     def dot(self, other):
-        """dot product"""
+        """Dot product"""
         return self.x * other.x + self.y * other.y
 
 
-class CoordinateSystem(object):
+class CoordinateSystem:
     def __init__(
-        self, x=Vector(1.0, 0.0, 0.0), y=Vector(0.0, 1.0, 0.0), z=Vector(0.0, 0.0, 1.0)
+        self,
+        x=Vector(1.0, 0.0, 0.0),
+        y=Vector(0.0, 1.0, 0.0),
+        z=Vector(0.0, 0.0, 1.0),
     ):
         self.x = x
         self.y = y

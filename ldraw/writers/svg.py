@@ -1,5 +1,4 @@
-"""
-svg.py - An SVG writer for the ldraw Python package.
+"""svg.py - An SVG writer for the ldraw Python package.
 
 Copyright (C) 2010 David Boddie <david@boddie.org.uk>
 
@@ -23,7 +22,7 @@ from ldraw.geometry import Vector2D
 from ldraw.writers.common import Writer
 
 
-class Polygon(object):
+class Polygon:
     """Polygon used for SVG rendering"""
 
     # pylint: disable=too-few-public-methods
@@ -67,7 +66,7 @@ POLYGON_FORMAT = (
 )
 
 
-class SVGArgs(object):
+class SVGArgs:
     """Data-only container for arguments passed to an SVG writer"""
 
     # pylint: disable=too-few-public-methods
@@ -108,7 +107,7 @@ def _project_polygons(width, height, polygons):
 
 
 def write_preamble(args, svg_file):
-    """write the preamble and polygon def"""
+    """Write the preamble and polygon def"""
     svg_file.write(SVG_PREAMBLE.format(view1=0.0, view2=0.0, svg_args=args))
     if args.background_colour is not None:
         arguments = (
@@ -160,7 +159,7 @@ class SVGWriter(Writer):
                 svg_file.write(SVG_POLYGON_PREAMBLE.format(**context))
                 for point in points:
                     dpoint = Vector2D(point.x, -point.y) + shift
-                    svg_file.write("{point.x:.6f},{point.y:.6f} ".format(point=dpoint))
+                    svg_file.write(f"{dpoint.x:.6f},{dpoint.y:.6f} ")
                 svg_file.write('" />\n')
         svg_file.write("</svg>\n")
         svg_file.close()
@@ -175,8 +174,16 @@ class SVGWriter(Writer):
         return self._common_get_poly(obj, top_level_piece, current.colour, points)
 
     def _get_polygon(
-        self, top_level_piece, colour, projections
+        self,
+        top_level_piece,
+        colour,
+        projections,
     ):  # pylint: disable=no-self-use
         return [
-            Polygon(min(p.z for p in projections), projections, colour, top_level_piece)
+            Polygon(
+                min(p.z for p in projections),
+                projections,
+                colour,
+                top_level_piece,
+            ),
         ]

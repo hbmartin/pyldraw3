@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-ldr2png.py - An LDraw to PNG convertor tool.
+"""ldr2png.py - An LDraw to PNG convertor tool.
 
 Copyright (C) 2010 David Boddie <david@boddie.org.uk>
 
@@ -26,11 +25,11 @@ from PIL import ImageColor
 
 from ldraw.config import Config
 from ldraw.tools import (
-    widthxheight,
-    vector_position,
-    get_model,
     get_coordinate_system,
+    get_model,
+    vector_position,
     verify_camera_look_at,
+    widthxheight,
 )
 from ldraw.writers.png import PNGWriter
 
@@ -66,10 +65,15 @@ The optional sky background and stroke colours are PNG colours, either specified
     )
     parser.add_argument("--distance", type=float, default=1.0)
     parser.add_argument(
-        "--stroke-colour", dest="stroke_colour", type=ImageColor.getrgb, required=True
+        "--stroke-colour",
+        dest="stroke_colour",
+        type=ImageColor.getrgb,
+        required=True,
     )
     parser.add_argument(
-        "--sky", default=ImageColor.getrgb("#000000"), type=ImageColor.getrgb
+        "--sky",
+        default=ImageColor.getrgb("#000000"),
+        type=ImageColor.getrgb,
     )
 
     args = parser.parse_args()

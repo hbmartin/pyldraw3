@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-ldr2svg.py - An LDraw to SVG convertor tool.
+"""ldr2svg.py - An LDraw to SVG convertor tool.
 
 Copyright (C) 2010 David Boddie <david@boddie.org.uk>
 
@@ -24,11 +23,11 @@ import argparse
 
 from ldraw.config import Config
 from ldraw.tools import (
-    widthxheight,
-    vector_position,
-    get_model,
     get_coordinate_system,
+    get_model,
+    vector_position,
     verify_camera_look_at,
+    widthxheight,
 )
 
 
@@ -81,7 +80,12 @@ The optional sky background colour is an SVG colour, either specified as
 
 
 def ldr2svg(
-    config, ldraw_model_file, svg_path, camera_position, look_at_position, svg_args
+    config,
+    ldraw_model_file,
+    svg_path,
+    camera_position,
+    look_at_position,
+    svg_args,
 ):  # pylint: disable=too-many-arguments
     """ldr2svg actual implementation"""
     verify_camera_look_at(camera_position, look_at_position)

@@ -26,7 +26,7 @@ class Quadrilateral:
 
     @property
     def points(self):
-        """returns the points array"""
+        """Returns the points array"""
         return [self.point1, self.point2, self.point3, self.point4]
 
 
@@ -40,7 +40,7 @@ class Line:
 
     @property
     def points(self):
-        """returns the points array"""
+        """Returns the points array"""
         return [self.point1, self.point2]
 
 
@@ -55,7 +55,7 @@ class Triangle:
 
     @property
     def points(self):
-        """returns the points array"""
+        """Returns the points array"""
         return [self.point1, self.point2, self.point3]
 
 

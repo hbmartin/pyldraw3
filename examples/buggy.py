@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-buggy.py - An example of materials.
+"""buggy.py - An example of materials.
 
 Copyright (C) 2009 David Boddie <david@boddie.org.uk>
 
@@ -23,10 +22,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from ldraw.figure import *
 from ldraw.geometry import YAxis
 from ldraw.library.colours import *
-from ldraw.library.parts import Antenna4HWithRoundedTop, Baseplate16X16
-from ldraw.library.parts import Brick1X2WithClassicSpaceLogoPattern, Plate2X2
-from ldraw.library.parts import CarSteeringStandAndWheel_Complete_, SlopeBrick452X2
-from ldraw.library.parts import Plate2X2WithRedWheels_Complete_, Tyre6_50X8OffsetTread
+from ldraw.library.parts import (
+    Antenna4HWithRoundedTop,
+    Baseplate16X16,
+    Brick1X2WithClassicSpaceLogoPattern,
+    CarSteeringStandAndWheel_Complete_,
+    Plate2X2,
+    Plate2X2WithRedWheels_Complete_,
+    SlopeBrick452X2,
+    Tyre6_50X8OffsetTread,
+)
 from ldraw.library.parts.minifig.accessories import Seat2X2
 from ldraw.pieces import Group, Piece
 
@@ -47,8 +52,12 @@ from ldraw.pieces import Group, Piece
 rover = Group(Vector(0, 48, 60), Identity().rotate(-15, YAxis))
 print(
     Piece(
-        Light_Grey, Vector(0, 0, 0), Identity(), Plate2X2WithRedWheels_Complete_, rover
-    )
+        Light_Grey,
+        Vector(0, 0, 0),
+        Identity(),
+        Plate2X2WithRedWheels_Complete_,
+        rover,
+    ),
 )
 print(
     Piece(
@@ -57,7 +66,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -66,7 +75,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -75,7 +84,7 @@ print(
         Identity(),
         Plate2X2WithRedWheels_Complete_,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -84,7 +93,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -93,7 +102,7 @@ print(
         Identity().rotate(90, YAxis),
         Tyre6_50X8OffsetTread,
         rover,
-    )
+    ),
 )
 
 print(Piece(Light_Grey, Vector(0, 0, -40), Identity(), Plate2X2, rover))
@@ -105,7 +114,7 @@ print(
         Identity().rotate(180, YAxis),
         SlopeBrick452X2,
         rover,
-    )
+    ),
 )
 print(
     Piece(
@@ -114,12 +123,16 @@ print(
         Identity().rotate(180, YAxis),
         CarSteeringStandAndWheel_Complete_,
         rover,
-    )
+    ),
 )
 print(
     Piece(
-        Chrome_Gold, Vector(0, -24, -60), Identity().rotate(180, YAxis), Seat2X2, rover
-    )
+        Chrome_Gold,
+        Vector(0, -24, -60),
+        Identity().rotate(180, YAxis),
+        Seat2X2,
+        rover,
+    ),
 )
 print(Piece(Chrome_Gold, Vector(0, -8, -60), Identity(), Plate2X2, rover))
 print(Piece(Chrome_Gold, Vector(0, -16, -60), Identity(), Plate2X2, rover))
@@ -130,12 +143,16 @@ print(
         Identity(),
         Brick1X2WithClassicSpaceLogoPattern,
         rover,
-    )
+    ),
 )
 print(
     Piece(
-        Chrome_Silver, Vector(-10, -32, -90), Identity(), Antenna4HWithRoundedTop, rover
-    )
+        Chrome_Silver,
+        Vector(-10, -32, -90),
+        Identity(),
+        Antenna4HWithRoundedTop,
+        rover,
+    ),
 )
 
 print(Piece(Yellow, Vector(0, 72, 0), Identity(), Baseplate16X16))

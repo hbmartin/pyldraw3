@@ -1,5 +1,4 @@
-"""
-__init__.py - Package file for the ldraw.writers Python package.
+"""__init__.py - Package file for the ldraw.writers Python package.
 
 Copyright (C) 2009 David Boddie <david@boddie.org.uk>
 

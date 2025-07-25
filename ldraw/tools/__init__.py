@@ -2,17 +2,16 @@
 
 import argparse
 import os
-
 import sys
 
 from ldraw import LibraryImporter
 from ldraw.config import Config
-from ldraw.parts import Part, Parts, PartError
-from ldraw.geometry import Vector, CoordinateSystem
+from ldraw.geometry import CoordinateSystem, Vector
+from ldraw.parts import Part, PartError, Parts
 
 
 def widthxheight(input_str):
-    """a type for a widthxheight image size"""
+    """A type for a widthxheight image size"""
     image_dimensions = input_str.split("x")
     if len(image_dimensions) != 2:
         raise argparse.ArgumentTypeError("Expecting widthxheight")
@@ -20,11 +19,11 @@ def widthxheight(input_str):
 
 
 def vector_position(input_str):
-    """a type for comma separated vector"""
+    """A type for comma separated vector"""
     position = input_str.split(",")
     if len(position) != 3:
         raise argparse.ArgumentTypeError(
-            "Expecting comma-separated elements for the position"
+            "Expecting comma-separated elements for the position",
         )
     return Vector(*map(float, position))
 
@@ -59,7 +58,7 @@ def get_coordinate_system(camera_position, look_at_position):
 
 
 def verify_camera_look_at(camera_position, look_at_position):
-    """verify that the camera and look_at positions are valid"""
+    """Verify that the camera and look_at positions are valid"""
     if camera_position == look_at_position:
         sys.stderr.write("Camera and look-at positions are the same.\n")
         sys.exit(1)

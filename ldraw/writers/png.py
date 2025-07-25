@@ -1,5 +1,4 @@
-"""
-png.py - A PNG writer for the ldraw Python package.
+"""png.py - A PNG writer for the ldraw Python package.
 
 Copyright (C) 2010 David Boddie <david@boddie.org.uk>
 
@@ -20,23 +19,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 # pylint: disable=no-name-in-module, too-few-public-methods, too-many-locals, too-many-branches
-from PIL import Image, ImageColor
 import numpy
-from PIL.ImageDraw import Draw
+from PIL import Image, ImageColor
 
 from ldraw.geometry import Vector, Vector2D
 from ldraw.writers.common import Writer
 from ldraw.writers.geometry import Z_MAX, Edge
 
 
-class PNGArgs(object):
+class PNGArgs:
     """Args to pass to a PNG writer"""
 
     def __init__(
-        self, distance, image_size, stroke_colour=None, background_colour=None
+        self,
+        distance,
+        image_size,
+        stroke_colour=None,
+        background_colour=None,
     ):
-        """
-        :param distance: distance of the camera
+        """:param distance: distance of the camera
         :param image_size: size of the image as a string (e.g. '800x800')
         :param stroke_colour: colour of the edges
         :param background_colour: colour of the background
@@ -48,14 +49,11 @@ class PNGArgs(object):
 
 
 class PNGWriter(Writer):
-    """
-    Renders a LDR model into a PNG
-    """
+    """Renders a LDR model into a PNG"""
 
     # pylint: disable=too-few-public-methods
     def write(self, model_file, png_file, png_args):
-        """
-        Writes the model's polygons to the provided PNG file
+        """Writes the model's polygons to the provided PNG file
 
         :param model_file: LDR model (file-like object)
         :type model_file: Part
@@ -97,10 +95,8 @@ class PNGWriter(Writer):
         return [Polygon(projections, rgb, alpha)]
 
 
-class Polygon(object):
-    """
-    Describes a polygon for PNG rendering
-    """
+class Polygon:
+    """Describes a polygon for PNG rendering"""
 
     def __init__(self, points, rgb, alpha):
         self.points = points
@@ -110,8 +106,7 @@ class Polygon(object):
         self.projected = []
 
     def project(self, distance):
-        """
-        project to screen
+        """Project to screen
         px/c = x/(c + z)
         px = c * x / (c + z)
         """
@@ -121,12 +116,11 @@ class Polygon(object):
                     (distance * point.x) / (distance + -point.z),
                     (distance * point.y) / (distance + -point.z),
                     -point.z,
-                )
+                ),
             )
 
     def render(self, image, depth, viewport_scale, stroke_colour):
-        """
-        Sort the edges of the polygon by their minimum projected y
+        """Sort the edges of the polygon by their minimum projected y
         coordinates, discarding horizontal edges.
         """
         edges = self.get_edges(image, viewport_scale)
@@ -179,20 +173,16 @@ class Polygon(object):
                 start_2, start_1 = start_1, start_2
             # Only calculate a depth gradient for the span if it is more than
             # one pixel wide.
-            if start_1.y <= 0 and start_2.y <= 0:
-                int_edge1_y1 += 1
-                continue
-            elif start_1.y >= Z_MAX and start_2.y >= Z_MAX:
+            if (start_1.y <= 0 and start_2.y <= 0) or (
+                start_1.y >= Z_MAX and start_2.y >= Z_MAX
+            ):
                 int_edge1_y1 += 1
                 continue
 
             start_x, end_sx = int(start_1.x), int(start_2.x)
             if start_x < start_1.x:
                 start_x += 1
-            if start_x >= width:
-                int_edge1_y1 += 1
-                continue
-            elif end_sx < 0:
+            if start_x >= width or end_sx < 0:
                 int_edge1_y1 += 1
                 continue
 
@@ -209,9 +199,7 @@ class Polygon(object):
             )
 
     def get_edges(self, image, viewport_scale):
-        """
-        get edges for rendering
-        """
+        """Get edges for rendering"""
         width, height = image.size
         edges = []
         len_points = len(self.points)
@@ -247,13 +235,12 @@ class Polygon(object):
         stroke_colour,
         width,
     ):
-        """draw a span"""
+        """Draw a span"""
         if start_1.x != start_2.x:
             start_dz_dx = (start_2.y - start_1.y) / (start_2.x - start_1.x)
         else:
             start_dz_dx = 0.0
-        if start_x < 0:
-            start_x = 0
+        start_x = max(start_x, 0)
         if end_sx >= width:
             end_sx = width - 1
         # Draw the span.

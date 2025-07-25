@@ -1,10 +1,7 @@
 #!/usr/bin/env python
-"""
-Generates the ldraw.library.parts namespace
-"""
+"""Generates the ldraw.library.parts namespace"""
 import codecs
 import os
-import sys
 
 import pystache
 from attridict import AttriDict
@@ -12,7 +9,7 @@ from progress.bar import Bar
 
 from ldraw.parts import PartError
 from ldraw.resources import get_resource_content
-from ldraw.utils import ensure_exists, flatten2, clean, camel
+from ldraw.utils import camel, clean, ensure_exists
 
 SECTION_SEP = "#|#"
 
@@ -60,7 +57,7 @@ def recursive_gen_parts(parts_parts, directory):
 
 
 def generate_parts__init__(module_parts, directory, sections, parts_parts):
-    """generate the appropriate __init__.py to make submodules in ldraw.library.parts"""
+    """Generate the appropriate __init__.py to make submodules in ldraw.library.parts"""
     parts__init__str = parts__init__content(sections)
 
     parts__init__ = os.path.join(directory, "__init__.py")
@@ -91,16 +88,15 @@ def section_content(section_parts, section_key):
 
 
 PARTS__INIT__TEMPLATE = pystache.parse(
-    get_resource_content(os.path.join("templates", "parts__init__.mustache"))
+    get_resource_content(os.path.join("templates", "parts__init__.mustache")),
 )
 PARTS_TEMPLATE = pystache.parse(
-    get_resource_content(os.path.join("templates", "parts.mustache"))
+    get_resource_content(os.path.join("templates", "parts.mustache")),
 )
 
 
 def get_part_dict(parts_parts, description):
     """Gets a dict context for a part"""
-
     try:
         code = parts_parts[description]
         # part = parts.part(code=code)

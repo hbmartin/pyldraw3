@@ -1,10 +1,7 @@
 #!/usr/bin/env python
-"""
-Called by ldraw.library_gen to generate the ldraw/library/colours.py file
-"""
+"""Called by ldraw.library_gen to generate the ldraw/library/colours.py file"""
 import codecs
 import os
-import sys
 
 import pystache
 
@@ -13,9 +10,7 @@ from ldraw.utils import camel, clean
 
 
 def gen_colours(parts, library_path):
-    """
-    Generates a colours.py from library data
-    """
+    """Generates a colours.py from library data"""
     print("generate ldraw.library.colours...")
 
     colours_str = colours_module_content(parts)
@@ -26,7 +21,7 @@ def gen_colours(parts, library_path):
 
 def colours_module_content(parts):
     colours_mustache = get_resource_content(
-        os.path.join("templates", "colours.mustache")
+        os.path.join("templates", "colours.mustache"),
     )
     colours_template = pystache.parse(colours_mustache)
     context = {"colours": [get_c_dict(c) for c in parts.colours_by_name.values()]}
@@ -36,9 +31,7 @@ def colours_module_content(parts):
 
 
 def get_c_dict(colour):
-    """
-    Gets a dict from a Colour object
-    """
+    """Gets a dict from a Colour object"""
     return {
         "code": colour.code,
         "full_name": colour.name,

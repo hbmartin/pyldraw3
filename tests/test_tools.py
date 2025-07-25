@@ -1,9 +1,7 @@
 import codecs
-import difflib
 import shutil
 import tempfile
 
-import pytest
 from PIL import ImageColor
 
 # ! no ldraw.* imports up here
@@ -33,15 +31,17 @@ def test_ldr2inv(library_version):
 
     tool_test(
         lambda f: ldr2inv(
-            library_version, codecs.open(INPUT_PATH, "r", encoding="utf-8"), f
+            library_version,
+            codecs.open(INPUT_PATH, "r", encoding="utf-8"),
+            f,
         ),
         ".inv",
     )
 
 
 def test_ldr2png(library_version):
+    from ldraw.tools import vector_position, widthxheight
     from ldraw.tools.ldr2png import ldr2png
-    from ldraw.tools import widthxheight, vector_position
     from ldraw.writers.png import PNGArgs
 
     tool_test(
@@ -63,8 +63,8 @@ def test_ldr2png(library_version):
 
 
 def test_ldr2pov(library_version):
-    from ldraw.tools.ldr2pov import ldr2pov
     from ldraw.tools import vector_position
+    from ldraw.tools.ldr2pov import ldr2pov
 
     tool_test(
         lambda f: ldr2pov(
@@ -80,8 +80,8 @@ def test_ldr2pov(library_version):
 
 
 def test_ldr2svg(library_version):
-    from ldraw.tools.ldr2svg import ldr2svg
     from ldraw.tools import vector_position
+    from ldraw.tools.ldr2svg import ldr2svg
     from ldraw.writers.svg import SVGArgs
 
     tool_test(

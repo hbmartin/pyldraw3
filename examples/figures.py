@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-figures.py - An example of figure construction.
+"""figures.py - An example of figure construction.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -20,17 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.library.colours import *
 from ldraw.figure import *
+from ldraw.library.colours import *
+from ldraw.library.parts import Baseplate16X16, Rock1X1Crystal5Point
 from ldraw.library.parts.minifig.accessories import (
     HelmetClassicWithThickChinGuardAndVisorDimples as HelmetClassic,
-    Torch,
+)
+from ldraw.library.parts.minifig.accessories import (
     MetalDetector,
+    Torch,
 )
 from ldraw.library.parts.minifig.torsos import TorsoWithClassicSpacePattern
-from ldraw.library.parts import Baseplate16X16, Rock1X1Crystal5Point
 from ldraw.pieces import Piece
-
 
 figure = Person(Vector(0, 0, -10))
 print(figure.head(Yellow, 30))
@@ -44,7 +44,7 @@ print(figure.left_hand_item(Light_Grey, Vector(0, -11, -12), 0, Torch))  # Torch
 print(figure.right_arm(White, 0))
 print(figure.right_hand(White, 0))
 print(
-    figure.right_hand_item(Light_Grey, Vector(0, -23, -12), 90, MetalDetector)
+    figure.right_hand_item(Light_Grey, Vector(0, -23, -12), 90, MetalDetector),
 )  # Metal detector
 
 figure = Person(Vector(97.5, 0, 57.5), Identity().rotate(45, YAxis))
@@ -60,7 +60,7 @@ print(figure.left_hand(Red, 0))
 print(figure.right_arm(Red, -30))
 print(figure.right_hand(Red, 0))
 print(figure.right_hand_item(Light_Grey, Vector(0, -11, -12), 0, Torch))  # Torch
-print("")
+print()
 print(Piece(Light_Grey, Vector(0, 72, 0), Identity(), Baseplate16X16))
 print(Piece(Light_Grey, Vector(60, 72, -60), Identity(), Rock1X1Crystal5Point))
 

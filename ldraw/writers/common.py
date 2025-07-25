@@ -1,20 +1,18 @@
-"""
-Common code for all the Writers
-"""
+"""Common code for all the Writers"""
 
 import sys
 
 from ldraw.geometry import Identity, Vector
-from ldraw.lines import Triangle, Quadrilateral, Line
+from ldraw.library.colours import Main_Colour, White
+from ldraw.lines import Line, Quadrilateral, Triangle
 from ldraw.pieces import Piece
-from ldraw.library.colours import White, Main_Colour
 
 
 def _current_colour(colour, current_colour):
     return current_colour if colour == Main_Colour else colour.code
 
 
-class Current(object):
+class Current:
     """an instance of this is passed around during rendering"""
 
     # pylint: disable=too-few-public-methods
@@ -25,7 +23,7 @@ class Current(object):
         self.position = position
 
 
-class Writer(object):
+class Writer:
     # pylint: disable=too-many-arguments, too-few-public-methods
     """Common logic for PNG, SVG, POV writers"""
 

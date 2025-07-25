@@ -1,10 +1,8 @@
-"""
-Some utils functions
-"""
+"""Some utils functions"""
 
 import collections
-import re
 import os
+import re
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -14,15 +12,13 @@ def strtobool(val):
     val = val.lower()
     if val in ("y", "yes", "t", "true", "on", "1"):
         return True
-    elif val in ("n", "no", "f", "false", "off", "0"):
+    if val in ("n", "no", "f", "false", "off", "0"):
         return False
-    else:
-        raise ValueError(f"invalid truth value {val!r}")
+    raise ValueError(f"invalid truth value {val!r}")
 
 
 def clean(input_string):
-    """
-    Cleans a description string:
+    """Cleans a description string:
 
     :param input_string:
     :return:
@@ -48,14 +44,14 @@ def prompt(query):
 
 
 def ensure_exists(path):
-    """makes the directory if it does not exist"""
+    """Makes the directory if it does not exist"""
     os.makedirs(path, exist_ok=True)
     return path
 
 
 # https://stackoverflow.com/a/6027615
 def flatten(input_dict, parent_key="", sep="."):
-    """flatten a dictionary"""
+    """Flatten a dictionary"""
     items = []
     for key, value in input_dict.items():
         new_key = parent_key + sep + key if parent_key else key
@@ -68,7 +64,7 @@ def flatten(input_dict, parent_key="", sep="."):
 
 # https://stackoverflow.com/a/6027615
 def flatten2(input_dict, parent_key=None):
-    """flatten a dictionary"""
+    """Flatten a dictionary"""
     items = []
     for key, value in input_dict.items():
         new_key = parent_key + (key,) if parent_key is not None else (key,)

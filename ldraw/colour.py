@@ -1,5 +1,4 @@
-"""
-colours.py - Colour definitions for the Python ldraw package.
+"""colours.py - Colour definitions for the Python ldraw package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -20,12 +19,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 
-class Colour(object):
+class Colour:
     # pylint: disable=too-many-arguments, too-few-public-methods
     """a Colour, uniquely identified by a code"""
 
     def __init__(
-        self, code=None, name=None, rgb=None, alpha=None, colour_attributes=None
+        self,
+        code=None,
+        name=None,
+        rgb=None,
+        alpha=None,
+        colour_attributes=None,
     ):
         self.code = code
         self.name = name

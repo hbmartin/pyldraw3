@@ -6,10 +6,9 @@ from os.path import join
 
 import pytest
 
-from ldraw import generate, LibraryImporter
+from ldraw import LibraryImporter, generate
 from ldraw.colour import Colour
 from ldraw.config import Config
-
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +23,11 @@ def test_ldraw_library():
     )
     generate(config, warn=False)
     LibraryImporter.set_config(config)
-    yield config.generated_path
+    return config.generated_path
 
 
 def test_library_gen_files(test_ldraw_library):
-    """generated library contains the right files"""
+    """Generated library contains the right files"""
     content = {
         os.path.relpath(os.path.join(dp, f), test_ldraw_library)
         for dp, dn, fn in os.walk(test_ldraw_library)
@@ -48,8 +47,7 @@ def test_library_gen_files(test_ldraw_library):
 
 
 def test_library_gen_import(test_ldraw_library):
-    """generated library is importable"""
-    import ldraw.library.parts
+    """Generated library is importable"""
     from ldraw import library
 
     assert set(library.__all__) == {"parts", "colours"}
@@ -68,7 +66,7 @@ def test_library_gen_import(test_ldraw_library):
 
     assert Brick2X4 == "3001"
 
-    from ldraw.library.colours import Reddish_Gold, ColoursByName, ColoursByCode
+    from ldraw.library.colours import ColoursByCode, ColoursByName, Reddish_Gold
 
     expected_color = Colour(189, "Reddish_Gold", "#AC8247", 255, ["PEARLESCENT"])
 

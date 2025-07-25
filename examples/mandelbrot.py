@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-mandelbrot.py - An example of brick artwork.
+"""mandelbrot.py - An example of brick artwork.
 
 Copyright (C) 2012 David Boddie <david@boddie.org.uk>
 
@@ -21,18 +20,18 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from ldraw.library.colours import (
-    Blue_Violet,
+    Black,
     Blue,
+    Blue_Violet,
+    Green,
     Light_Blue,
     Light_Green,
-    Green,
-    Yellow,
-    Orange,
-    Red,
     Magenta,
+    Orange,
     Purple,
-    Black,
+    Red,
     White,
+    Yellow,
 )
 from ldraw.library.parts import Brick1X1
 from ldraw.pieces import *

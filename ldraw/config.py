@@ -1,16 +1,12 @@
-"""
-takes care of reading and writing a configuration in config.yml
-"""
+"""takes care of reading and writing a configuration in config.yml"""
 
 import argparse
 import os
-import typing
 
 import yaml
 
 from ldraw import download
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
-
 
 CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")
 
@@ -20,7 +16,7 @@ def is_valid_config_file(parser, arg):
         parser.error("The file %s does not exist!" % arg)
     else:
         try:
-            with open(arg, "r") as f:
+            with open(arg) as f:
                 result = yaml.load(f, Loader=yaml.SafeLoader)
                 assert result is not None
             return arg
@@ -36,8 +32,7 @@ def get_config(config_file: str | None = None) -> str:
     if config_file is None:
         args, unknown = parser.parse_known_args()
         return args.config if args.config is not None else CONFIG_FILE
-    else:
-        return config_file
+    return config_file
 
 
 class Config:
@@ -45,7 +40,9 @@ class Config:
     generated_path: str
 
     def __init__(
-        self, ldraw_library_path: str | None = None, generated_path: str | None = None
+        self,
+        ldraw_library_path: str | None = None,
+        generated_path: str | None = None,
     ):
         self.ldraw_library_path = (
             ldraw_library_path
@@ -63,7 +60,7 @@ class Config:
         config_path = get_config(config_file)
 
         try:
-            with open(config_path, "r") as config_file:
+            with open(config_path) as config_file:
                 cfg = yaml.load(config_file, Loader=yaml.SafeLoader)
                 return cls(
                     ldraw_library_path=cfg.get("ldraw_library_path"),
@@ -76,7 +73,7 @@ class Config:
         return f"Config({self.ldraw_library_path=}, {self.generated_path=})"
 
     def write(self, config_file=None):
-        """write the config to config.yml"""
+        """Write the config to config.yml"""
         config_path = get_config(config_file=config_file)
 
         with open(config_path, "w") as config_file:

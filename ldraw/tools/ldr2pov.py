@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-"""
-ldr2pov.py - An LDraw to POV-Ray convertor tool.
+"""ldr2pov.py - An LDraw to POV-Ray convertor tool.
 
 Copyright (C) 2009 David Boddie <david@boddie.org.uk>
 
@@ -24,8 +23,7 @@ import argparse
 import sys
 
 from ldraw.config import Config
-from ldraw.tools import vector_position, get_model
-
+from ldraw.tools import get_model, vector_position
 
 SKY_SPHERE_FORMAT_STRING = """sky_sphere {
   pigment
@@ -62,7 +60,6 @@ light_source {
 
 def main():
     """ldr2pov main function"""
-
     description = """Converts the LDraw file to a POV-Ray file.
     
 The camera position is a single x,y,z argument where each coordinate
@@ -100,7 +97,7 @@ each component should be specified as a floating point number between
 
 
 def ldr2pov(config, ldraw_model_file, pov_path, camera_position, look_at_position, sky):
-    """actual ldr2pov implementation"""
+    """Actual ldr2pov implementation"""
     model, parts = get_model(config, ldraw_model_file)
 
     with open(pov_path, "w") as pov_file:
@@ -128,7 +125,7 @@ def ldr2pov(config, ldraw_model_file, pov_path, camera_position, look_at_positio
             pov_file.write(LIGHT_FORMAT_STRING % lights)
 
         pov_file.write(
-            CAMERA_FORMAT_STRING % (camera_position.repr, look_at_position.repr)
+            CAMERA_FORMAT_STRING % (camera_position.repr, look_at_position.repr),
         )
 
         if sky:

@@ -1,8 +1,9 @@
+from unittest.mock import patch
+
 import pytest
-from mock import patch
 
 import ldraw
-from ldraw.parts import Parts, PartError
+from ldraw.parts import PartError, Parts
 
 
 def test_load_parts():
@@ -32,7 +33,7 @@ def test_load_primitives():
 
 
 def new_try_load(path):
-    raise IOError()
+    raise OSError
 
 
 @patch.object(ldraw.parts.Parts, "try_load", side_effect=new_try_load)

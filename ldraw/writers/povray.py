@@ -1,5 +1,4 @@
-"""
-povray.py - A POV-Ray writer for the ldraw Python package.
+"""povray.py - A POV-Ray writer for the ldraw Python package.
 
 Copyright (C) 2009 David Boddie <david@boddie.org.uk>
 
@@ -21,8 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys
 
-from ldraw.library.colours import Main_Colour as Current
 from ldraw.geometry import Vector
+from ldraw.library.colours import Main_Colour as Current
 from ldraw.lines import Quadrilateral, Triangle
 from ldraw.pieces import Piece
 
@@ -59,7 +58,7 @@ object {
 """
 
 POV_FORMAT_STRING_TRIANGLE = (
-    "  <%1.3f, %1.3f, %1.3f>, " "<%1.3f, %1.3f, %1.3f>, " "<%1.3f, %1.3f, %1.3f>\n"
+    "  <%1.3f, %1.3f, %1.3f>, <%1.3f, %1.3f, %1.3f>, <%1.3f, %1.3f, %1.3f>\n"
 )
 
 POV_FORMAT_STRING = """matrix <%1.3f, %1.3f, %1.3f,
@@ -80,11 +79,10 @@ def _object_name(part):
     return "part" + part.replace("-", "_").replace("\\", "_").replace("#", "_")
 
 
-class POVRayWriter(object):
+class POVRayWriter:
     # pylint: disable=too-few-public-methods
-    """
-    Writes a POV file from a model
-    """
+    """Writes a POV file from a model"""
+
     ColourAttributes = {
         "CHROME": ("metallic 1.0", "specular 0.8", "brilliance 3", "diffuse 0.6"),
         "PEARLESCENT": ("diffuse 0.7", "specular 0.8"),
@@ -102,12 +100,10 @@ class POVRayWriter(object):
         self.warnings = []
 
     def write(self, model):
-        """
-        Writes the provided model to self.pov_file
+        """Writes the provided model to self.pov_file
         :param model: a Part from a .ldr file
         :return:
         """
-
         # Define objects for the pieces first.
         objects = {}
         ordered_objects = []
@@ -229,7 +225,7 @@ class POVRayWriter(object):
                 continue
             if obj.matrix.fix_diagonal():
                 self.warnings.append(
-                    ("Correcting diagonal matrix elements for %s.", obj.part)
+                    ("Correcting diagonal matrix elements for %s.", obj.part),
                 )
             if obj.matrix.det() == 0.0:
                 self.warnings.append(("Discarding %s with singular matrix.", obj.part))
@@ -274,7 +270,8 @@ class POVRayWriter(object):
             if isinstance(obj, Piece):
                 # Define this piece, too.
                 ordered_objects = ordered_objects + self._create_piece_objects(
-                    obj, objects
+                    obj,
+                    objects,
                 )
                 # Record the object as part of the piece's definition.
                 definition.append(obj)

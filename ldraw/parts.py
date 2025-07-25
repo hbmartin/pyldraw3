@@ -1,5 +1,4 @@
-"""
-parts.py - Part management classes for the Python ldraw package.
+"""parts.py - Part management classes for the Python ldraw package.
 
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 
@@ -32,13 +31,11 @@ import inflect
 from attridict import AttriDict
 
 from ldraw.colour import Colour
-from ldraw.config import Config
 from ldraw.errors import PartError
 from ldraw.lines import (
     MetaCommand,
 )
 from ldraw.part import Part
-
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
@@ -115,6 +112,7 @@ CATEGORIES = {
 class Parts:
     # pylint: disable=too-many-instance-attributes
     """Part class"""
+
     ColourAttributes = ("CHROME", "PEARLESCENT", "RUBBER", "MATTE_METALLIC", "METAL")
 
     @classmethod
@@ -134,7 +132,7 @@ class Parts:
         self.by_name = {}
         self.by_code = {}
         self.by_code_name = {}
-        self.by_category = defaultdict(lambda: {})
+        self.by_category = defaultdict(dict)
 
         self.primitives_by_name = {}
         self.primitives_by_code = {}
@@ -156,7 +154,7 @@ class Parts:
                 arms={},
                 hands={},
                 accessories={},
-            )
+            ),
         )
 
         self.minifig_descriptions = {
@@ -197,7 +195,7 @@ class Parts:
         split = part_description.strip(" ~=_|").split()
 
         if (split[0].lower() == "space" or split[0].lower() == "castle") and len(
-            split
+            split,
         ) >= 2:
             potential = split[1]
         else:
@@ -206,11 +204,10 @@ class Parts:
             return potential
 
     def load(self, parts_lst):
-        """load parts from a path"""
-
+        """Load parts from a path"""
         try:
             self.try_load(parts_lst)
-        except IOError:
+        except OSError:
             raise PartError("Failed to load parts file: %s" % parts_lst)
 
         # If we successfully loaded the files then record the path and look for
@@ -219,10 +216,9 @@ class Parts:
         directory = os.path.split(self.path)[0]
         for item in os.listdir(directory):
             obj = os.path.join(directory, item)
-            if item.lower() == "parts" and os.path.isdir(obj):
-                self.parts_dirs.append(obj)
-                self._find_parts_subdirs(obj)
-            elif item.lower() == "p" and os.path.isdir(obj):
+            if (item.lower() == "parts" and os.path.isdir(obj)) or (
+                item.lower() == "p" and os.path.isdir(obj)
+            ):
                 self.parts_dirs.append(obj)
                 self._find_parts_subdirs(obj)
             elif item.lower() == "ldconfig" + os.extsep + "ldr":
@@ -246,7 +242,7 @@ class Parts:
                 self.by_category[category.lower()][description] = code
 
     def try_load(self, parts_lst):
-        """try loading parts from a parts.lst file"""
+        """Try loading parts from a parts.lst file"""
         with codecs.open(parts_lst, "r", encoding="utf-8") as parts_lst_file:
             for line in parts_lst_file.readlines():
                 pieces = re.split(DOT_DAT, line)
@@ -259,7 +255,7 @@ class Parts:
                 self.by_code_name[(code, description)] = None
 
     def section_find(self, pieces):
-        """returns code, description from a pieces element"""
+        """Returns code, description from a pieces element"""
         code = pieces[0]
         description = pieces[1].strip()
         for key, section in self.parts["minifig"].items():
@@ -386,5 +382,5 @@ class Parts:
                 description = pieces[1].strip()
                 self.primitives_by_name[description] = code
                 self.primitives_by_code[code] = description
-        except IOError:
+        except OSError:
             raise PartError("Failed to load primitives file: %s" % path)
