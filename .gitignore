@@ -12,5 +12,5 @@ dist/
 poetry.lock
 /.cached-generated/
 build/
-ldraw/*.egg-info/
+pyldraw3/*.egg-info/
 *.ldr

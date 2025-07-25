@@ -111,12 +111,13 @@ CATEGORIES = {
 
 class Parts:
     # pylint: disable=too-many-instance-attributes
-    """Part class"""
+    """Part class."""
 
     ColourAttributes = ("CHROME", "PEARLESCENT", "RUBBER", "MATTE_METALLIC", "METAL")
 
     @classmethod
     def get(cls, parts_lst, *args, **kwargs):
+        """Get a Parts instance using memoization based on file hash."""
         md5_parts_lst = hashlib.md5(open(parts_lst, "rb").read()).hexdigest()
         if md5_parts_lst in MEMOIZED:
             return MEMOIZED[md5_parts_lst]
@@ -192,6 +193,7 @@ class Parts:
                     self.parts[key] = value
 
     def get_category(self, part_description):
+        """Get the category of a part based on its description."""
         split = part_description.strip(" ~=_|").split()
 
         if (split[0].lower() == "space" or split[0].lower() == "castle") and len(
@@ -204,7 +206,7 @@ class Parts:
             return potential
 
     def load(self, parts_lst):
-        """Load parts from a path"""
+        """Load parts from a path."""
         try:
             self.try_load(parts_lst)
         except OSError:
@@ -242,7 +244,7 @@ class Parts:
                 self.by_category[category.lower()][description] = code
 
     def try_load(self, parts_lst):
-        """Try loading parts from a parts.lst file"""
+        """Try loading parts from a parts.lst file."""
         with codecs.open(parts_lst, "r", encoding="utf-8") as parts_lst_file:
             for line in parts_lst_file.readlines():
                 pieces = re.split(DOT_DAT, line)
@@ -255,7 +257,7 @@ class Parts:
                 self.by_code_name[(code, description)] = None
 
     def section_find(self, pieces):
-        """Returns code, description from a pieces element"""
+        """Return code, description from a pieces element."""
         code = pieces[0]
         description = pieces[1].strip()
         for key, section in self.parts["minifig"].items():

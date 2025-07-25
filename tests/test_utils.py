@@ -1,3 +1,5 @@
+"""Tests for utility functions."""
+
 from ldraw.utils import clean
 
 

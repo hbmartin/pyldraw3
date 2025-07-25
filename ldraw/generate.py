@@ -1,3 +1,5 @@
+"""LDraw library parts.lst generation functionality."""
+
 import re
 from pathlib import Path
 
@@ -22,6 +24,7 @@ def _do_sort(li, mode):
 
 
 def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
+    """Generate a list of parts from the parts directory with metadata."""
     parts = parts_dir.glob("*.dat")
 
     parts_dict = {"_": [], "~": []}
@@ -61,6 +64,7 @@ def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
 
 
 def generate_parts_lst(mode: str, version_dir: Path):
+    """Generate a parts.lst file from the parts directory in an LDraw version."""
     parts_lst_path = version_dir / "ldraw" / "parts.lst"
     parts_folder_path = version_dir / "ldraw" / "parts"
     if parts_lst_path.exists():

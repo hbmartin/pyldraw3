@@ -1,3 +1,5 @@
+"""Resource file access utilities."""
+
 import codecs
 from importlib import resources
 

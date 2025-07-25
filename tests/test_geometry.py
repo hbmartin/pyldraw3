@@ -1,3 +1,5 @@
+"""Tests for geometry functionality."""
+
 import math
 import random
 

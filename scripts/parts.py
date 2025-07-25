@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+"""Example script for part lookup operations."""
+
 from ldraw.parts import Parts
 
 parts = Parts()

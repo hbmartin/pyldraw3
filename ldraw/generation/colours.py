@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Called by ldraw.library_gen to generate the ldraw/library/colours.py file"""
+"""Called by ldraw.library_gen to generate the ldraw/library/colours.py file."""
 import codecs
 import os
 
@@ -10,7 +10,7 @@ from ldraw.utils import camel, clean
 
 
 def gen_colours(parts, library_path):
-    """Generates a colours.py from library data"""
+    """Generate a colours.py from library data."""
     print("generate ldraw.library.colours...")
 
     colours_str = colours_module_content(parts)
@@ -20,6 +20,7 @@ def gen_colours(parts, library_path):
 
 
 def colours_module_content(parts):
+    """Generate the contents of the colours.py module from parts data."""
     colours_mustache = get_resource_content(
         os.path.join("templates", "colours.mustache"),
     )
@@ -31,7 +32,7 @@ def colours_module_content(parts):
 
 
 def get_c_dict(colour):
-    """Gets a dict from a Colour object"""
+    """Get a dict from a Colour object."""
     return {
         "code": colour.code,
         "full_name": colour.name,

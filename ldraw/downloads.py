@@ -1,3 +1,5 @@
+"""LDraw library file download and extraction functionality."""
+
 import logging
 import zipfile
 from pathlib import Path
@@ -17,6 +19,7 @@ cache_ldraw = Path(get_cache_dir())
 
 
 def unpack_version(version_zip: Path, version: str) -> Path:
+    """Unpack a downloaded LDraw library ZIP file to the cache directory."""
     print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
     zip_ref = zipfile.ZipFile(version_zip, "r")
@@ -60,6 +63,7 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
 
 
 def download(show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
+    """Download and unpack an LDraw library version, generating parts.lst file."""
     filename = f"{version}.zip"
     retrieved = (
         _download_progress(f"{LDRAW_URL}/{filename}", filename)

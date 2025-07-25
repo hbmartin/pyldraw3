@@ -1,2 +1,5 @@
+"""Exception classes for pyldraw package."""
+
+
 class PartError(Exception):
-    """An exception happening during Part file processing"""
+    """An exception happening during Part file processing."""

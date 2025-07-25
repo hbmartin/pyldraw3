@@ -23,7 +23,7 @@ from ldraw.writers.common import Writer
 
 
 class Polygon:
-    """Polygon used for SVG rendering"""
+    """Polygon used for SVG rendering."""
 
     # pylint: disable=too-few-public-methods
 
@@ -67,7 +67,7 @@ POLYGON_FORMAT = (
 
 
 class SVGArgs:
-    """Data-only container for arguments passed to an SVG writer"""
+    """Data-only container for arguments passed to an SVG writer."""
 
     # pylint: disable=too-few-public-methods
 
@@ -107,7 +107,7 @@ def _project_polygons(width, height, polygons):
 
 
 def write_preamble(args, svg_file):
-    """Write the preamble and polygon def"""
+    """Write the preamble and polygon def."""
     svg_file.write(SVG_PREAMBLE.format(view1=0.0, view2=0.0, svg_args=args))
     if args.background_colour is not None:
         arguments = (
@@ -125,11 +125,11 @@ def write_preamble(args, svg_file):
 
 
 class SVGWriter(Writer):
-    """Writes a model into a SVG"""
+    """Writes a model into a SVG."""
 
     # pylint: disable=too-few-public-methods
     def write(self, model, svg_file, svg_args):
-        """Writes the SVG"""
+        """Write the SVG."""
         polygons = self._polygons_from_objects(model)
         polygons.sort()
         shapes = _project_polygons(svg_args.width, svg_args.height, polygons)

@@ -1,3 +1,5 @@
+"""Tests for configuration functionality."""
+
 from unittest.mock import mock_open, patch
 
 from pytest import raises

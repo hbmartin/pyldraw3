@@ -81,7 +81,7 @@ def _object_name(part):
 
 class POVRayWriter:
     # pylint: disable=too-few-public-methods
-    """Writes a POV file from a model"""
+    """Writes a POV file from a model."""
 
     ColourAttributes = {
         "CHROME": ("metallic 1.0", "specular 0.8", "brilliance 3", "diffuse 0.6"),
@@ -100,7 +100,8 @@ class POVRayWriter:
         self.warnings = []
 
     def write(self, model):
-        """Writes the provided model to self.pov_file
+        """Write the provided model to self.pov_file.
+
         :param model: a Part from a .ldr file
         :return:
         """

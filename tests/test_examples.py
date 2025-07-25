@@ -1,3 +1,5 @@
+"""Tests for example scripts."""
+
 import contextlib
 import glob
 import os
@@ -27,7 +29,7 @@ def test_ldraw2_config():
 
 
 def _unidiff_output(expected, actual):
-    """Helper function. Returns a string containing the unified diff of two multiline strings."""
+    """Return a string containing the unified diff of two multiline strings."""
     import difflib
 
     expected = expected.splitlines()

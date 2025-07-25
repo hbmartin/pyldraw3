@@ -26,34 +26,50 @@ from numbers import Number
 
 
 class MatrixError(Exception):
+    """Exception raised for matrix operation errors."""
+
     pass
 
 
 class Axis:
+    """Base class for axis representations."""
+
     pass
 
 
 class XAxis(Axis):
+    """X-axis representation."""
+
     pass
 
 
 class YAxis(Axis):
+    """Y-axis representation."""
+
     pass
 
 
 class ZAxis(Axis):
+    """Z-axis representation."""
+
     pass
 
 
 class AngleUnits:
+    """Base class for angle unit representations."""
+
     pass
 
 
 class Radians(AngleUnits):
+    """Radian angle units."""
+
     pass
 
 
 class Degrees(AngleUnits):
+    """Degree angle units."""
+
     pass
 
 
@@ -79,7 +95,7 @@ def _rows_multiplication(r1, r2):
 
 
 class Matrix:
-    """a transformation matrix"""
+    """a transformation matrix."""
 
     def __init__(self, rows):
         self.rows = rows
@@ -120,11 +136,11 @@ class Matrix:
         raise MatrixError
 
     def copy(self):
-        """Make a copy of this matrix"""
+        """Make a copy of this matrix."""
         return Matrix(copy.deepcopy(self.rows))
 
     def rotate(self, angle, axis, units=Degrees):
-        """Rotate the matrix by an angle around an axis"""
+        """Rotate the matrix by an angle around an axis."""
         if units == Degrees:
             c = math.cos(angle / 180.0 * math.pi)
             s = math.sin(angle / 180.0 * math.pi)
@@ -142,11 +158,11 @@ class Matrix:
         return self * rotation
 
     def scale(self, sx, sy, sz):
-        """Scale the matrix by a number"""
+        """Scale the matrix by a number."""
         return Matrix([[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) * self
 
     def transpose(self):
-        """Transpose"""
+        """Transpose."""
         r = self.rows
         return Matrix(
             [
@@ -157,7 +173,7 @@ class Matrix:
         )
 
     def det(self):
-        """Determinant of the matrix"""
+        """Return determinant of the matrix."""
         r = self.rows
         terms = [
             r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]),
@@ -167,7 +183,7 @@ class Matrix:
         return sum(terms)
 
     def flatten(self):
-        """Flatten the matrix"""
+        """Flatten the matrix."""
         return tuple(reduce(lambda x, y: x + y, self.rows))
 
     def fix_diagonal(self):
@@ -186,18 +202,19 @@ class Matrix:
 
 
 def Identity():
-    """A transformation matrix representing Identity"""
+    """Return a transformation matrix representing Identity."""
     return Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
 class Vector:
-    """a Vector in 3D"""
+    """a Vector in 3D."""
 
     def __init__(self, x, y, z):
         self.x, self.y, self.z = x, y, z
 
     @property
     def repr(self):
+        """Return string representation of vector coordinates."""
         return "%f, %f, %f" % (self.x, self.y, self.z)
 
     def __repr__(self):
@@ -260,7 +277,7 @@ class Vector:
         return Vector(self.x, self.y, self.z)
 
     def cross(self, other):
-        """Cross product"""
+        """Cross product."""
         return Vector(
             self.y * other.z - self.z * other.y,
             self.z * other.x - self.x * other.z,
@@ -268,11 +285,11 @@ class Vector:
         )
 
     def dot(self, other):
-        """Dot product"""
+        """Dot product."""
         return self.x * other.x + self.y * other.y + self.z * other.z
 
     def norm(self):
-        """Normalized"""
+        """Normalize the vector."""
         _length = abs(self)
         self.x = self.x / _length
         self.y = self.y / _length
@@ -280,7 +297,7 @@ class Vector:
 
 
 class Vector2D:
-    """a Vector in 2D"""
+    """a Vector in 2D."""
 
     def __init__(self, x, y):
         self.x, self.y = x, y
@@ -337,11 +354,13 @@ class Vector2D:
         return Vector2D(self.x, self.y)
 
     def dot(self, other):
-        """Dot product"""
+        """Dot product."""
         return self.x * other.x + self.y * other.y
 
 
 class CoordinateSystem:
+    """3D coordinate system representation."""
+
     def __init__(
         self,
         x=Vector(1.0, 0.0, 0.0),
@@ -353,4 +372,5 @@ class CoordinateSystem:
         self.z = z
 
     def project(self, p):
+        """Project a point onto this coordinate system."""
         return Vector(p.dot(self.x), p.dot(self.y), p.dot(self.z))

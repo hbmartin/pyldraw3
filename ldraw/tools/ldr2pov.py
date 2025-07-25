@@ -59,7 +59,7 @@ light_source {
 
 
 def main():
-    """ldr2pov main function"""
+    """ldr2pov main function."""
     description = """Converts the LDraw file to a POV-Ray file.
     
 The camera position is a single x,y,z argument where each coordinate
@@ -97,7 +97,7 @@ each component should be specified as a floating point number between
 
 
 def ldr2pov(config, ldraw_model_file, pov_path, camera_position, look_at_position, sky):
-    """Actual ldr2pov implementation"""
+    """Actual ldr2pov implementation."""
     model, parts = get_model(config, ldraw_model_file)
 
     with open(pov_path, "w") as pov_file:

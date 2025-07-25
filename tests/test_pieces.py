@@ -1,3 +1,5 @@
+"""Tests for pieces functionality."""
+
 import pytest
 
 from ldraw.colour import Colour

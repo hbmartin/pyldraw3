@@ -26,7 +26,7 @@ from ldraw.geometry import Identity, Vector
 
 class Piece:
     """a Piece, which is a Part with a certain colour
-    at a certain position and rotation
+    at a certain position and rotation.
     """
 
     def __init__(self, colour, position, matrix, part, group=None):
@@ -55,7 +55,7 @@ class Piece:
 
 
 class Group:
-    """a Group of Pieces"""
+    """a Group of Pieces."""
 
     def __init__(self, position=Vector(0, 0, 0), matrix=Identity()):
         self.position = position
@@ -69,13 +69,13 @@ class Group:
         return "\n".join(text)
 
     def add_piece(self, piece):
-        """Add a piece to the group"""
+        """Add a piece to the group."""
         self.pieces.append(piece)
         if piece.group and piece.group != self:
             piece.group.remove_piece(piece)
         piece.group = self
 
     def remove_piece(self, piece):
-        """Remove a piece from the group"""
+        """Remove a piece from the group."""
         self.pieces.remove(piece)
         piece.group = None

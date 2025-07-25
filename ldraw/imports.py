@@ -1,3 +1,5 @@
+"""Dynamic import system for LDraw library modules."""
+
 import importlib.util
 import logging
 import os
@@ -54,10 +56,11 @@ def load_lib(library_path, fullname):
 
 
 class LibraryImporter:
-    """Added to sys.meta_path as an import hook"""
+    """Added to sys.meta_path as an import hook."""
 
     @classmethod
     def valid_module(cls, fullname):
+        """Check if the module name is a valid library module name."""
         if fullname.startswith(VIRTUAL_MODULE):
             rest = fullname[len(VIRTUAL_MODULE) :]
             if not rest or rest.startswith("."):
@@ -67,12 +70,15 @@ class LibraryImporter:
 
     @classmethod
     def set_config(cls, config):
+        """Set the configuration for the library importer and clean cached modules."""
         cls.config = config
         cls.clean()
 
     @classmethod
     def find_module(cls, fullname, path=None):  # pylint:disable=unused-argument
-        """This method is called by Python if this class
+        """Find module for the given fullname.
+
+        This method is called by Python if this class
         is on sys.path. fullname is the fully-qualified
         name of the module to look for, and path is either
         __path__ (for submodules and subpackages) or None (for
@@ -97,7 +103,10 @@ class LibraryImporter:
 
     @classmethod
     def find_spec(cls, fullname, path, target=None):
-        # PEP 451: find_spec should return a ModuleSpec if the module can be handled
+        """Find module spec for the given fullname.
+
+        PEP 451: find_spec should return a ModuleSpec if the module can be handled.
+        """
         if cls.valid_module(fullname):
             # Use importlib.util.spec_from_loader for compatibility
             return importlib.util.spec_from_loader(fullname, cls())
@@ -105,6 +114,7 @@ class LibraryImporter:
 
     @classmethod
     def clean(cls):
+        """Clean cached library modules from sys.modules."""
         for fullname in list(sys.modules.keys()):
             if cls.valid_module(fullname):
                 del sys.modules[fullname]
@@ -114,12 +124,13 @@ class LibraryImporter:
                 delattr(ldraw_mod, "library")
 
     def get_code(self, fullname):
+        """Get the code object for a module (not used in this implementation)."""
         return None
 
     def load_module(self, fullname):
-        """This method is called by Python if CustomImporter.find_module
-        does not return None. fullname is the fully-qualified name
-        of the module/package that was requested.
+        """Load module if CustomImporter.find_module does not return None.
+
+        fullname is the fully-qualified name of the module/package that was requested.
         """
         if not self.valid_module(fullname):
             # Raise ImportError as per PEP #302 if the requested module/package

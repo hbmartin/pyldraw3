@@ -1,3 +1,5 @@
+"""Tests for tools functionality."""
+
 import codecs
 import shutil
 import tempfile

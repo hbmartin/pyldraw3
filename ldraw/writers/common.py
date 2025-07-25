@@ -1,4 +1,4 @@
-"""Common code for all the Writers"""
+"""Common code for all the Writers."""
 
 import sys
 
@@ -13,7 +13,7 @@ def _current_colour(colour, current_colour):
 
 
 class Current:
-    """an instance of this is passed around during rendering"""
+    """an instance of this is passed around during rendering."""
 
     # pylint: disable=too-few-public-methods
 
@@ -25,7 +25,7 @@ class Current:
 
 class Writer:
     # pylint: disable=too-many-arguments, too-few-public-methods
-    """Common logic for PNG, SVG, POV writers"""
+    """Common logic for PNG, SVG, POV writers."""
 
     def __init__(self, camera_position, system, parts):
         self.camera_position = camera_position

@@ -1,3 +1,5 @@
+"""Part file parsing and processing functionality."""
+
 import codecs
 import re
 
@@ -18,7 +20,7 @@ ENDS_DOT_DAT = re.compile(r"\.DAT$", flags=re.IGNORECASE)
 
 
 def colour_from_str(colour_str):
-    """Gets a Colour from a string"""
+    """Get a Colour from a string."""
     try:
         return int(colour_str)
     except ValueError:
@@ -114,7 +116,7 @@ HANDLERS = {
 
 
 class Part:
-    """Contains data from a LDraw part file"""
+    """Contains data from a LDraw part file."""
 
     def __init__(self, path=None, file=None):
         if path is None and file is None:
@@ -130,6 +132,7 @@ class Part:
 
     @property
     def lines(self):
+        """Yield lines from the part file."""
         try:
             if self.file is None:
                 with codecs.open(self.path, "r", encoding="utf-8") as file:
@@ -144,7 +147,7 @@ class Part:
 
     @property
     def objects(self):
-        """Load the Part from its path"""
+        """Load the Part from its path."""
         for number, line in enumerate(self.lines):
             pieces = line.split()
             if not pieces:
@@ -166,12 +169,14 @@ class Part:
 
     @property
     def description(self):
+        """Get the description of the part from the first line of the file."""
         if self._description is None:
             self._description = " ".join(next(self.lines).split()[1:])
         return self._description
 
     @property
     def category(self):
+        """Get the category of the part from CATEGORY meta command."""
         if self._category is None:
             for obj in self.objects:
                 if not isinstance(obj, Comment) and not isinstance(obj, MetaCommand):

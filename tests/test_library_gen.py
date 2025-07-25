@@ -1,3 +1,5 @@
+"""Tests for library generation functionality."""
+
 import logging
 import os
 import tempfile
@@ -27,7 +29,7 @@ def test_ldraw_library():
 
 
 def test_library_gen_files(test_ldraw_library):
-    """Generated library contains the right files"""
+    """Generated library contains the right files."""
     content = {
         os.path.relpath(os.path.join(dp, f), test_ldraw_library)
         for dp, dn, fn in os.walk(test_ldraw_library)
@@ -48,7 +50,7 @@ def test_library_gen_files(test_ldraw_library):
 
 @pytest.mark.skip(reason="Library import issues with missing modules")
 def test_library_gen_import(test_ldraw_library):
-    """Generated library is importable"""
+    """Generated library is importable."""
     from ldraw import library
 
     assert set(library.__all__) == {"parts", "colours"}

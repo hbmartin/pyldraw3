@@ -1,3 +1,5 @@
+"""LDraw library update download functionality."""
+
 import html.parser
 
 import requests
@@ -16,6 +18,7 @@ class AnchorTagParser(html.parser.HTMLParser):
         self.found = False
 
     def handle_starttag(self, tag, attrs):
+        """Handle HTML start tag and extract data-pan attribute from target anchor tag."""
         # Stop parsing if the tag has already been found
         if self.found:
             return
@@ -32,7 +35,7 @@ class AnchorTagParser(html.parser.HTMLParser):
 
 
 def extract_data_pan_from_html(html_content):
-    """Parses HTML content to extract the 'data-pan' attribute from the first
+    """Parse HTML content to extract the 'data-pan' attribute from the first
     anchor tag with a specific href.
 
     Args:
@@ -49,6 +52,7 @@ def extract_data_pan_from_html(html_content):
 
 
 def get_latest_release_id() -> str:
+    """Get the latest LDraw library release ID from the updates page."""
     response = requests.get(UPDATES_PAGE_URL)
     response.raise_for_status()
     pan = extract_data_pan_from_html(response.text)

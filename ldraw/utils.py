@@ -1,4 +1,4 @@
-"""Some utils functions"""
+"""Some utils functions."""
 
 import collections
 import os
@@ -18,7 +18,7 @@ def strtobool(val):
 
 
 def clean(input_string):
-    """Cleans a description string:
+    """Clean a description string.
 
     :param input_string:
     :return:
@@ -29,7 +29,7 @@ def clean(input_string):
 
 
 def camel(input_string):
-    """Returns a CamelCase string"""
+    """Return a CamelCase string."""
     return "".join(x for x in input_string.title() if not x.isspace())
 
 
@@ -44,14 +44,14 @@ def prompt(query):
 
 
 def ensure_exists(path):
-    """Makes the directory if it does not exist"""
+    """Make the directory if it does not exist."""
     os.makedirs(path, exist_ok=True)
     return path
 
 
 # https://stackoverflow.com/a/6027615
 def flatten(input_dict, parent_key="", sep="."):
-    """Flatten a dictionary"""
+    """Flatten a dictionary."""
     items = []
     for key, value in input_dict.items():
         new_key = parent_key + sep + key if parent_key else key
@@ -64,7 +64,7 @@ def flatten(input_dict, parent_key="", sep="."):
 
 # https://stackoverflow.com/a/6027615
 def flatten2(input_dict, parent_key=None):
-    """Flatten a dictionary"""
+    """Flatten a dictionary."""
     items = []
     for key, value in input_dict.items():
         new_key = parent_key + (key,) if parent_key is not None else (key,)

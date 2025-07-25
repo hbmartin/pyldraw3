@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generates the ldraw.library.parts namespace"""
+"""Generates the ldraw.library.parts namespace."""
 import codecs
 import os
 
@@ -15,6 +15,7 @@ SECTION_SEP = "#|#"
 
 
 def gen_parts(parts, library_path):
+    """Generate the ldraw.library.parts namespace modules."""
     print("generate ldraw.library.parts, this might take a long time...")
     parts_dir = ensure_exists(os.path.join(library_path, "parts"))
 
@@ -22,6 +23,7 @@ def gen_parts(parts, library_path):
 
 
 def recursive_gen_parts(parts_parts, directory):
+    """Recursively generate parts modules for nested part categories."""
 
     for name, value in list(parts_parts.items()):
         if isinstance(value, AttriDict):
@@ -57,7 +59,7 @@ def recursive_gen_parts(parts_parts, directory):
 
 
 def generate_parts__init__(module_parts, directory, sections, parts_parts):
-    """Generate the appropriate __init__.py to make submodules in ldraw.library.parts"""
+    """Generate the appropriate __init__.py to make submodules in ldraw.library.parts."""
     parts__init__str = parts__init__content(sections)
 
     parts__init__ = os.path.join(directory, "__init__.py")
@@ -68,6 +70,7 @@ def generate_parts__init__(module_parts, directory, sections, parts_parts):
 
 
 def parts__init__content(sections):
+    """Generate the content for __init__.py files in parts modules."""
     sections = [
         {"module_name": module_name} for module_name in sections if module_name != ""
     ]
@@ -96,7 +99,7 @@ PARTS_TEMPLATE = pystache.parse(
 
 
 def get_part_dict(parts_parts, description):
-    """Gets a dict context for a part"""
+    """Get a dict context for a part."""
     try:
         code = parts_parts[description]
         # part = parts.part(code=code)

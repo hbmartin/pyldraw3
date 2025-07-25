@@ -32,7 +32,7 @@ from ldraw.tools import (
 
 
 def main():
-    """ldr2svg main function"""
+    """ldr2svg main function."""
     description = """Converts the LDraw file to a SVG file.
     
 The viewport size is specified as a pair of floating point numbers representing
@@ -87,7 +87,7 @@ def ldr2svg(
     look_at_position,
     svg_args,
 ):  # pylint: disable=too-many-arguments
-    """ldr2svg actual implementation"""
+    """ldr2svg actual implementation."""
     verify_camera_look_at(camera_position, look_at_position)
 
     model, parts = get_model(config, ldraw_model_file)

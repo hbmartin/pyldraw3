@@ -1,3 +1,5 @@
+"""Tests for download functionality."""
+
 import os
 import zipfile
 from unittest.mock import *

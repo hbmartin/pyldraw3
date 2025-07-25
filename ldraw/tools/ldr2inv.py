@@ -30,7 +30,7 @@ from ldraw.tools import get_model
 
 
 def main():
-    """Main function for ldr2inv"""
+    """Run ldr2inv main functionality."""
     parser = argparse.ArgumentParser()
     parser.add_argument("ldraw_file", type=argparse.FileType(mode="r"))
     parser.add_argument("output", type=argparse.FileType(mode="w"))
@@ -42,7 +42,7 @@ def main():
 
 
 def ldr2inv(config, ldraw_model_file, inventory_path):
-    """Actual ldr2inv implementation"""
+    """Actual ldr2inv implementation."""
     model, parts = get_model(config, ldraw_model_file)
 
     inventory = {}

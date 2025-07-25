@@ -1,4 +1,4 @@
-"""takes care of reading and writing a configuration in config.yml"""
+"""takes care of reading and writing a configuration in config.yml."""
 
 import argparse
 import os
@@ -12,6 +12,7 @@ CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")
 
 
 def is_valid_config_file(parser, arg):
+    """Validate that the given config file exists and is valid YAML."""
     if not os.path.exists(arg):
         parser.error("The file %s does not exist!" % arg)
     else:
@@ -29,6 +30,7 @@ parser.add_argument("--config", type=lambda x: is_valid_config_file(parser, x))
 
 
 def get_config(config_file: str | None = None) -> str:
+    """Get the path to the configuration file, either from arguments or default."""
     if config_file is None:
         args, unknown = parser.parse_known_args()
         return args.config if args.config is not None else CONFIG_FILE
@@ -36,6 +38,8 @@ def get_config(config_file: str | None = None) -> str:
 
 
 class Config:
+    """Configuration settings for pyldraw."""
+
     ldraw_library_path: str
     generated_path: str
 
@@ -57,6 +61,7 @@ class Config:
 
     @classmethod
     def load(cls, config_file=None):
+        """Load configuration from YAML file or create default configuration."""
         config_path = get_config(config_file)
 
         try:
@@ -73,7 +78,7 @@ class Config:
         return f"Config({self.ldraw_library_path=}, {self.generated_path=})"
 
     def write(self, config_file=None):
-        """Write the config to config.yml"""
+        """Write the config to config.yml."""
         config_path = get_config(config_file=config_file)
 
         with open(config_path, "w") as config_file:
@@ -86,6 +91,7 @@ class Config:
 
 
 def use(version, config=None):
+    """Set a specific LDraw library version to use in the configuration."""
     cache_ldraw = get_cache_dir()
     ldraw_library_path = os.path.join(cache_ldraw, version)
     if not os.path.exists(ldraw_library_path):

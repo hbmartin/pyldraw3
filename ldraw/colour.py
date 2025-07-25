@@ -21,7 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 class Colour:
     # pylint: disable=too-many-arguments, too-few-public-methods
-    """a Colour, uniquely identified by a code"""
+    """a Colour, uniquely identified by a code."""
 
     def __init__(
         self,

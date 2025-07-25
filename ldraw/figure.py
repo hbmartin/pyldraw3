@@ -24,6 +24,8 @@ from ldraw.pieces import Piece
 
 
 def dependent_piece(dep):
+    """Mark a piece method as dependent on another piece existing."""
+
     def decorator(fn):
         def wrapped(self, *args, **kwargs):
             try:
@@ -51,6 +53,8 @@ Head = HeadWithSwSmirkAndBrownEyebrowsPattern = "3626bps5"
 
 
 class Person:
+    """Representation of a LEGO minifigure."""
+
     def __init__(self, position=Vector(0, 0, 0), matrix=Identity(), group=None):
         self.position = position
         self.matrix = matrix
@@ -58,7 +62,7 @@ class Person:
         self.group = group
 
     def head(self, colour, angle=0, part=Head):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * Vector(0, -24, 0)
         piece = Piece(
             colour,
@@ -72,17 +76,18 @@ class Person:
 
     @dependent_piece("head")
     def hat(self, head, colour, part="3901"):
+        """Add a hat piece to the figure's head."""
         # Displacement from head
         displacement = head.position + head.matrix * Vector(0, 0, 0)
         piece = Piece(colour, displacement, head.matrix, part, self.group)
         return piece
 
     def torso(self, colour, part=Torso):
-        """Torso piece"""
+        """Torso piece."""
         return Piece(colour, self.position, self.matrix, part, self.group)
 
     def backpack(self, colour, displacement=Vector(0, 0, 0), part=Airtanks):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * displacement
         return Piece(
             colour,
@@ -93,7 +98,7 @@ class Person:
         )
 
     def hips_and_legs(self, colour, part=HipsAndLegs):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * Vector(0, 32, 0)
         return Piece(
             colour,
@@ -104,7 +109,7 @@ class Person:
         )
 
     def hips(self, colour, part=Hips):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * Vector(0, 32, 0)
         return Piece(
             colour,
@@ -115,7 +120,7 @@ class Person:
         )
 
     def left_arm(self, colour, angle=0, part=ArmLeft):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * Vector(15, 8, 0)
         piece = Piece(
             colour,
@@ -131,6 +136,7 @@ class Person:
 
     @dependent_piece("left arm")
     def left_hand(self, left_arm, colour, angle=0, part=Hand):
+        """Add a left hand piece to the figure's left arm."""
         # Displacement from left hand
         displacement = left_arm.position + left_arm.matrix * Vector(4, 17, -9)
         matrix = (
@@ -144,7 +150,7 @@ class Person:
 
     @dependent_piece("left hand")
     def left_hand_item(self, left_hand, colour, displacement, angle=0, part=None):
-        """Displacement from left hand"""
+        """Displacement from left hand."""
         if not part:
             return None
         # Displacement from left hand
@@ -158,7 +164,7 @@ class Person:
         return piece
 
     def right_arm(self, colour, angle=0, part=ArmRight):
-        """Displacement from torso"""
+        """Displacement from torso."""
         displacement = self.matrix * Vector(-15, 8, 0)
         piece = Piece(
             colour,
@@ -174,6 +180,7 @@ class Person:
 
     @dependent_piece("right arm")
     def right_hand(self, right_arm, colour, angle=0, part=Hand):
+        """Add a right hand piece to the figure's right arm."""
         # Displacement from right arm
         displacement = right_arm.position + right_arm.matrix * Vector(-4, 17, -9)
         matrix = (
@@ -187,7 +194,7 @@ class Person:
 
     @dependent_piece("right hand")
     def right_hand_item(self, right_hand, colour, displacement, angle=0, part=None):
-        """Add a right hand item"""
+        """Add a right hand item."""
         if not part:
             return None
         # Displacement from right hand
@@ -201,7 +208,7 @@ class Person:
         return piece
 
     def left_leg(self, colour, angle=0, part=LegLeft):
-        """Add a left leg"""
+        """Add a left leg."""
         displacement = self.matrix * Vector(0, 44, 0)
         piece = Piece(
             colour,
@@ -215,7 +222,7 @@ class Person:
 
     @dependent_piece("left leg")
     def left_shoe(self, left_leg, colour, angle=0, part=None):
-        """Add a shoe on the left"""
+        """Add a shoe on the left."""
         if not part:
             return None
         # Displacement from left leg
@@ -225,7 +232,7 @@ class Person:
         return piece
 
     def right_leg(self, colour, angle=0, part=LegRight):
-        """ " Add a right leg"""
+        """ " Add a right leg."""
         displacement = self.matrix * Vector(0, 44, 0)
         piece = Piece(
             colour,
@@ -239,7 +246,7 @@ class Person:
 
     @dependent_piece("right leg")
     def right_shoe(self, right_leg, colour, angle=0, part=None):
-        """Add a shoe on the right"""
+        """Add a shoe on the right."""
         if not part:
             return None
         # Displacement from right leg

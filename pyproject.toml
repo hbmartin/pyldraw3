@@ -76,6 +76,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["ALL"]
+ignore = ["D105", "D107", "S101", "T201"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D103"]
+"examples/*.py" = ["D103"]
 
 [tool.ruff.format]
 # Same as Black.
@@ -100,8 +105,13 @@ exclude_lines = [
   "if TYPE_CHECKING:",
 ]
 
-[tool.setuptools.packages.find]
-where = ["ldraw"]
+[build-system]
+requires = ["uv_build>=0.8.3,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "ldraw"
 
 [tool.uv]
 package = true

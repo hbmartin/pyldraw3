@@ -1,9 +1,9 @@
-"""Some geometry elements used in Writers"""
+"""Some geometry elements used in Writers."""
 
 
 class Edge:
     # pylint:disable=too-few-public-methods
-    """Holds an edge of a polygon, used during pixel rendering"""
+    """Holds an edge of a polygon, used during pixel rendering."""
 
     def __init__(self, point1, point2):
         """:param point1:
@@ -19,7 +19,7 @@ class Edge:
 
     @property
     def sort_key(self):
-        """Used for sorting the edges before rendering"""
+        """Used for sorting the edges before rendering."""
         return (
             self.point1.y,
             self.point2.y,

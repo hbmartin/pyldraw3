@@ -35,7 +35,7 @@ from ldraw.writers.png import PNGWriter
 
 
 def main():
-    """ldr2png main function"""
+    """ldr2png main function."""
     description = """Converts the LDraw file to a PNG file.
     
 The image size must be specified in the format <width>x<height> where the width
@@ -94,7 +94,7 @@ The optional sky background and stroke colours are PNG colours, either specified
 
 
 def ldr2png(config, ldraw_file, png_file, look_at_position, camera_position, png_args):
-    """Implementation of ldr2png"""
+    """Implement ldr2png functionality."""
     verify_camera_look_at(camera_position, look_at_position)
 
     model, parts = get_model(config, ldraw_file)

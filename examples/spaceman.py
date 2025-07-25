@@ -1,3 +1,5 @@
+"""Example script demonstrating spaceman minifigure construction."""
+
 import random
 
 from ldraw.figure import Person

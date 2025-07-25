@@ -1,3 +1,5 @@
+"""Tests for colour functionality."""
+
 from ldraw.colour import Colour
 
 

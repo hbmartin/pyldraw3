@@ -1,3 +1,5 @@
+"""Tests for parts loading functionality."""
+
 from unittest.mock import patch
 
 import pytest

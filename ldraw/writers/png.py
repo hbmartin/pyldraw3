@@ -28,7 +28,7 @@ from ldraw.writers.geometry import Z_MAX, Edge
 
 
 class PNGArgs:
-    """Args to pass to a PNG writer"""
+    """Args to pass to a PNG writer."""
 
     def __init__(
         self,
@@ -49,11 +49,11 @@ class PNGArgs:
 
 
 class PNGWriter(Writer):
-    """Renders a LDR model into a PNG"""
+    """Renders a LDR model into a PNG."""
 
     # pylint: disable=too-few-public-methods
     def write(self, model_file, png_file, png_args):
-        """Writes the model's polygons to the provided PNG file
+        """Write the model's polygons to the provided PNG file.
 
         :param model_file: LDR model (file-like object)
         :type model_file: Part
@@ -96,7 +96,7 @@ class PNGWriter(Writer):
 
 
 class Polygon:
-    """Describes a polygon for PNG rendering"""
+    """Describes a polygon for PNG rendering."""
 
     def __init__(self, points, rgb, alpha):
         self.points = points
@@ -108,7 +108,7 @@ class Polygon:
     def project(self, distance):
         """Project to screen
         px/c = x/(c + z)
-        px = c * x / (c + z)
+        px = c * x / (c + z).
         """
         for point in self.points:
             self.projected.append(
@@ -199,7 +199,7 @@ class Polygon:
             )
 
     def get_edges(self, image, viewport_scale):
-        """Get edges for rendering"""
+        """Get edges for rendering."""
         width, height = image.size
         edges = []
         len_points = len(self.points)
@@ -235,7 +235,7 @@ class Polygon:
         stroke_colour,
         width,
     ):
-        """Draw a span"""
+        """Draw a span."""
         if start_1.x != start_2.x:
             start_dz_dx = (start_2.y - start_1.y) / (start_2.x - start_1.x)
         else:

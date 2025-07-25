@@ -98,3 +98,4 @@ uv build                     # Build package
 - Use "list" instead of "List" and "dict" instead of "Dict" and "|" instead of "Union" for types
 - Use "Self" for applicable types
 - Use Structural Pattern Matching (match...case) where applicable
+- Always use pathlib.Path for file operations, never use os.path
