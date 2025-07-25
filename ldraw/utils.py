@@ -12,9 +12,9 @@ from urllib.request import Request, urlopen
 def strtobool(val):
     """Convert a string representation of truth to True or False."""
     val = val.lower()
-    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+    if val in ("y", "yes", "t", "true", "on", "1"):
         return True
-    elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+    elif val in ("n", "no", "f", "false", "off", "0"):
         return False
     else:
         raise ValueError(f"invalid truth value {val!r}")
@@ -33,7 +33,7 @@ def clean(input_string):
 
 
 def camel(input_string):
-    """ Returns a CamelCase string """
+    """Returns a CamelCase string"""
     return "".join(x for x in input_string.title() if not x.isspace())
 
 
@@ -48,14 +48,14 @@ def prompt(query):
 
 
 def ensure_exists(path):
-    """ makes the directory if it does not exist"""
+    """makes the directory if it does not exist"""
     os.makedirs(path, exist_ok=True)
     return path
 
 
 # https://stackoverflow.com/a/6027615
-def flatten(input_dict, parent_key='', sep='.'):
-    """ flatten a dictionary """
+def flatten(input_dict, parent_key="", sep="."):
+    """flatten a dictionary"""
     items = []
     for key, value in input_dict.items():
         new_key = parent_key + sep + key if parent_key else key
@@ -68,10 +68,10 @@ def flatten(input_dict, parent_key='', sep='.'):
 
 # https://stackoverflow.com/a/6027615
 def flatten2(input_dict, parent_key=None):
-    """ flatten a dictionary """
+    """flatten a dictionary"""
     items = []
     for key, value in input_dict.items():
-        new_key = parent_key + (key,) if parent_key is not None else (key, )
+        new_key = parent_key + (key,) if parent_key is not None else (key,)
         if isinstance(value, collections.MutableMapping):
             items.extend(flatten2(value, new_key).items())
         else:

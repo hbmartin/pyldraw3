@@ -36,7 +36,7 @@ from ldraw.writers.png import PNGWriter
 
 
 def main():
-    """ ldr2png main function """
+    """ldr2png main function"""
     description = """Converts the LDraw file to a PNG file.
     
 The image size must be specified in the format <width>x<height> where the width
@@ -54,15 +54,20 @@ The optional sky background and stroke colours are PNG colours, either specified
 """
 
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("ldraw_file", type=argparse.FileType(mode='r'))
-    parser.add_argument("png_file", type=argparse.FileType(mode='w'))
+    parser.add_argument("ldraw_file", type=argparse.FileType(mode="r"))
+    parser.add_argument("png_file", type=argparse.FileType(mode="w"))
     parser.add_argument("image_size", type=widthxheight)
     parser.add_argument("camera_position", type=vector_position)
     parser.add_argument(
-        "--look_at_position", required=False, default=vector_position("0,0,0"), type=vector_position
+        "--look_at_position",
+        required=False,
+        default=vector_position("0,0,0"),
+        type=vector_position,
     )
     parser.add_argument("--distance", type=float, default=1.0)
-    parser.add_argument("--stroke-colour", dest="stroke_colour", type=ImageColor.getrgb, required=True)
+    parser.add_argument(
+        "--stroke-colour", dest="stroke_colour", type=ImageColor.getrgb, required=True
+    )
     parser.add_argument(
         "--sky", default=ImageColor.getrgb("#000000"), type=ImageColor.getrgb
     )
@@ -70,6 +75,7 @@ The optional sky background and stroke colours are PNG colours, either specified
     args = parser.parse_args()
 
     from ldraw.writers.png import PNGArgs
+
     png_args = PNGArgs(args.distance, args.image_size, args.stroke_colour, args.sky)
     config = Config.load()
 
@@ -84,7 +90,7 @@ The optional sky background and stroke colours are PNG colours, either specified
 
 
 def ldr2png(config, ldraw_file, png_file, look_at_position, camera_position, png_args):
-    """ Implementation of ldr2png """
+    """Implementation of ldr2png"""
     verify_camera_look_at(camera_position, look_at_position)
 
     model, parts = get_model(config, ldraw_file)

@@ -14,7 +14,7 @@ from ldraw.parts import PartError
 from ldraw.resources import get_resource_content
 from ldraw.utils import ensure_exists, flatten2, clean, camel
 
-SECTION_SEP = '#|#'
+SECTION_SEP = "#|#"
 
 
 def gen_parts(parts, library_path):
@@ -29,7 +29,7 @@ def recursive_gen_parts(parts_parts, directory):
     for name, value in list(parts_parts.items()):
         if isinstance(value, AttriDict):
             recurse = False
-            for k,v in value.items():
+            for k, v in value.items():
                 if len(v) > 0:
                     recurse = True
 
@@ -39,12 +39,14 @@ def recursive_gen_parts(parts_parts, directory):
                 recursive_gen_parts(value, subdir)
 
     sections = {
-        name: value for name, value in parts_parts.items() if not isinstance(value, AttriDict)
+        name: value
+        for name, value in parts_parts.items()
+        if not isinstance(value, AttriDict)
     }
 
     module_parts = {}
     for section_name, section_parts in sections.items():
-        if section_name == '':
+        if section_name == "":
             continue
         for desc, code in section_parts.items():
             module_parts[desc] = code
@@ -58,21 +60,21 @@ def recursive_gen_parts(parts_parts, directory):
 
 
 def generate_parts__init__(module_parts, directory, sections, parts_parts):
-    """ generate the appropriate __init__.py to make submodules in ldraw.library.parts """
+    """generate the appropriate __init__.py to make submodules in ldraw.library.parts"""
     parts__init__str = parts__init__content(sections)
 
-    parts__init__ = os.path.join(directory, '__init__.py')
+    parts__init__ = os.path.join(directory, "__init__.py")
     ensure_exists(os.path.dirname(parts__init__))
 
-    with codecs.open(parts__init__, 'w', encoding='utf-8') as parts__init__file:
+    with codecs.open(parts__init__, "w", encoding="utf-8") as parts__init__file:
         parts__init__file.write(parts__init__str)
 
 
 def parts__init__content(sections):
     sections = [
-        {"module_name": module_name} for module_name in sections if module_name != ''
+        {"module_name": module_name} for module_name in sections if module_name != ""
     ]
-    return pystache.render(PARTS__INIT__TEMPLATE, context={'sections': sections})
+    return pystache.render(PARTS__INIT__TEMPLATE, context={"sections": sections})
 
 
 def section_content(section_parts, section_key):
@@ -88,14 +90,16 @@ def section_content(section_parts, section_key):
     return part_str
 
 
-PARTS__INIT__TEMPLATE = pystache.parse(get_resource_content(
-    os.path.join("templates", "parts__init__.mustache")
-))
-PARTS_TEMPLATE = pystache.parse(get_resource_content(os.path.join("templates", "parts.mustache")))
+PARTS__INIT__TEMPLATE = pystache.parse(
+    get_resource_content(os.path.join("templates", "parts__init__.mustache"))
+)
+PARTS_TEMPLATE = pystache.parse(
+    get_resource_content(os.path.join("templates", "parts.mustache"))
+)
 
 
 def get_part_dict(parts_parts, description):
-    """ Gets a dict context for a part """
+    """Gets a dict context for a part"""
 
     try:
         code = parts_parts[description]

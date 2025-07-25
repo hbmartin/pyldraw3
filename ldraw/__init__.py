@@ -18,6 +18,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 import sys
 
 from ldraw.downloads import download
@@ -25,15 +26,14 @@ from ldraw.config import use
 from ldraw.generation import generate
 from ldraw.imports import LibraryImporter
 
-__all__ = [
-    download, generate, use
-]
+__all__ = [download, generate, use]
 
 # Modern import hook registration: use an instance, not the class
 library_importer_instance = LibraryImporter()
 if not any(isinstance(hook, LibraryImporter) for hook in sys.meta_path):
     sys.meta_path.insert(0, library_importer_instance)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from ldraw import cli
+
     cli.main()

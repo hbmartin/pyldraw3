@@ -36,8 +36,7 @@ print(figure.left_arm(Red))
 print(figure.left_hand(Yellow))
 print(figure.right_arm(Red, -60))
 print(figure.right_hand(Yellow, -10))
-print(figure.right_hand_item(Black,
-                             Vector(0, -1, -10), 0, GunRevolver))  # Gun Revolver
+print(figure.right_hand_item(Black, Vector(0, -1, -10), 0, GunRevolver))  # Gun Revolver
 print(figure.hips(Blue))
 print(figure.left_leg(Blue))
 print(figure.right_leg(Blue, -30))

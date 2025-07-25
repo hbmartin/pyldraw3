@@ -61,7 +61,7 @@ light_source {
 
 
 def main():
-    """ ldr2pov main function """
+    """ldr2pov main function"""
 
     description = """Converts the LDraw file to a POV-Ray file.
     
@@ -75,8 +75,8 @@ each component should be specified as a floating point number between
 
 """
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("ldraw_file", type=argparse.FileType(mode='r'))
-    parser.add_argument("pov_file", type=argparse.FileType(mode='w'))
+    parser.add_argument("ldraw_file", type=argparse.FileType(mode="r"))
+    parser.add_argument("pov_file", type=argparse.FileType(mode="w"))
     parser.add_argument("camera_position", type=vector_position)
     parser.add_argument(
         "--look_at_position",
@@ -100,12 +100,13 @@ each component should be specified as a floating point number between
 
 
 def ldr2pov(config, ldraw_model_file, pov_path, camera_position, look_at_position, sky):
-    """ actual ldr2pov implementation """
+    """actual ldr2pov implementation"""
     model, parts = get_model(config, ldraw_model_file)
 
     with open(pov_path, "w") as pov_file:
         pov_file.write('#include "colors.inc"\n\n')
         from ldraw.writers.povray import POVRayWriter
+
         writer = POVRayWriter(parts, pov_file)
         writer.write(model)
 
@@ -131,13 +132,13 @@ def ldr2pov(config, ldraw_model_file, pov_path, camera_position, look_at_positio
         )
 
         if sky:
-            if sky.startswith('#') and len(sky) == 7:
-                h = sky.lstrip('#')
-                rgb = tuple(int(h[i:i + 2], 16)/256 for i in (0, 2, 4))
-                sky = ','.join(str(round(s, 4)) for s in rgb)
+            if sky.startswith("#") and len(sky) == 7:
+                h = sky.lstrip("#")
+                rgb = tuple(int(h[i : i + 2], 16) / 256 for i in (0, 2, 4))
+                sky = ",".join(str(round(s, 4)) for s in rgb)
                 pov_file.write(SKY_SPHERE_FORMAT_STRING % sky)
             else:
-                print('need sky in hex: #RRGGBB')
+                print("need sky in hex: #RRGGBB")
                 sys.exit(-1)
 
     for message, part in writer.warnings:

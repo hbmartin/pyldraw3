@@ -18,7 +18,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 import codecs
+
 # pylint: disable=too-few-public-methods
 import hashlib
 import logging
@@ -48,71 +50,71 @@ MEMOIZED = {}
 
 
 CATEGORIES = {
-    'Animal',
-    'Antenna',
-    'Arch',
-    'Arm',
-    'Bar',
-    'Baseplate',
-    'Belville',
-    'Boat',
-    'Brick',
-    'Canvas',
-    'Car',
-    'Cone',
-    'Constraction',
-    'Container',
-    'Crane',
-    'Cylinder',
-    'Dish',
-    'Door',
-    'Electric',
-    'Fence',
-    'Figure',
-    'Figure Accessory',
-    'Freestyle',
-    'Hinge',
-    'Homemaker',
-    'Hose',
-    'Magnet',
-    'Minifig',
-    'Minifig Accessory',
-    'Minifig Footwear',
-    'Minifig Headwear',
-    'Minifig Hipwear',
-    'Minifig Neckwear',
-    'Plane',
-    'Plant',
-    'Plate',
-    'Propellor',
-    'Roadsign',
-    'Screw',
-    'Sheet Cardboard',
-    'Sheet Fabric',
-    'Sheet Plastic',
-    'Slope',
-    'Sphere',
-    'Staircase',
-    'Sticker',
-    'Support',
-    'Tap',
-    'Technic',
-    'Tile',
-    'Train',
-    'Turntable',
-    'Tyre',
-    'Vehicle',
-    'Wheel',
-    'Winch',
-    'Window',
-    'Windscreen',
-    'Wing'
-    }
+    "Animal",
+    "Antenna",
+    "Arch",
+    "Arm",
+    "Bar",
+    "Baseplate",
+    "Belville",
+    "Boat",
+    "Brick",
+    "Canvas",
+    "Car",
+    "Cone",
+    "Constraction",
+    "Container",
+    "Crane",
+    "Cylinder",
+    "Dish",
+    "Door",
+    "Electric",
+    "Fence",
+    "Figure",
+    "Figure Accessory",
+    "Freestyle",
+    "Hinge",
+    "Homemaker",
+    "Hose",
+    "Magnet",
+    "Minifig",
+    "Minifig Accessory",
+    "Minifig Footwear",
+    "Minifig Headwear",
+    "Minifig Hipwear",
+    "Minifig Neckwear",
+    "Plane",
+    "Plant",
+    "Plate",
+    "Propellor",
+    "Roadsign",
+    "Screw",
+    "Sheet Cardboard",
+    "Sheet Fabric",
+    "Sheet Plastic",
+    "Slope",
+    "Sphere",
+    "Staircase",
+    "Sticker",
+    "Support",
+    "Tap",
+    "Technic",
+    "Tile",
+    "Train",
+    "Turntable",
+    "Tyre",
+    "Vehicle",
+    "Wheel",
+    "Winch",
+    "Window",
+    "Windscreen",
+    "Wing",
+}
 
 
 class Parts:
     # pylint: disable=too-many-instance-attributes
-    """ Part class """
+    """Part class"""
     ColourAttributes = ("CHROME", "PEARLESCENT", "RUBBER", "MATTE_METALLIC", "METAL")
 
     @classmethod
@@ -187,14 +189,16 @@ class Parts:
                     self.parts[k][""] = value
                 else:
                     key = p.plural(k)
-                    if k == 'car' or k == 'train' or k == 'technic':
+                    if k == "car" or k == "train" or k == "technic":
                         key = k
                     self.parts[key] = value
 
     def get_category(self, part_description):
         split = part_description.strip(" ~=_|").split()
 
-        if (split[0].lower() == "space" or split[0].lower() == "castle") and len(split) >= 2:
+        if (split[0].lower() == "space" or split[0].lower() == "castle") and len(
+            split
+        ) >= 2:
             potential = split[1]
         else:
             potential = split[0]
@@ -202,7 +206,7 @@ class Parts:
             return potential
 
     def load(self, parts_lst):
-        """ load parts from a path """
+        """load parts from a path"""
 
         try:
             self.try_load(parts_lst)
@@ -237,12 +241,12 @@ class Parts:
                 # try to infer from the description
                 category = self.get_category(description)
             if category is None:
-                self.by_category['other'][description] = code
+                self.by_category["other"][description] = code
             else:
                 self.by_category[category.lower()][description] = code
 
     def try_load(self, parts_lst):
-        """ try loading parts from a parts.lst file """
+        """try loading parts from a parts.lst file"""
         with codecs.open(parts_lst, "r", encoding="utf-8") as parts_lst_file:
             for line in parts_lst_file.readlines():
                 pieces = re.split(DOT_DAT, line)
@@ -255,7 +259,7 @@ class Parts:
                 self.by_code_name[(code, description)] = None
 
     def section_find(self, pieces):
-        """ returns code, description from a pieces element """
+        """returns code, description from a pieces element"""
         code = pieces[0]
         description = pieces[1].strip()
         for key, section in self.parts["minifig"].items():
@@ -384,5 +388,3 @@ class Parts:
                 self.primitives_by_code[code] = description
         except IOError:
             raise PartError("Failed to load primitives file: %s" % path)
-
-

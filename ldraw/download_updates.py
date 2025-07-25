@@ -5,10 +5,12 @@ import requests
 UPDATES_PAGE_URL = "https://library.ldraw.org/updates"
 TARGET_HREF = "https://library.ldraw.org/library/updates/complete.zip"
 
+
 class AnchorTagParser(html.parser.HTMLParser):
     """
     A custom HTML parser to find the data-pan attribute of a specific anchor tag.
     """
+
     def __init__(self):
         super().__init__()
         self.target_href = TARGET_HREF
@@ -21,14 +23,15 @@ class AnchorTagParser(html.parser.HTMLParser):
             return
 
         # Check if the tag is an anchor tag 'a'
-        if tag == 'a':
+        if tag == "a":
             # Convert attributes to a dictionary for easy lookup
             attributes = dict(attrs)
             # Check if the 'href' attribute matches the target URL
-            if attributes.get('href') == self.target_href:
+            if attributes.get("href") == self.target_href:
                 # If it matches, get the 'data-pan' attribute
-                self.data_pan_value = attributes.get('data-pan')
+                self.data_pan_value = attributes.get("data-pan")
                 self.found = True
+
 
 def extract_data_pan_from_html(html_content):
     """
@@ -45,6 +48,7 @@ def extract_data_pan_from_html(html_content):
     parser = AnchorTagParser()
     parser.feed(html_content)
     return parser.data_pan_value
+
 
 def get_latest_release_id() -> str:
     response = requests.get(UPDATES_PAGE_URL)

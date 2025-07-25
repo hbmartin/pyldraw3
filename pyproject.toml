@@ -1,6 +1,6 @@
 [project]
-name = "python-ldraw"
-version = "0.10.0"
+name = "pyldraw3"
+version = "0.11.0"
 description = "Python wrapper for LDraw library."
 readme = "README.rst"
 requires-python = ">=3.12"
@@ -53,6 +53,9 @@ dev = [
     "pytest-xdist>=3.8.0",
     "coveralls>=4.0.1",
     "xdoctest[colors] >=0.15.10",
+    "ruff>=0.12.4",
+    "ty>=0.0.1a16",
+    "pyrefly>=0.25.0",
 ]
 docs = [
   "furo >=2021.11.12",

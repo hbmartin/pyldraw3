@@ -108,7 +108,7 @@ def _project_polygons(width, height, polygons):
 
 
 def write_preamble(args, svg_file):
-    """ write the preamble and polygon def """
+    """write the preamble and polygon def"""
     svg_file.write(SVG_PREAMBLE.format(view1=0.0, view2=0.0, svg_args=args))
     if args.background_colour is not None:
         arguments = (
@@ -130,7 +130,7 @@ class SVGWriter(Writer):
 
     # pylint: disable=too-few-public-methods
     def write(self, model, svg_file, svg_args):
-        """Writes the SVG """
+        """Writes the SVG"""
         polygons = self._polygons_from_objects(model)
         polygons.sort()
         shapes = _project_polygons(svg_args.width, svg_args.height, polygons)

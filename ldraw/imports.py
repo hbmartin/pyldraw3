@@ -5,35 +5,41 @@ import importlib.util
 
 from ldraw.config import Config
 
-VIRTUAL_MODULE = 'ldraw.library'
+VIRTUAL_MODULE = "ldraw.library"
 
-logger = logging.getLogger('ldraw')
+logger = logging.getLogger("ldraw")
 
 
 def load_lib(library_path, fullname):
-    dot_split = fullname.split('.')
+    dot_split = fullname.split(".")
     dot_split.pop(0)  # Remove 'ldraw'
-    
+
     # Build the path components
     lib_name = dot_split[-1]
-    lib_dir = os.path.join(library_path, *tuple(dot_split[:-1])) if len(dot_split) > 1 else library_path
-    
+    lib_dir = (
+        os.path.join(library_path, *tuple(dot_split[:-1]))
+        if len(dot_split) > 1
+        else library_path
+    )
+
     # Try directory with __init__.py first, then .py file
     init_path = os.path.join(lib_dir, lib_name, "__init__.py")
     py_path = os.path.join(lib_dir, f"{lib_name}.py")
-    
+
     if os.path.exists(init_path):
         module_path = init_path
     elif os.path.exists(py_path):
         module_path = py_path
     else:
-        raise ImportError(f"Could not find module {fullname} at {init_path} or {py_path}")
-    
+        raise ImportError(
+            f"Could not find module {fullname} at {init_path} or {py_path}"
+        )
+
     spec = importlib.util.spec_from_file_location(fullname, module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load spec for {fullname}")
     library_module = importlib.util.module_from_spec(spec)
-    
+
     # Add to sys.modules BEFORE executing to prevent infinite recursion
     sys.modules[fullname] = library_module
     try:
@@ -43,18 +49,18 @@ def load_lib(library_path, fullname):
         if fullname in sys.modules:
             del sys.modules[fullname]
         raise
-    
+
     return library_module
 
 
 class LibraryImporter:
-    """ Added to sys.meta_path as an import hook """
+    """Added to sys.meta_path as an import hook"""
 
     @classmethod
     def valid_module(cls, fullname):
         if fullname.startswith(VIRTUAL_MODULE):
-            rest = fullname[len(VIRTUAL_MODULE):]
-            if not rest or rest.startswith('.'):
+            rest = fullname[len(VIRTUAL_MODULE) :]
+            if not rest or rest.startswith("."):
                 return True
 
     config = None
@@ -103,10 +109,10 @@ class LibraryImporter:
         for fullname in list(sys.modules.keys()):
             if cls.valid_module(fullname):
                 del sys.modules[fullname]
-        if 'ldraw' in sys.modules:
-            ldraw_mod = sys.modules['ldraw']
-            if hasattr(ldraw_mod, 'library'):
-                delattr(ldraw_mod, 'library')
+        if "ldraw" in sys.modules:
+            ldraw_mod = sys.modules["ldraw"]
+            if hasattr(ldraw_mod, "library"):
+                delattr(ldraw_mod, "library")
 
     def get_code(self, fullname):
         return None
@@ -131,9 +137,7 @@ class LibraryImporter:
         # if the library already exists and correctly generated,
         # the __hash__ will prevent re-generation
         config = self.config if self.config is not None else Config.load()
-        logger.debug(f'loading {fullname} from {config.generated_path}')
+        logger.debug(f"loading {fullname} from {config.generated_path}")
         mod = load_lib(config.generated_path, fullname)
         # Module is already added to sys.modules in load_lib
         return mod
-
-

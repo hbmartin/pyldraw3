@@ -19,7 +19,7 @@ ENDS_DOT_DAT = re.compile(r"\.DAT$", flags=re.IGNORECASE)
 
 
 def colour_from_str(colour_str):
-    """ gets a Colour from a string """
+    """gets a Colour from a string"""
     try:
         return int(colour_str)
     except ValueError:
@@ -121,13 +121,13 @@ class Part(object):
 
     def __init__(self, path=None, file=None):
         if path is None and file is None:
-            raise ValueError('Part loading: needs path or file')
+            raise ValueError("Part loading: needs path or file")
         if path is not None:
             self.path = path
             self.file = None
         elif file is not None:
             self.file = file
-            self.path ='%file-like object%'
+            self.path = "%file-like object%"
         self._category = None
         self._description = None
 
@@ -147,7 +147,7 @@ class Part(object):
 
     @property
     def objects(self):
-        """ Load the Part from its path """
+        """Load the Part from its path"""
         for number, line in enumerate(self.lines):
             pieces = line.split()
             if not pieces:

@@ -28,7 +28,9 @@ from ldraw.library.parts import Brick2X3, Brick1X1
 from ldraw.library.parts.minifig.accessories import ToolMagnifyingGlass
 from ldraw.library.parts.minifig.hats import TopHat
 from ldraw.library.parts.minifig.heads import HeadWithMonocle_Scar_AndMoustachePattern
-from ldraw.library.parts.minifig.torsos import TorsoWithBlackSuit_RedShirt_GoldClaspsPattern
+from ldraw.library.parts.minifig.torsos import (
+    TorsoWithBlackSuit_RedShirt_GoldClaspsPattern,
+)
 from ldraw.library.parts import Plate6X6
 from ldraw.pieces import Group, Piece
 
@@ -62,8 +64,13 @@ steps = 5
 Piece(Dark_Blue, Vector(x, y, z + 40), Identity(), Plate6X6, group=stairs)
 for i in range(0, steps):
     for pz in range(z, z + 120, 40):
-        Piece(Dark_Blue, Vector(x + 50 + (i * 40), y - 24 - (i * 24), pz),
-              Identity(), Brick2X3, group=stairs)
+        Piece(
+            Dark_Blue,
+            Vector(x + 50 + (i * 40), y - 24 - (i * 24), pz),
+            Identity(),
+            Brick2X3,
+            group=stairs,
+        )
 
 for piece in stairs.pieces:
     print(piece)
@@ -79,13 +86,10 @@ top_y = y - (steps * 24) - 8
 print(Piece(Dark_Blue, Vector(120, top_y, -120), Identity(), Plate6X6))
 
 for i in range(1, 5):
-    print(Piece(Dark_Red, Vector(170, top_y - (i * 24), -170),
-                Identity(), Brick1X1))
-    print(Piece(Dark_Red, Vector(70, top_y - (i * 24), -170),
-                Identity(), Brick1X1))
+    print(Piece(Dark_Red, Vector(170, top_y - (i * 24), -170), Identity(), Brick1X1))
+    print(Piece(Dark_Red, Vector(70, top_y - (i * 24), -170), Identity(), Brick1X1))
 
-print(Piece(Dark_Red, Vector(120, top_y - (5 * 24), -170),
-            Identity(), Arch1X6))
+print(Piece(Dark_Red, Vector(120, top_y - (5 * 24), -170), Identity(), Arch1X6))
 
 print(Piece(White, Vector(200, -200, 200), Identity(), "LIGHT"))
 print(Piece(White, Vector(200, -200, -200), Identity(), "LIGHT"))

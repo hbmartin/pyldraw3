@@ -1,4 +1,5 @@
-""" Some tools to convert ldr to other formats"""
+"""Some tools to convert ldr to other formats"""
+
 import argparse
 import os
 
@@ -11,7 +12,7 @@ from ldraw.geometry import Vector, CoordinateSystem
 
 
 def widthxheight(input_str):
-    """ a type for a widthxheight image size """
+    """a type for a widthxheight image size"""
     image_dimensions = input_str.split("x")
     if len(image_dimensions) != 2:
         raise argparse.ArgumentTypeError("Expecting widthxheight")
@@ -19,7 +20,7 @@ def widthxheight(input_str):
 
 
 def vector_position(input_str):
-    """ a type for comma separated vector """
+    """a type for comma separated vector"""
     position = input_str.split(",")
     if len(position) != 3:
         raise argparse.ArgumentTypeError(
@@ -29,7 +30,7 @@ def vector_position(input_str):
 
 
 def get_model(config, ldraw_model_file):
-    """" get model from ldraw path """
+    """ " get model from ldraw path"""
     ldraw_library_path = config.ldraw_library_path
     parts_lst = os.path.join(ldraw_library_path, "ldraw", "parts.lst")
     parts = Parts(parts_lst)
@@ -45,7 +46,7 @@ UP_DIRECTION = Vector(0, -1.0, 0)
 
 
 def get_coordinate_system(camera_position, look_at_position):
-    """" get coordinate system of the view """
+    """ " get coordinate system of the view"""
     system = CoordinateSystem()
     system.z = camera_position - look_at_position
     system.z.norm()
@@ -58,7 +59,7 @@ def get_coordinate_system(camera_position, look_at_position):
 
 
 def verify_camera_look_at(camera_position, look_at_position):
-    """ verify that the camera and look_at positions are valid """
+    """verify that the camera and look_at positions are valid"""
     if camera_position == look_at_position:
         sys.stderr.write("Camera and look-at positions are the same.\n")
         sys.exit(1)

@@ -25,7 +25,9 @@ def gen_colours(parts, library_path):
 
 
 def colours_module_content(parts):
-    colours_mustache = get_resource_content(os.path.join("templates", "colours.mustache"))
+    colours_mustache = get_resource_content(
+        os.path.join("templates", "colours.mustache")
+    )
     colours_template = pystache.parse(colours_mustache)
     context = {"colours": [get_c_dict(c) for c in parts.colours_by_name.values()]}
     context["colours"].sort(key=lambda r: r["code"])

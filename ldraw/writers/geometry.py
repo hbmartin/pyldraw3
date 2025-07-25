@@ -1,4 +1,4 @@
-""" Some geometry elements used in Writers """
+"""Some geometry elements used in Writers"""
 
 
 class Edge(object):
@@ -23,7 +23,7 @@ class Edge(object):
 
     @property
     def sort_key(self):
-        """ used for sorting the edges before rendering """
+        """used for sorting the edges before rendering"""
         return (
             self.point1.y,
             self.point2.y,

@@ -16,6 +16,7 @@ COMPLETE_VERSION = "complete"
 LDRAW_URL = "https://library.ldraw.org/library/updates/"
 cache_ldraw = Path(get_cache_dir())
 
+
 def unpack_version(version_zip: Path, version: str) -> Path:
     print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
@@ -34,11 +35,12 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
 
     response = requests.get(url, stream=True)
 
-    with open(retrieved, 'wb') as file:
+    with open(retrieved, "wb") as file:
         for data in response.iter_content(chunk_size=chunk_size):
             file.write(data)
 
     return retrieved
+
 
 def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
     retrieved = cache_ldraw / filename
@@ -47,10 +49,10 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
         return retrieved
 
     response = requests.get(url, stream=True)
-    total = int(response.headers.get('content-length', 0))
+    total = int(response.headers.get("content-length", 0))
     bar = Bar(f"Downloading {url} ...", max=total)
 
-    with open(retrieved, 'wb') as file:
+    with open(retrieved, "wb") as file:
         for data in response.iter_content(chunk_size=chunk_size):
             size = file.write(data)
             bar.next(size)
@@ -58,9 +60,14 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
     bar.finish()
     return retrieved
 
+
 def download(show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
     filename = f"{version}.zip"
-    retrieved = _download_progress(f"{LDRAW_URL}/{filename}", filename) if show_progress else _download(f"{LDRAW_URL}/{filename}", filename)
+    retrieved = (
+        _download_progress(f"{LDRAW_URL}/{filename}", filename)
+        if show_progress
+        else _download(f"{LDRAW_URL}/{filename}", filename)
+    )
 
     version_dir = unpack_version(retrieved, version)
 
@@ -72,5 +79,5 @@ def download(show_progress: bool = True, version: str = COMPLETE_VERSION) -> str
     if version == COMPLETE_VERSION:
         version = get_latest_release_id()
         (Path(version_dir) / "ldraw" / "_release.txt").write_text(version)
-    
+
     return version

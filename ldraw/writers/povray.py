@@ -18,6 +18,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 import sys
 
 from ldraw.library.colours import Main_Colour as Current
@@ -82,7 +83,7 @@ def _object_name(part):
 class POVRayWriter(object):
     # pylint: disable=too-few-public-methods
     """
-        Writes a POV file from a model
+    Writes a POV file from a model
     """
     ColourAttributes = {
         "CHROME": ("metallic 1.0", "specular 0.8", "brilliance 3", "diffuse 0.6"),

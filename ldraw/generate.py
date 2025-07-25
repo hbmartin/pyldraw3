@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-FORMAT_STRING = '{filename:<30} {description}'
+FORMAT_STRING = "{filename:<30} {description}"
 alphanum = re.compile(r"[\W_]+", re.UNICODE)
 num = re.compile(r"\D", re.UNICODE)
 
@@ -12,7 +12,7 @@ def _line_format(**kwargs):
 
 def _do_sort(li, mode):
     def cmpkey1(row):
-        return alphanum.sub('', row[mode]).lower()
+        return alphanum.sub("", row[mode]).lower()
 
     def cmpkey2(row):
         return _line_format(**row)
@@ -22,27 +22,28 @@ def _do_sort(li, mode):
 
 
 def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
-    parts = parts_dir.glob('*.dat')
+    parts = parts_dir.glob("*.dat")
 
-    parts_dict = {'_': [], '~': []}
+    parts_dict = {"_": [], "~": []}
     parts_lst = []
 
     for part in parts:
         try:
-            with open(part, 'r', encoding='utf-8') as part_file:
+            with open(part, "r", encoding="utf-8") as part_file:
                 header = part_file.readline()
                 header_description = header[2:]
-                if '~Moved' in header:
+                if "~Moved" in header:
                     continue
-                row = {'filename': part.name,
-                       'number': part.stem,
-                       'description': header_description,
-                       }
+                row = {
+                    "filename": part.name,
+                    "number": part.stem,
+                    "description": header_description,
+                }
 
-                if '_' in header_description:
-                    parts_dict['_'].append(row)
-                elif '~' in header_description:
-                    parts_dict['~'].append(row)
+                if "_" in header_description:
+                    parts_dict["_"].append(row)
+                elif "~" in header_description:
+                    parts_dict["~"].append(row)
                 else:
                     parts_lst.append(row)
         except UnicodeDecodeError:
@@ -50,22 +51,22 @@ def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
             continue
 
     _do_sort(parts_lst, mode)
-    _do_sort(parts_dict['_'], mode)
-    _do_sort(parts_dict['~'], mode)
+    _do_sort(parts_dict["_"], mode)
+    _do_sort(parts_dict["~"], mode)
 
-    parts_lst.extend(parts_dict['_'])
-    parts_lst.extend(parts_dict['~'])
+    parts_lst.extend(parts_dict["_"])
+    parts_lst.extend(parts_dict["~"])
 
     return parts_lst
 
 
 def generate_parts_lst(mode: str, version_dir: Path):
     parts_lst_path = version_dir / "ldraw" / "parts.lst"
-    parts_folder_path = version_dir / "ldraw" / "parts" 
+    parts_folder_path = version_dir / "ldraw" / "parts"
     if parts_lst_path.exists():
-        parts_lst_path.rename(parts_lst_path.with_suffix('.old'))
+        parts_lst_path.rename(parts_lst_path.with_suffix(".old"))
 
     parts_lst = get_parts_lst(parts_folder_path, mode)
 
     lines = [_line_format(**row) for row in parts_lst]
-    open(parts_lst_path, 'w', newline='\r\n', encoding='utf-8').writelines(lines)
+    open(parts_lst_path, "w", newline="\r\n", encoding="utf-8").writelines(lines)

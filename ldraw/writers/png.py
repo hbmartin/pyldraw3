@@ -18,6 +18,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 # pylint: disable=no-name-in-module, too-few-public-methods, too-many-locals, too-many-branches
 from PIL import Image, ImageColor
 import numpy
@@ -29,7 +30,7 @@ from ldraw.writers.geometry import Z_MAX, Edge
 
 
 class PNGArgs(object):
-    """ Args to pass to a PNG writer"""
+    """Args to pass to a PNG writer"""
 
     def __init__(
         self, distance, image_size, stroke_colour=None, background_colour=None
@@ -246,7 +247,7 @@ class Polygon(object):
         stroke_colour,
         width,
     ):
-        """ draw a span """
+        """draw a span"""
         if start_1.x != start_2.x:
             start_dz_dx = (start_2.y - start_1.y) / (start_2.x - start_1.x)
         else:

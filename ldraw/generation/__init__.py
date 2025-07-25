@@ -1,6 +1,7 @@
 """
 Module tasked with generating python files for the ldraw.library namespace
 """
+
 import hashlib
 import os
 import shutil
@@ -17,8 +18,9 @@ from ldraw.parts import Parts
 from ldraw.resources import get_resource, get_resource_content
 from ldraw.utils import ensure_exists
 
+
 def generate(config: Config, force=False, warn=True):
-    """ main function for the library generation """
+    """main function for the library generation"""
     generated_library_path = os.path.join(config.generated_path, "library")
     ensure_exists(generated_library_path)
 

@@ -18,6 +18,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 # pylint: disable=too-many-arguments, too-few-public-methods
 from functools import reduce
 from ldraw.geometry import Identity, Vector
@@ -55,7 +56,7 @@ class Piece:
 
 
 class Group:
-    """ a Group of Pieces """
+    """a Group of Pieces"""
 
     def __init__(self, position=Vector(0, 0, 0), matrix=Identity()):
         self.position = position
@@ -69,13 +70,13 @@ class Group:
         return "\n".join(text)
 
     def add_piece(self, piece):
-        """ add a piece to the group """
+        """add a piece to the group"""
         self.pieces.append(piece)
         if piece.group and piece.group != self:
             piece.group.remove_piece(piece)
         piece.group = self
 
     def remove_piece(self, piece):
-        """ remove a piece from the group """
+        """remove a piece from the group"""
         self.pieces.remove(piece)
         piece.group = None

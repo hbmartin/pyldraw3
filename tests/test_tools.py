@@ -31,11 +31,12 @@ def tool_test(func, suffix):
 def test_ldr2inv(library_version):
     from ldraw.tools.ldr2inv import ldr2inv
 
-    tool_test(lambda f: ldr2inv(
-        library_version,
-        codecs.open(INPUT_PATH, 'r', encoding='utf-8'), f),
+    tool_test(
+        lambda f: ldr2inv(
+            library_version, codecs.open(INPUT_PATH, "r", encoding="utf-8"), f
+        ),
         ".inv",
-        )
+    )
 
 
 def test_ldr2png(library_version):
@@ -46,7 +47,7 @@ def test_ldr2png(library_version):
     tool_test(
         lambda f: ldr2png(
             library_version,
-            codecs.open(INPUT_PATH, 'r', encoding='utf-8'),
+            codecs.open(INPUT_PATH, "r", encoding="utf-8"),
             f,
             vector_position("0,0,0"),
             vector_position("200,200,200"),
@@ -68,7 +69,7 @@ def test_ldr2pov(library_version):
     tool_test(
         lambda f: ldr2pov(
             library_version,
-            codecs.open(INPUT_PATH, 'r', encoding='utf-8'),
+            codecs.open(INPUT_PATH, "r", encoding="utf-8"),
             f,
             vector_position("200,-200,200"),
             vector_position("0,0,0"),
@@ -86,7 +87,7 @@ def test_ldr2svg(library_version):
     tool_test(
         lambda f: ldr2svg(
             library_version,
-            codecs.open(INPUT_PATH, 'r', encoding='utf-8'),
+            codecs.open(INPUT_PATH, "r", encoding="utf-8"),
             f,
             vector_position("200,200,200"),
             vector_position("0,0,0"),
