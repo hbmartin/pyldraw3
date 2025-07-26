@@ -4,21 +4,22 @@ import argparse
 import os
 
 import yaml
+from errors import InvalidConfigFileError
 
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
 
 CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")
 
 
-def is_valid_config_file(parser, arg):
+def is_valid_config_file(parser, arg):  # noqa: ARG001
     """Validate that the given config file exists and is valid YAML."""
     if not os.path.exists(arg):
-        parser.error("The file %s does not exist!" % arg)
-    else:
-        with open(arg) as f:
-            result = yaml.load(f, Loader=yaml.SafeLoader)
-            assert result is not None
-        return arg
+        raise FileNotFoundError(arg)
+    with open(arg) as f:
+        if yaml.load(f, Loader=yaml.SafeLoader) is None:
+            raise InvalidConfigFileError(arg)
+    return arg
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", type=lambda x: is_valid_config_file(parser, x))
@@ -60,8 +61,8 @@ class Config:
         config_path = get_config(config_file)
 
         try:
-            with open(config_path) as config_file:
-                cfg = yaml.load(config_file, Loader=yaml.SafeLoader)
+            with open(config_path) as _config_file:
+                cfg = yaml.load(_config_file, Loader=yaml.SafeLoader)
                 return cls(
                     # pyrefly: ignore  # missing-attribute  # noqa: ERA001
                     ldraw_library_path=cfg.get("ldraw_library_path"),
@@ -78,10 +79,10 @@ class Config:
         """Write the config to config.yml."""
         config_path = get_config(config_file=config_file)
 
-        with open(config_path, "w") as config_file:
+        with open(config_path, "w") as _config_file:
             written = {}
             if self.ldraw_library_path is not None:
                 written["ldraw_library_path"] = self.ldraw_library_path
             if self.generated_path is not None:
                 written["generated_path"] = self.generated_path
-            yaml.dump(written, config_file)
+            yaml.dump(written, _config_file)

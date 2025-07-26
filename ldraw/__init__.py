@@ -24,7 +24,7 @@ from ldraw.downloads import download
 from ldraw.generation import generate
 from ldraw.imports import LibraryImporter
 
-__all__ = [download, generate]
+__all__ = ["download", "generate"]
 
 # Modern import hook registration: use an instance, not the class
 library_importer_instance = LibraryImporter()

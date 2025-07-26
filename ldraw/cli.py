@@ -51,7 +51,10 @@ def config():
 def download():
     """Download LDraw library files from the official repository."""
     release_id = do_download()
-    logging.info("Downloaded LDraw library files for release %s", release_id)
+    logging.info(  # noqa: LOG015
+        "Downloaded LDraw library files for release %s",
+        release_id,
+    )
 
 
 if __name__ == "__main__":

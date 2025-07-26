@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Example script demonstrating spaceman minifigure construction."""
 
 import random

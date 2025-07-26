@@ -1,28 +1,29 @@
 #!/usr/bin/env python
 """Generates the ldraw.library.parts namespace."""
-import codecs
 import os
+from pathlib import Path
 
 import pystache
 from attridict import AttriDict
 from progress.bar import Bar
 
-from ldraw.parts import PartError
+from ldraw.parts import PartError, Parts
 from ldraw.resources import _get_resource_content
-from ldraw.utils import camel, clean, ensure_exists
+from ldraw.utils import camel, clean
 
 SECTION_SEP = "#|#"
 
 
-def gen_parts(parts, library_path):
+def gen_parts(parts: Parts, library_path: str) -> None:
     """Generate the ldraw.library.parts namespace modules."""
     print("generate ldraw.library.parts, this might take a long time...")
-    parts_dir = ensure_exists(os.path.join(library_path, "parts"))
+    parts_dir = Path(library_path) / "parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
 
     recursive_gen_parts(parts.parts, parts_dir)
 
 
-def recursive_gen_parts(parts_parts, directory):
+def recursive_gen_parts(parts_parts: AttriDict, directory: Path):
     """Recursively generate parts modules for nested part categories."""
     for name, value in list(parts_parts.items()):
         if isinstance(value, AttriDict):
@@ -32,8 +33,8 @@ def recursive_gen_parts(parts_parts, directory):
                     recurse = True
 
             if recurse:
-                subdir = os.path.join(directory, name)
-                ensure_exists(subdir)
+                subdir = directory / name
+                subdir.mkdir(parents=True, exist_ok=True)
                 recursive_gen_parts(value, subdir)
 
     sections = {
@@ -49,10 +50,9 @@ def recursive_gen_parts(parts_parts, directory):
         for desc, code in section_parts.items():
             module_parts[desc] = code  # noqa: PERF403
 
-        parts_py = os.path.join(directory, f"{section_name}.py")
+        parts_py = directory / f"{section_name}.py"
         part_str = section_content(section_parts, section_name)
-        with codecs.open(parts_py, "w", encoding="utf-8") as generated_file:
-            generated_file.write(part_str)
+        parts_py.write_text(part_str)
 
     generate_parts__init__(directory=directory, sections=sections)
 
@@ -61,11 +61,9 @@ def generate_parts__init__(directory, sections):
     """Generate __init__.py to make submodules in ldraw.library.parts."""
     parts__init__str = parts__init__content(sections)
 
-    parts__init__ = os.path.join(directory, "__init__.py")
-    ensure_exists(os.path.dirname(parts__init__))
-
-    with codecs.open(parts__init__, "w", encoding="utf-8") as parts__init__file:
-        parts__init__file.write(parts__init__str)
+    parts__init__ = directory / "__init__.py"
+    parts__init__.parent.mkdir(parents=True, exist_ok=True)
+    parts__init__.write_text(parts__init__str)
 
 
 def parts__init__content(sections):
