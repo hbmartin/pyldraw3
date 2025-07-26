@@ -33,13 +33,13 @@ def load_lib(library_path, fullname):
     elif os.path.exists(py_path):
         module_path = py_path
     else:
-        raise ImportError(
+        raise ImportError(  # noqa: TRY003
             f"Could not find module {fullname} at {init_path} or {py_path}",
         )
 
     spec = importlib.util.spec_from_file_location(fullname, module_path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load spec for {fullname}")
+        raise ImportError(f"Could not load spec for {fullname}")  # noqa: TRY003
     library_module = importlib.util.module_from_spec(spec)
 
     # Add to sys.modules BEFORE executing to prevent infinite recursion
@@ -75,7 +75,7 @@ class LibraryImporter:
         cls.clean()
 
     @classmethod
-    def find_module(cls, fullname, path=None):  # pylint:disable=unused-argument
+    def find_module(cls, fullname, path=None):  # noqa: ARG003
         """Find module for the given fullname.
 
         This method is called by Python if this class
@@ -102,7 +102,7 @@ class LibraryImporter:
         return None
 
     @classmethod
-    def find_spec(cls, fullname, path, target=None):
+    def find_spec(cls, fullname, path, target=None):  # noqa: ARG003
         """Find module spec for the given fullname.
 
         PEP 451: find_spec should return a ModuleSpec if the module can be handled.
@@ -146,6 +146,5 @@ class LibraryImporter:
         # the __hash__ will prevent re-generation
         config = self.config if self.config is not None else Config.load()
         logger.debug(f"loading {fullname} from {config.generated_path}")
-        mod = load_lib(config.generated_path, fullname)
         # Module is already added to sys.modules in load_lib
-        return mod
+        return load_lib(config.generated_path, fullname)

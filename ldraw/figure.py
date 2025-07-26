@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 # pylint: disable=missing-docstring
-from ldraw.geometry import Identity, Vector, XAxis, YAxis, ZAxis
+from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.pieces import Piece
 
 
@@ -55,9 +55,11 @@ Head = HeadWithSwSmirkAndBrownEyebrowsPattern = "3626bps5"
 class Person:
     """Representation of a LEGO minifigure."""
 
-    def __init__(self, position=Vector(0, 0, 0), matrix=Identity(), group=None):
-        self.position = position
-        self.matrix = matrix
+    def __init__(
+        self, position: Vector | None = None, matrix: Matrix | None = None, group=None
+    ):
+        self.position = position if position is not None else Vector(0, 0, 0)
+        self.matrix = matrix if matrix is not None else Identity()
         self.pieces_info = {}
         self.group = group
 
@@ -79,19 +81,20 @@ class Person:
         """Add a hat piece to the figure's head."""
         # Displacement from head
         displacement = head.position + head.matrix * Vector(0, 0, 0)
-        piece = Piece(colour, displacement, head.matrix, part, self.group)
-        return piece
+        return Piece(colour, displacement, head.matrix, part, self.group)
 
     def torso(self, colour, part=Torso):
         """Torso piece."""
         return Piece(colour, self.position, self.matrix, part, self.group)
 
-    def backpack(self, colour, displacement=Vector(0, 0, 0), part=Airtanks):
+    def backpack(self, colour, displacement: Vector | None = None, part=Airtanks):
         """Displacement from torso."""
-        displacement = self.matrix * displacement
+        _displacement = self.matrix * (
+            displacement if displacement is not None else Vector(0, 0, 0)
+        )
         return Piece(
             colour,
-            self.position + displacement,
+            self.position + _displacement,
             self.matrix,
             part,
             self.group,
@@ -160,8 +163,7 @@ class Person:
             * Identity().rotate(10, XAxis)
             * Identity().rotate(angle, YAxis)
         )
-        piece = Piece(colour, displacement, matrix, part, self.group)
-        return piece
+        return Piece(colour, displacement, matrix, part, self.group)
 
     def right_arm(self, colour, angle=0, part=ArmRight):
         """Displacement from torso."""
@@ -204,8 +206,7 @@ class Person:
             * Identity().rotate(10, XAxis)
             * Identity().rotate(angle, YAxis)
         )
-        piece = Piece(colour, displacement, matrix, part, self.group)
-        return piece
+        return Piece(colour, displacement, matrix, part, self.group)
 
     def left_leg(self, colour, angle=0, part=LegLeft):
         """Add a left leg."""
@@ -228,8 +229,7 @@ class Person:
         # Displacement from left leg
         displacement = left_leg.position + left_leg.matrix * Vector(10, 28, 0)
         matrix = left_leg.matrix * Identity().rotate(angle, YAxis)
-        piece = Piece(colour, displacement, matrix, part, self.group)
-        return piece
+        return Piece(colour, displacement, matrix, part, self.group)
 
     def right_leg(self, colour, angle=0, part=LegRight):
         """ " Add a right leg."""
@@ -252,5 +252,4 @@ class Person:
         # Displacement from right leg
         displacement = right_leg.position + right_leg.matrix * Vector(-10, 28, 0)
         matrix = right_leg.matrix * Identity().rotate(angle, YAxis)
-        piece = Piece(colour, displacement, matrix, part, self.group)
-        return piece
+        return Piece(colour, displacement, matrix, part, self.group)

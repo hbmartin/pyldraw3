@@ -73,4 +73,4 @@ def generate_parts_lst(mode: str, version_dir: Path):
     parts_lst = get_parts_lst(parts_folder_path, mode)
 
     lines = [_line_format(**row) for row in parts_lst]
-    open(parts_lst_path, "w", newline="\r\n", encoding="utf-8").writelines(lines)
+    parts_lst_path.write_text("\r\n".join(lines))

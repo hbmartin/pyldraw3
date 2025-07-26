@@ -8,12 +8,12 @@ import yaml
 from ldraw import generate as do_generate
 from ldraw.config import Config
 from ldraw.downloads import download as do_download
-from ldraw.generation.exceptions import UnwritableOutput
+from ldraw.generation.exceptions import UnwritableOutputError
 
 
 @click.group()
 @click.option("--debug", is_flag=True)
-def main(debug=False):
+def main(debug=False):  # noqa: FBT002
     """Provide CLI entry point for pyldraw commands."""
     if debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -28,20 +28,15 @@ def main(debug=False):
     required=False,
     is_flag=True,
 )
-@click.option(
-    "--yes",
-    is_flag=True,
-    help="use as the ldraw.library location for subsequent uses of pyLdraw",
-)
-def generate(force, yes):
+def generate(force):
     """Generate the ldraw.library modules from downloaded LDraw parts."""
     rw_config = Config.load()
 
     try:
         do_generate(rw_config, force, False)
-    except UnwritableOutput:
+    except UnwritableOutputError:
         print(
-            f"{rw_config.generated_path} is unwritable, select another output directory",
+            f"{rw_config.generated_path} is unwritable, select another out directory",
         )
 
 

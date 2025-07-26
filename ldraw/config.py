@@ -6,7 +6,6 @@ import os
 import yaml
 
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
-from ldraw.downloads import download
 
 CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")
 
@@ -68,7 +67,9 @@ class Config:
             with open(config_path) as config_file:
                 cfg = yaml.load(config_file, Loader=yaml.SafeLoader)
                 return cls(
+                    # pyrefly: ignore  # missing-attribute
                     ldraw_library_path=cfg.get("ldraw_library_path"),
+                    # pyrefly: ignore  # missing-attribute
                     generated_path=cfg.get("generated_path"),
                 )
         except FileNotFoundError:
@@ -88,16 +89,3 @@ class Config:
             if self.generated_path is not None:
                 written["generated_path"] = self.generated_path
             yaml.dump(written, config_file)
-
-
-def use(version, config=None):
-    """Set a specific LDraw library version to use in the configuration."""
-    cache_ldraw = get_cache_dir()
-    ldraw_library_path = os.path.join(cache_ldraw, version)
-    if not os.path.exists(ldraw_library_path):
-        print("downloading that version to use...")
-        download(version)
-    if config is None:
-        config = Config.load()
-    config.ldraw_library_path = ldraw_library_path
-    return config

@@ -35,7 +35,7 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
     if retrieved.exists():
         return retrieved
 
-    response = requests.get(url, stream=True)
+    response = requests.get(url, stream=True)  # noqa: S113
 
     with open(retrieved, "wb") as file:
         file.writelines(response.iter_content(chunk_size=chunk_size))
@@ -49,7 +49,7 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
         print(f"File {retrieved} already exists")
         return retrieved
 
-    response = requests.get(url, stream=True)
+    response = requests.get(url, stream=True)  # noqa: S113
     total = int(response.headers.get("content-length", 0))
     bar = Bar(f"Downloading {url} ...", max=total)
 
@@ -62,7 +62,7 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
     return retrieved
 
 
-def download(show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
+def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
     """Download and unpack an LDraw library version, generating parts.lst file."""
     filename = f"{version}.zip"
     retrieved = (

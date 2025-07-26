@@ -1,7 +1,7 @@
 """Tests for download functionality."""
 
 import zipfile
-from unittest.mock import *
+from unittest.mock import patch
 
 from ldraw import download
 

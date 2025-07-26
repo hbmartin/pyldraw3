@@ -2,38 +2,36 @@
 
 import hashlib
 import os
+from pathlib import Path
 import shutil
-import sys
-import traceback
-import typing
 
 from ldraw.config import Config
 from ldraw.generation.colours import gen_colours
-from ldraw.generation.exceptions import NoLibrarySelected, UnwritableOutput
 from ldraw.generation.parts import gen_parts
 from ldraw.parts import Parts
-from ldraw.resources import get_resource, get_resource_content
+from ldraw.resources import _get_resource, _get_resource_content
 from ldraw.utils import ensure_exists
 
 
-def generate(config: Config, force=False, warn=True):
+def generate(config: Config, *, force=False, warn=True):
     """Generate the library from configuration."""
     generated_library_path = os.path.join(config.generated_path, "library")
     ensure_exists(generated_library_path)
 
-    hash_path = os.path.join(generated_library_path, "__hash__")
+    hash_path = Path(generated_library_path) / "__hash__"
 
-    library_path = config.ldraw_library_path
+    library_path = Path(config.ldraw_library_path)
 
-    parts_lst = os.path.join(library_path, "ldraw", "parts.lst")
-    md5_parts_lst = hashlib.md5(open(parts_lst, "rb").read()).hexdigest()
+    parts_lst = library_path / "ldraw" / "parts.lst"
+    md5_parts_lst = hashlib.md5(parts_lst.read_bytes()).hexdigest()
 
-    if os.path.exists(hash_path):
-        md5 = open(hash_path).read()
+    if hash_path.exists():
+        md5 = hash_path.read_text()
         if md5 == md5_parts_lst and not force and warn:
             print("already generated there")
             return
 
+    # pyrefly: ignore  # deprecated
     shutil.rmtree(generated_library_path)
     ensure_exists(generated_library_path)
 
@@ -45,14 +43,14 @@ def generate(config: Config, force=False, warn=True):
         library__init__.write(LIBRARY_INIT)
 
     shutil.copy(
-        get_resource("ldraw-license.txt"),
+        _get_resource("ldraw-license.txt"),
         os.path.join(generated_library_path, "license.txt"),
     )
 
     gen_colours(parts, generated_library_path)
     gen_parts(parts, generated_library_path)
 
-    open(hash_path, "w").write(md5_parts_lst)
+    hash_path.write_text(md5_parts_lst)
 
 
-LIBRARY_INIT = get_resource_content(os.path.join("templates", "ldraw__init__"))
+LIBRARY_INIT = _get_resource_content(os.path.join("templates", "ldraw__init__"))

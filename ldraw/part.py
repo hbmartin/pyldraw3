@@ -4,7 +4,7 @@ import codecs
 import re
 
 from ldraw.colour import Colour
-from ldraw.errors import PartError
+from ldraw.errors import InvalidLineDataError, PartError, PartRequiresPathXorFileError
 from ldraw.geometry import Matrix, Vector
 from ldraw.lines import (
     Comment,
@@ -36,9 +36,9 @@ def _comment_or_meta(pieces):
     return Comment(" ".join(pieces))
 
 
-def _sub_file(pieces):
+def _sub_file(pieces: list) -> Piece:
     if len(pieces) != 14:
-        raise PartError("Invalid part data")
+        raise InvalidLineDataError("subfile", 14, pieces)
     colour = colour_from_str(pieces[0])
     position = list(map(float, pieces[1:4]))
     rows = [
@@ -52,18 +52,18 @@ def _sub_file(pieces):
     return Piece(Colour(colour), Vector(*position), Matrix(rows), part)
 
 
-def _line(pieces):
+def _line(pieces: list) -> Line:
     if len(pieces) != 7:
-        raise PartError("Invalid line data")
+        raise InvalidLineDataError("lint", 7, pieces)
     colour = colour_from_str(pieces[0])
     point1 = map(float, pieces[1:4])
     point2 = map(float, pieces[4:7])
     return Line(Colour(colour), Vector(*point1), Vector(*point2))
 
 
-def _triangle(pieces):
+def _triangle(pieces: list) -> Triangle:
     if len(pieces) != 10:
-        raise PartError("Invalid triangle data")
+        raise InvalidLineDataError("triangle", 10, pieces)
     colour = colour_from_str(pieces[0])
     point1 = map(float, pieces[1:4])
     point2 = map(float, pieces[4:7])
@@ -71,9 +71,9 @@ def _triangle(pieces):
     return Triangle(Colour(colour), Vector(*point1), Vector(*point2), Vector(*point3))
 
 
-def _quadrilateral(pieces):
+def _quadrilateral(pieces: list) -> Quadrilateral:
     if len(pieces) != 13:
-        raise PartError("Invalid quadrilateral data")
+        raise InvalidLineDataError("quadrilateral", 13, pieces)
     colour = colour_from_str(pieces[0])
     point1 = map(float, pieces[1:4])
     point2 = map(float, pieces[4:7])
@@ -88,9 +88,9 @@ def _quadrilateral(pieces):
     )
 
 
-def _optional_line(pieces):
+def _optional_line(pieces: list) -> OptionalLine:
     if len(pieces) != 13:
-        raise PartError("Invalid line data")
+        raise InvalidLineDataError("optional", 13, pieces)
     colour = colour_from_str(pieces[0])
     point1 = map(float, pieces[1:4])
     point2 = map(float, pieces[4:7])
@@ -118,9 +118,9 @@ HANDLERS = {
 class Part:
     """Contains data from a LDraw part file."""
 
-    def __init__(self, path=None, file=None):
-        if path is None and file is None:
-            raise ValueError("Part loading: needs path or file")
+    def __init__(self, path: str | None = None, file: str | None = None):
+        if (path is None and file is None) or (path is not None and file is not None):
+            raise PartRequiresPathXorFileError
         if path is not None:
             self.path = path
             self.file = None
@@ -128,7 +128,7 @@ class Part:
             self.file = file
             self.path = "%file-like object%"
         self._category = None
-        self._description = None
+        self._description: str | None = None
 
     @property
     def lines(self):
@@ -142,8 +142,8 @@ class Part:
                 for line in self.file:
                     yield line
                 self.file.seek(0)
-        except OSError:
-            raise PartError("Failed to read part file: %s" % self.path)
+        except OSError as e:
+            raise PartError("Failed to read part file: %s" % self.path) from e
 
     @property
     def objects(self):
@@ -151,21 +151,20 @@ class Part:
         for number, line in enumerate(self.lines):
             pieces = line.split()
             if not pieces:
-                # self.objects.append(BlankLine)
                 continue
             try:
                 handler = HANDLERS[pieces[0]]
-            except KeyError:
+            except KeyError as e:
                 raise PartError(
                     "Unknown command (%s) in %s at line %i"
                     % (pieces[0], self.path, number),
-                )
+                ) from e
             try:
                 yield handler(pieces[1:])
             except PartError as parse_error:
                 raise PartError(
                     parse_error.message + " in %s at line %i" % (self.path, number),
-                )
+                ) from parse_error
 
     @property
     def description(self):

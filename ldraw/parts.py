@@ -18,20 +18,19 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import codecs
-
 # pylint: disable=too-few-public-methods
 import hashlib
 import logging
 import os
 import re
 from collections import defaultdict
+from pathlib import Path
 
 import inflect
 from attridict import AttriDict
 
 from ldraw.colour import Colour
-from ldraw.errors import PartError
+from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import (
     MetaCommand,
 )
@@ -118,22 +117,23 @@ class Parts:
     @classmethod
     def get(cls, parts_lst, *args, **kwargs):
         """Get a Parts instance using memoization based on file hash."""
-        md5_parts_lst = hashlib.md5(open(parts_lst, "rb").read()).hexdigest()
+        md5_parts_lst = hashlib.md5(Path(parts_lst).read_bytes()).hexdigest()
         if md5_parts_lst in MEMOIZED:
             return MEMOIZED[md5_parts_lst]
         instance = Parts(parts_lst, *args, **kwargs)
         MEMOIZED[md5_parts_lst] = instance
         return instance
 
-    def __init__(self, parts_lst):
+    def __init__(self, parts_lst: str | Path):
         logger.debug(f"reading parts {parts_lst}")
-        self.path = None
-        self.parts_dirs = []
+        self.path = Path(parts_lst)
+
+        self.parts_dirs: list[Path] = []
         self.parts_subdirs = {}
         self.by_name = {}
         self.by_code = {}
         self.by_code_name = {}
-        self.by_category = defaultdict(dict)
+        self.by_category = defaultdict()
 
         self.primitives_by_name = {}
         self.primitives_by_code = {}
@@ -169,12 +169,7 @@ class Parts:
             "legs": "Leg",
         }
 
-        self.load(parts_lst)
-
-        # relatively useless categories
-        # for k in list(self.by_category.keys()):
-        #     if len(self.by_category.get(k)) < other_threshold:
-        #         self.by_category["other"].update(self.by_category.pop(k))
+        self.load()
 
         # reference in others
         for v in list(self.by_category.values()):
@@ -186,13 +181,12 @@ class Parts:
                 value = self.by_category.pop(k)
                 if k in self.parts:
                     self.parts[k][""] = value
+                elif k in {"car", "train", "technic"}:
+                    self.parts[k] = value
                 else:
-                    key = p.plural(k)
-                    if k == "car" or k == "train" or k == "technic":
-                        key = k
-                    self.parts[key] = value
+                    self.parts[p.plural(k)] = value
 
-    def get_category(self, part_description):
+    def get_category(self, part_description: str) -> str | None:
         """Get the category of a part based on its description."""
         split = part_description.strip(" ~=_|").split()
 
@@ -204,34 +198,29 @@ class Parts:
             potential = split[0]
         if potential in CATEGORIES:
             return potential
+        return None
 
-    def load(self, parts_lst):
+    def load(self):
         """Load parts from a path."""
-        try:
-            self.try_load(parts_lst)
-        except OSError:
-            raise PartError("Failed to load parts file: %s" % parts_lst)
+        self.try_load()
 
         # If we successfully loaded the files then record the path and look for
         # part files.
-        self.path = parts_lst
-        directory = os.path.split(self.path)[0]
-        for item in os.listdir(directory):
-            obj = os.path.join(directory, item)
-            if (item.lower() == "parts" and os.path.isdir(obj)) or (
-                item.lower() == "p" and os.path.isdir(obj)
+        for item in self.path.parent.iterdir():
+            if (item.name == "parts" and item.is_dir()) or (
+                item.name == "p" and item.is_dir()
             ):
-                self.parts_dirs.append(obj)
-                self._find_parts_subdirs(obj)
-            elif item.lower() == "ldconfig" + os.extsep + "ldr":
-                self._load_colours(obj)
-            elif item.lower() == "p" + os.extsep + "lst" and os.path.isfile(obj):
-                self._load_primitives(obj)
+                self.parts_dirs.append(item)
+                self._find_parts_subdirs(item)
+            elif item.name == "ldconfig.ldr":
+                self._load_colours(item)
+            elif item.name == "p.lst" and item.is_file():
+                self._load_primitives(item)
 
         for code, description in self.by_code_name:
             part = self.part(code=code)
             if part is None:
-                raise PartError(f"Part {code} not found in {self.path}")
+                raise PartNotFoundError(code=code, path=str(self.path))
             self.by_code_name[(code, description)] = part
             # read from the part, meta comment CATEGORY
             category = part.category
@@ -243,9 +232,9 @@ class Parts:
             else:
                 self.by_category[category.lower()][description] = code
 
-    def try_load(self, parts_lst):
+    def try_load(self):
         """Try loading parts from a parts.lst file."""
-        with codecs.open(parts_lst, "r", encoding="utf-8") as parts_lst_file:
+        with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
             for line in parts_lst_file.readlines():
                 pieces = re.split(DOT_DAT, line)
                 if len(pieces) != 2:
@@ -297,7 +286,7 @@ class Parts:
             return None
         return self._load_part(code)
 
-    def _find_parts_subdirs(self, directory):
+    def _find_parts_subdirs(self, directory: Path):
         for item in os.listdir(directory):
             obj = os.path.join(directory, item)
             if os.path.isdir(obj):
@@ -329,13 +318,13 @@ class Parts:
             continue
         raise PartError("part file not found: %s" % code)
 
-    def _load_colours(self, path):
+    def _load_colours(self, path: Path):
         try:
             colours_part = Part(path)
         except PartError:
             return
         for obj in colours_part.objects:
-            if not isinstance(obj, MetaCommand) or not obj.type == "COLOUR":
+            if not isinstance(obj, MetaCommand) or obj.type != "COLOUR":
                 continue
             pieces = obj.text.split()
             try:
@@ -360,10 +349,9 @@ class Parts:
             except (IndexError, ValueError):
                 pass
 
-            colour_attributes = []
-            for attribute in Parts.ColourAttributes:
-                if attribute in pieces:
-                    colour_attributes.append(attribute)
+            colour_attributes = [
+                attribute for attribute in Parts.ColourAttributes if attribute in pieces
+            ]
 
             self.colour_attributes[name] = colour_attributes
             self.colour_attributes[code] = colour_attributes
@@ -373,10 +361,9 @@ class Parts:
             self.colours_by_name[name] = colour
             self.colours_by_code[code] = colour
 
-    def _load_primitives(self, path):
-        try:
-            part_path = codecs.open(path, "r", encoding="utf-8")
-            for line in part_path.readlines():
+    def _load_primitives(self, path: Path):
+        with path.open(mode="r", encoding="utf=8") as part_path:
+            for line in part_path:
                 pieces = re.split(DOT_DAT, line)
                 if len(pieces) != 2:
                     break
@@ -384,5 +371,3 @@ class Parts:
                 description = pieces[1].strip()
                 self.primitives_by_name[description] = code
                 self.primitives_by_code[code] = description
-        except OSError:
-            raise PartError("Failed to load primitives file: %s" % path)

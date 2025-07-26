@@ -28,6 +28,9 @@ from numbers import Number
 class MatrixError(Exception):
     """Exception raised for matrix operation errors."""
 
+    def __init__(self):
+        super().__init__("Invalid axis specified.")
+
 
 class Axis:
     """Base class for axis representations."""
@@ -58,7 +61,7 @@ class Degrees(AngleUnits):
 
 
 def _rows_multiplication(r1, r2):
-    rows = [
+    return [
         [
             r1[0][0] * r2[0][0] + r1[0][1] * r2[1][0] + r1[0][2] * r2[2][0],
             r1[0][0] * r2[0][1] + r1[0][1] * r2[1][1] + r1[0][2] * r2[2][1],
@@ -75,7 +78,6 @@ def _rows_multiplication(r1, r2):
             r1[2][0] * r2[0][2] + r1[2][1] * r2[1][2] + r1[2][2] * r2[2][2],
         ],
     ]
-    return rows
 
 
 class Matrix:
@@ -138,7 +140,7 @@ class Matrix:
         elif axis == ZAxis:
             rotation = Matrix([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         else:
-            raise MatrixError("Invalid axis specified.")
+            raise MatrixError
         return self * rotation
 
     def scale(self, sx, sy, sz):
@@ -254,9 +256,9 @@ class Vector:
         raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
 
     def copy(self):
-        """Vector = copy(self)
-        Copy the vector so that new vectors containing the same values
-        are passed around rather than references to the same object.
+        """Copy the vector to a new vectors containing the same values.
+         
+        This prevents references to the same object.
         """
         return Vector(self.x, self.y, self.z)
 
@@ -331,9 +333,9 @@ class Vector2D:
         raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
 
     def copy(self):
-        """Vector = copy(self)
-        Copy the vector so that new vectors containing the same values
-        are passed around rather than references to the same object.
+        """Copy the vector to a new vectors containing the same values.
+         
+        This prevents references to the same object.
         """
         return Vector2D(self.x, self.y)
 
@@ -347,13 +349,13 @@ class CoordinateSystem:
 
     def __init__(
         self,
-        x=Vector(1.0, 0.0, 0.0),
-        y=Vector(0.0, 1.0, 0.0),
-        z=Vector(0.0, 0.0, 1.0),
+        x: Vector | None = None,
+        y: Vector | None = None,
+        z: Vector | None = None,
     ):
-        self.x = x
-        self.y = y
-        self.z = z
+        self.x = x if x is not None else Vector(1.0, 0.0, 0.0)
+        self.y = y if y is not None else Vector(0.0, 1.0, 0.0)
+        self.z = z if z is not None else Vector(0.0, 0.0, 1.0)
 
     def project(self, p):
         """Project a point onto this coordinate system."""

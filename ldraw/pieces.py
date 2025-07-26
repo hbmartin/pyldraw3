@@ -21,13 +21,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # pylint: disable=too-many-arguments, too-few-public-methods
 from functools import reduce
 
-from ldraw.geometry import Identity, Vector
+from ldraw.geometry import Identity, Matrix, Vector
 
 
 class Piece:
-    """a Piece, which is a Part with a certain colour
-    at a certain position and rotation.
-    """
+    """A Piece is a Part with a defined colour, position, and rotation."""
 
     def __init__(self, colour, position, matrix, part, group=None):
         self.position = position
@@ -38,7 +36,7 @@ class Piece:
         if group:
             group.add_piece(self)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.group:
             position = self.group.position + self.group.matrix * self.position
             matrix = self.group.matrix * self.matrix
@@ -57,25 +55,26 @@ class Piece:
 class Group:
     """a Group of Pieces."""
 
-    def __init__(self, position=Vector(0, 0, 0), matrix=Identity()):
-        self.position = position
-        self.matrix = matrix
-        self.pieces = []
+    def __init__(
+        self,
+        position: Vector | None = None,
+        matrix: Matrix | None = None,
+    ) -> None:
+        self.position = position if position is not None else Vector(0, 0, 0)
+        self.matrix = matrix if matrix is not None else Identity()
+        self.pieces: list[Piece] = []
 
-    def __repr__(self):
-        text = []
-        for piece in self.pieces:
-            text.append(repr(piece))
-        return "\n".join(text)
+    def __repr__(self) -> str:
+        return "\n".join([repr(piece) for piece in self.pieces])
 
-    def add_piece(self, piece):
+    def add_piece(self, piece: Piece) -> None:
         """Add a piece to the group."""
         self.pieces.append(piece)
         if piece.group and piece.group != self:
             piece.group.remove_piece(piece)
         piece.group = self
 
-    def remove_piece(self, piece):
+    def remove_piece(self, piece: Piece) -> None:
         """Remove a piece from the group."""
         self.pieces.remove(piece)
         piece.group = None

@@ -2,6 +2,7 @@
 
 import html.parser
 
+from errors import CouldNotDetermineLatestVersionError
 import requests
 
 UPDATES_PAGE_URL = "https://library.ldraw.org/updates"
@@ -18,7 +19,7 @@ class AnchorTagParser(html.parser.HTMLParser):
         self.found = False
 
     def handle_starttag(self, tag, attrs):
-        """Handle HTML start tag and extract data-pan attribute from target anchor tag."""
+        """Extract data-pan attribute from target anchor tag."""
         # Stop parsing if the tag has already been found
         if self.found:
             return
@@ -35,8 +36,7 @@ class AnchorTagParser(html.parser.HTMLParser):
 
 
 def extract_data_pan_from_html(html_content):
-    """Parse HTML content to extract the 'data-pan' attribute from the first
-    anchor tag with a specific href.
+    """Parse HTML content to extract the 'data-pan' attribute from the updates page.
 
     Args:
         html_content (str): The HTML content to parse.
@@ -53,9 +53,9 @@ def extract_data_pan_from_html(html_content):
 
 def get_latest_release_id() -> str:
     """Get the latest LDraw library release ID from the updates page."""
-    response = requests.get(UPDATES_PAGE_URL)
+    response = requests.get(UPDATES_PAGE_URL)  # noqa: S113
     response.raise_for_status()
     pan = extract_data_pan_from_html(response.text)
     if pan is None:
-        raise ValueError("No data-pan attribute found")
+        raise CouldNotDetermineLatestVersionError
     return pan.split("-")[-1]

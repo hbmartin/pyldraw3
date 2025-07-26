@@ -8,7 +8,7 @@ from attridict import AttriDict
 from progress.bar import Bar
 
 from ldraw.parts import PartError
-from ldraw.resources import get_resource_content
+from ldraw.resources import _get_resource_content
 from ldraw.utils import camel, clean, ensure_exists
 
 SECTION_SEP = "#|#"
@@ -54,11 +54,11 @@ def recursive_gen_parts(parts_parts, directory):
         with codecs.open(parts_py, "w", encoding="utf-8") as generated_file:
             generated_file.write(part_str)
 
-    generate_parts__init__(module_parts, directory, sections, parts_parts)
+    generate_parts__init__(directory=directory, sections=sections)
 
 
-def generate_parts__init__(module_parts, directory, sections, parts_parts):
-    """Generate the appropriate __init__.py to make submodules in ldraw.library.parts."""
+def generate_parts__init__(directory, sections):
+    """Generate __init__.py to make submodules in ldraw.library.parts."""
     parts__init__str = parts__init__content(sections)
 
     parts__init__ = os.path.join(directory, "__init__.py")
@@ -85,15 +85,14 @@ def section_content(section_parts, section_key):
     progress_bar.finish()
     parts_list = [x for x in parts_list if x != {}]
     parts_list.sort(key=lambda o: o["description"])
-    part_str = pystache.render(PARTS_TEMPLATE, context={"parts": parts_list})
-    return part_str
+    return pystache.render(PARTS_TEMPLATE, context={"parts": parts_list})
 
 
 PARTS__INIT__TEMPLATE = pystache.parse(
-    get_resource_content(os.path.join("templates", "parts__init__.mustache")),
+    _get_resource_content(os.path.join("templates", "parts__init__.mustache")),
 )
 PARTS_TEMPLATE = pystache.parse(
-    get_resource_content(os.path.join("templates", "parts.mustache")),
+    _get_resource_content(os.path.join("templates", "parts.mustache")),
 )
 
 
@@ -101,9 +100,7 @@ def get_part_dict(parts_parts, description):
     """Get a dict context for a part."""
     try:
         code = parts_parts[description]
-        # part = parts.part(code=code)
         return {
-            #   'path': part.path,
             "description": description,
             "class_name": clean(camel(description)),
             "code": code,

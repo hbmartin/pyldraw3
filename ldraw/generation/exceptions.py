@@ -1,9 +1,9 @@
 """Exception classes for library generation."""
 
 
-class NoLibrarySelected(Exception):
+class NoLibrarySelectedError(Exception):
     """Exception raised when no library is selected."""
 
 
-class UnwritableOutput(Exception):
+class UnwritableOutputError(Exception):
     """Exception raised when output directory is not writable."""

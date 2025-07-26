@@ -19,7 +19,6 @@ classifiers = [
 ]
 dependencies = [
     "platformdirs>=4.3.8",
-    "numpy>=2.3.1,<3",
     "pystache>=0.6.0",
     "progress>=1.6.1",
     "pillow>=11.3.0",
@@ -76,11 +75,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["D105", "D107", "S101", "T201"]
+ignore = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN206", "D105", "D107", "EM101", "PLR2004", "PTH110", "PTH112", "PTH118", "PTH123", "PTH206", "PTH208", "T201", "UP031"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D103"]
-"examples/*.py" = ["D103"]
+"tests/**/*.py" = ["ANN002", "ANN003", "ARG001", "ARG005", "D103", "D104", "DTZ003", "ERA001", "F403", "F405", "FBT002", "G004", "N802", "PLC0415", "PLR2004", "PT013", "PTH110", "PTH118", "PTH119", "PTH122", "PTH123", "PTH207", "S101", "S102", "S311", "SIM115"]
+"examples/*.py" = ["D103", "F403", "F405", "S311"]
 
 [tool.ruff.format]
 # Same as Black.

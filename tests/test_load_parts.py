@@ -27,8 +27,8 @@ def test_load_primitives() -> None:
     p = Parts("tests/test_ldraw/ldraw/parts.lst")
     assert len(p.primitives_by_name) == 4
     assert len(p.primitives_by_code) == 4
-    assert "Box with 5 Faces and All Edges", "box5" in p.primitives_by_name.items()
-    assert "box5", "Box with 5 Faces and All Edges" in p.primitives_by_code.items()
+    assert p.primitives_by_name["Box with 5 Faces and All Edges"] == "box5"
+    assert p.primitives_by_code["box5"] == "Box with 5 Faces and All Edges"
 
     part = p.part(code="box5")
 

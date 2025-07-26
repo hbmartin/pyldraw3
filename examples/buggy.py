@@ -35,20 +35,20 @@ from ldraw.library.parts import (
 from ldraw.library.parts.minifig.accessories import Seat2X2
 from ldraw.pieces import Group, Piece
 
-# figure = Person(Vector(0, 0, -10))
-# print(figure.head(Yellow, 30))
-# print(figure.hat(White, "193B"))
-# print(figure.torso(White, "973P90"))
-# print(figure.backpack(White, Vector(0, -2, 0)))
-# print(figure.hips(White))
-# print(figure.left_leg(White, 0))
-# print(figure.right_leg(White, 0))
-# print(figure.left_arm(White, -45))
-# print(figure.left_hand(White, 0))
-# print(figure.left_hand_item(Grey, Vector(0, -11, -12), 0, "3959") # Torch)
-# print(figure.right_arm(White, 0))
-# print(figure.right_hand(White, 0))
-# print()
+figure = Person(Vector(0, 0, -10))
+print(figure.head(Yellow, 30))
+print(figure.hat(White, "193B"))
+print(figure.torso(White, "973P90"))
+print(figure.backpack(White, Vector(0, -2, 0)))
+print(figure.hips(White))
+print(figure.left_leg(White, 0))
+print(figure.right_leg(White, 0))
+print(figure.left_arm(White, -45))
+print(figure.left_hand(White, 0))
+print(figure.left_hand_item(Grey, Vector(0, -11, -12), 0, part="3959"))
+print(figure.right_arm(White, 0))
+print(figure.right_hand(White, 0))
+
 rover = Group(Vector(0, 48, 60), Identity().rotate(-15, YAxis))
 print(
     Piece(
