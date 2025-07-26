@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 # pylint: disable=too-few-public-methods
+import contextlib
 import hashlib
 import logging
 import os
@@ -125,7 +126,7 @@ class Parts:
         return instance
 
     def __init__(self, parts_lst: str | Path):
-        logger.debug(f"reading parts {parts_lst}")
+        logger.debug("reading parts %s", parts_lst)
         self.path = Path(parts_lst)
 
         self.parts_dirs: list[Path] = []
@@ -278,10 +279,8 @@ class Parts:
         if not self.path:
             return None
         if description:
-            try:
+            with contextlib.suppress(KeyError):
                 code = self.by_name[description]
-            except KeyError:
-                pass
         elif not code:
             return None
         return self._load_part(code)
@@ -320,7 +319,7 @@ class Parts:
 
     def _load_colours(self, path: Path):
         try:
-            colours_part = Part(path)
+            colours_part = Part(path=str(path))
         except PartError:
             return
         for obj in colours_part.objects:

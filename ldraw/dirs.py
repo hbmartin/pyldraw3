@@ -4,8 +4,7 @@ import platformdirs
 
 from ldraw.utils import ensure_exists
 
-# TODO: change this
-PYLDRAW = "pyldraw"
+PYLDRAW = "pyldraw3"
 
 
 def get_data_dir():

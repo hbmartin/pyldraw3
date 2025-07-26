@@ -27,7 +27,7 @@ def recursive_gen_parts(parts_parts, directory):
     for name, value in list(parts_parts.items()):
         if isinstance(value, AttriDict):
             recurse = False
-            for k, v in value.items():
+            for v in value.values():
                 if len(v) > 0:
                     recurse = True
 
@@ -47,7 +47,7 @@ def recursive_gen_parts(parts_parts, directory):
         if section_name == "":
             continue
         for desc, code in section_parts.items():
-            module_parts[desc] = code
+            module_parts[desc] = code  # noqa: PERF403
 
         parts_py = os.path.join(directory, f"{section_name}.py")
         part_str = section_content(section_parts, section_name)
@@ -77,6 +77,7 @@ def parts__init__content(sections):
 
 
 def section_content(section_parts, section_key):
+    """Generate the content for a section of parts."""
     parts_list = []
     progress_bar = Bar("section %s ..." % str(section_key), max=len(section_parts))
     for description in section_parts:

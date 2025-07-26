@@ -33,7 +33,7 @@ def generate(force):
     rw_config = Config.load()
 
     try:
-        do_generate(rw_config, force, False)
+        do_generate(config=rw_config, force=force, warn=False)
     except UnwritableOutputError:
         print(
             f"{rw_config.generated_path} is unwritable, select another out directory",
@@ -51,7 +51,7 @@ def config():
 def download():
     """Download LDraw library files from the official repository."""
     release_id = do_download()
-    logging.debug(f"Downloaded LDraw library files for release {release_id}")
+    logging.info("Downloaded LDraw library files for release %s", release_id)
 
 
 if __name__ == "__main__":

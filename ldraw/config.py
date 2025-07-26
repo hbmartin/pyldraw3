@@ -15,14 +15,10 @@ def is_valid_config_file(parser, arg):
     if not os.path.exists(arg):
         parser.error("The file %s does not exist!" % arg)
     else:
-        try:
-            with open(arg) as f:
-                result = yaml.load(f, Loader=yaml.SafeLoader)
-                assert result is not None
-            return arg
-        except:
-            parser.error("%s Doesn't look like a YAML file" % arg)
-
+        with open(arg) as f:
+            result = yaml.load(f, Loader=yaml.SafeLoader)
+            assert result is not None
+        return arg
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", type=lambda x: is_valid_config_file(parser, x))
@@ -67,9 +63,9 @@ class Config:
             with open(config_path) as config_file:
                 cfg = yaml.load(config_file, Loader=yaml.SafeLoader)
                 return cls(
-                    # pyrefly: ignore  # missing-attribute
+                    # pyrefly: ignore  # missing-attribute  # noqa: ERA001
                     ldraw_library_path=cfg.get("ldraw_library_path"),
-                    # pyrefly: ignore  # missing-attribute
+                    # pyrefly: ignore  # missing-attribute  # noqa: ERA001
                     generated_path=cfg.get("generated_path"),
                 )
         except FileNotFoundError:

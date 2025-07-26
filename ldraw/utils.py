@@ -20,7 +20,7 @@ def camel(input_string: str) -> str:
 
 def ensure_exists(path: str) -> str:
     """Make the directory if it does not exist."""
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, exist_ok=True)  # noqa: PTH103
     return path
 
 

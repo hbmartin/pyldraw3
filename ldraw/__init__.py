@@ -20,12 +20,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys
 
-from ldraw.config import use
 from ldraw.downloads import download
 from ldraw.generation import generate
 from ldraw.imports import LibraryImporter
 
-__all__ = [download, generate, use]
+__all__ = [download, generate]
 
 # Modern import hook registration: use an instance, not the class
 library_importer_instance = LibraryImporter()

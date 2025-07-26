@@ -56,7 +56,10 @@ class Person:
     """Representation of a LEGO minifigure."""
 
     def __init__(
-        self, position: Vector | None = None, matrix: Matrix | None = None, group=None
+        self,
+        position: Vector | None = None,
+        matrix: Matrix | None = None,
+        group=None,
     ):
         self.position = position if position is not None else Vector(0, 0, 0)
         self.matrix = matrix if matrix is not None else Identity()
@@ -232,7 +235,7 @@ class Person:
         return Piece(colour, displacement, matrix, part, self.group)
 
     def right_leg(self, colour, angle=0, part=LegRight):
-        """ " Add a right leg."""
+        """Add a right leg."""
         displacement = self.matrix * Vector(0, 44, 0)
         piece = Piece(
             colour,

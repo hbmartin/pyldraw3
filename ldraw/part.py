@@ -1,10 +1,10 @@
 """Part file parsing and processing functionality."""
 
-import codecs
 import re
+from pathlib import Path
 
 from ldraw.colour import Colour
-from ldraw.errors import InvalidLineDataError, PartError, PartRequiresPathXorFileError
+from ldraw.errors import InvalidLineDataError, PartError
 from ldraw.geometry import Matrix, Vector
 from ldraw.lines import (
     Comment,
@@ -118,32 +118,16 @@ HANDLERS = {
 class Part:
     """Contains data from a LDraw part file."""
 
-    def __init__(self, path: str | None = None, file: str | None = None):
-        if (path is None and file is None) or (path is not None and file is not None):
-            raise PartRequiresPathXorFileError
-        if path is not None:
-            self.path = path
-            self.file = None
-        elif file is not None:
-            self.file = file
-            self.path = "%file-like object%"
+    def __init__(self, path: Path | str):
+        self.path = Path(path)
         self._category = None
         self._description: str | None = None
 
     @property
     def lines(self):
         """Yield lines from the part file."""
-        try:
-            if self.file is None:
-                with codecs.open(self.path, "r", encoding="utf-8") as file:
-                    for line in file:
-                        yield line
-            else:
-                for line in self.file:
-                    yield line
-                self.file.seek(0)
-        except OSError as e:
-            raise PartError("Failed to read part file: %s" % self.path) from e
+        with self.path.open("r", encoding="utf-8") as file:
+            yield from file
 
     @property
     def objects(self):

@@ -2,8 +2,8 @@
 
 import html.parser
 
-from errors import CouldNotDetermineLatestVersionError
 import requests
+from errors import CouldNotDetermineLatestVersionError
 
 UPDATES_PAGE_URL = "https://library.ldraw.org/updates"
 TARGET_HREF = "https://library.ldraw.org/library/updates/complete.zip"

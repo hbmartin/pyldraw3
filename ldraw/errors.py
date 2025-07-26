@@ -30,7 +30,7 @@ class InvalidLineDataError(PartError, ValueError):
 
     def __init__(self, line_type: str, size: int, line: list):
         super().__init__(
-            f"Line type {line_type} must have {size} parameters:\n{" ".join(line)}"
+            f"Line type {line_type} must have {size} parameters:\n{" ".join(line)}",
         )
 
 
@@ -39,3 +39,25 @@ class CouldNotDetermineLatestVersionError(Exception):
 
     def __init__(self):
         super().__init__("Could not determine the latest parts list version.")
+
+
+class ModuleImportError(ImportError):
+    """Could not import a module."""
+
+
+class CouldNotLoadSpecError(ModuleImportError):
+    """Could not determine the latest parts list version."""
+
+    def __init__(self, fullname: str):
+        super().__init__(
+            f"Could not determine the latest parts list version for {fullname}.",
+        )
+
+
+class CouldNotFindModuleError(ModuleImportError):
+    """Could not find a module."""
+
+    def __init__(self, fullname: str, init_path: str, py_path: str):
+        super().__init__(
+            f"Could not find module {fullname} at {init_path} or {py_path}.",
+        )

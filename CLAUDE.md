@@ -90,7 +90,7 @@ uv build                     # Build package
 ## Python Practices
 - Always use or add type hints
 - Prefer @dataclasses where applicable
-- Always prefer f-string over string formatting or concatentation
+- Always use f-string over string formatting or concatentation (except in logging strings)
 - Use async generators and comprehensions when they might provide benefits
 - Use underscores in large numeric literals
 - Use walrus assignment := where applicable

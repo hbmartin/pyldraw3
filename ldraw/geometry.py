@@ -86,6 +86,10 @@ class Matrix:
     def __init__(self, rows):
         self.rows = rows
 
+    def __hash__(self):
+        # Flatten the matrix rows into a tuple of tuples for hashing
+        return hash(tuple(tuple(row) for row in self.rows))
+
     def __repr__(self):
         values = reduce(lambda x, y: x + y, self.rows)
         format_string = "((%f, %f, %f),\n (%f, %f, %f),\n (%f, %f, %f))"
@@ -187,7 +191,7 @@ class Matrix:
         return self.rows == other.rows
 
 
-def Identity():
+def Identity():  # noqa: N802
     """Return a transformation matrix representing Identity."""
     return Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
@@ -257,7 +261,7 @@ class Vector:
 
     def copy(self):
         """Copy the vector to a new vectors containing the same values.
-         
+
         This prevents references to the same object.
         """
         return Vector(self.x, self.y, self.z)
@@ -334,7 +338,7 @@ class Vector2D:
 
     def copy(self):
         """Copy the vector to a new vectors containing the same values.
-         
+
         This prevents references to the same object.
         """
         return Vector2D(self.x, self.y)

@@ -6,6 +6,7 @@ import os
 import sys
 
 from ldraw.config import Config
+from ldraw.errors import CouldNotFindModuleError, CouldNotLoadSpecError
 
 VIRTUAL_MODULE = "ldraw.library"
 
@@ -13,6 +14,22 @@ logger = logging.getLogger("ldraw")
 
 
 def load_lib(library_path, fullname):
+    """Load a dynamically generated LDraw library module.
+
+    Args:
+        library_path (str): The root directory of the generated LDraw library.
+        fullname (str): The full dotted module name to load
+            (e.g., 'ldraw.library.parts.brick_2x4').
+
+    Returns:
+        module: The loaded Python module object.
+
+    Raises:
+        CouldNotFindModuleError: If the module file cannot be found.
+        CouldNotLoadSpecError: If the module spec cannot be loaded.
+        Exception: If execution of the module fails.
+
+    """
     dot_split = fullname.split(".")
     dot_split.pop(0)  # Remove 'ldraw'
 
@@ -33,13 +50,11 @@ def load_lib(library_path, fullname):
     elif os.path.exists(py_path):
         module_path = py_path
     else:
-        raise ImportError(  # noqa: TRY003
-            f"Could not find module {fullname} at {init_path} or {py_path}",
-        )
+        raise CouldNotFindModuleError(fullname, init_path, py_path)
 
     spec = importlib.util.spec_from_file_location(fullname, module_path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load spec for {fullname}")  # noqa: TRY003
+        raise CouldNotLoadSpecError(fullname)
     library_module = importlib.util.module_from_spec(spec)
 
     # Add to sys.modules BEFORE executing to prevent infinite recursion
@@ -65,6 +80,7 @@ class LibraryImporter:
             rest = fullname[len(VIRTUAL_MODULE) :]
             if not rest or rest.startswith("."):
                 return True
+        return False
 
     config = None
 
@@ -123,7 +139,7 @@ class LibraryImporter:
             if hasattr(ldraw_mod, "library"):
                 delattr(ldraw_mod, "library")
 
-    def get_code(self, fullname):
+    def get_code(self, fullname):  # noqa: ARG002
         """Get the code object for a module (not used in this implementation)."""
         return
 
@@ -145,6 +161,6 @@ class LibraryImporter:
         # if the library already exists and correctly generated,
         # the __hash__ will prevent re-generation
         config = self.config if self.config is not None else Config.load()
-        logger.debug(f"loading {fullname} from {config.generated_path}")
+        logger.debug("loading %s from %s", fullname, config.generated_path)
         # Module is already added to sys.modules in load_lib
         return load_lib(config.generated_path, fullname)

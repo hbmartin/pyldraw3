@@ -2,8 +2,8 @@
 
 import hashlib
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from ldraw.config import Config
 from ldraw.generation.colours import gen_colours
@@ -31,7 +31,7 @@ def generate(config: Config, *, force=False, warn=True):
             print("already generated there")
             return
 
-    # pyrefly: ignore  # deprecated
+    # pyrefly: ignore  # deprecated  # noqa: ERA001
     shutil.rmtree(generated_library_path)
     ensure_exists(generated_library_path)
 

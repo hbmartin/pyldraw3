@@ -1,4 +1,5 @@
 """Called by ldraw.library_gen to generate the ldraw/library/colours.py file."""
+
 import codecs
 import os
 

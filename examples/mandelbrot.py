@@ -50,7 +50,7 @@ colours = [
 ]
 
 
-def draw_mandelbrot(x1, z1, x2, z2, r1, i1, r2, i2) -> None:
+def draw_mandelbrot(x1, z1, x2, z2, r1, i1, r2, i2) -> None:  # noqa: PLR0913
     y = 0
     z = z1
     while z <= z2:
