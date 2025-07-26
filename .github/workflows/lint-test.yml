@@ -42,8 +42,6 @@ jobs:
     - run: uv run ruff check .
     - name: Run type checks
       run: |
-        ty --version
-        ty check ldraw
-        pyrefly --version
-        pyrefly check ldraw
+        uv run ty check ldraw
+        uv run pyrefly check ldraw
     - run: uv run pytest

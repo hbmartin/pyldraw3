@@ -5,10 +5,10 @@ import zipfile
 from pathlib import Path
 
 import requests
-from download_updates import get_latest_release_id
 from progress.bar import Bar
 
 from ldraw.dirs import get_cache_dir
+from ldraw.download_updates import get_latest_release_id
 from ldraw.generate import generate_parts_lst
 
 logger = logging.getLogger(__name__)

@@ -4,9 +4,9 @@ import argparse
 import os
 
 import yaml
-from errors import InvalidConfigFileError
 
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
+from ldraw.errors import InvalidConfigFileError
 
 CONFIG_FILE = os.path.join(get_config_dir(), "config.yml")
 

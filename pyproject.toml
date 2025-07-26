@@ -52,9 +52,9 @@ dev = [
     "pytest-xdist>=3.8.0",
     "coveralls>=4.0.1",
     "xdoctest[colors] >=0.15.10",
-    "ruff>=0.12.4",
+    "ruff>=0.12.5",
     "ty>=0.0.1a16",
-    "pyrefly>=0.25.0",
+    "pyrefly>=0.25.1",
 ]
 docs = [
   "furo >=2021.11.12",
