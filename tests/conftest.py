@@ -5,7 +5,6 @@ import os
 import pytest
 
 from ldraw import LibraryImporter, generate
-from ldraw.config import use
 from ldraw.utils import ensure_exists
 
 
@@ -27,18 +26,3 @@ def pytest_runtest_setup(item) -> None:
     elif "integration" in item.keywords and not run_integration:
         pytest.skip("pass --integration option to pytest to run this test")
 
-
-@pytest.fixture(scope="module")
-def library_version():
-    config = use("2018-01")
-    cached_generated = ".cached-generated"
-    config.generated_path = cached_generated
-
-    if not os.path.exists(cached_generated):
-        ensure_exists(cached_generated)
-        generate(config)
-
-    LibraryImporter.set_config(config=config)
-
-    yield config
-    LibraryImporter.clean()

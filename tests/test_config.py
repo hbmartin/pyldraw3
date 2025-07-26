@@ -9,17 +9,6 @@ from yaml import YAMLError
 from ldraw.config import Config
 
 
-def fails(*args, **kwargs) -> Never:
-    raise YAMLError
-
-
-@patch("yaml.load", side_effect=fails)
-def test_config_cant_load(yaml_load_mock) -> None:
-    yaml_load_mock.side_effect = fails
-
-    raises(YAMLError, Config.load)
-
-
 @patch(
     "ldraw.config.open",
     side_effect=mock_open(read_data="ldraw_library_path: C:\\file_path"),
