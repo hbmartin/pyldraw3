@@ -1,11 +1,6 @@
 """Pytest configuration and fixtures."""
 
-import os
-
 import pytest
-
-from ldraw import LibraryImporter, generate
-from ldraw.utils import ensure_exists
 
 
 def pytest_addoption(parser) -> None:

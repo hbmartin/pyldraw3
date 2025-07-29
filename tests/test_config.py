@@ -1,10 +1,6 @@
 """Tests for configuration functionality."""
 
-from typing import Never
 from unittest.mock import mock_open, patch
-
-from pytest import raises
-from yaml import YAMLError
 
 from ldraw.config import Config
 
