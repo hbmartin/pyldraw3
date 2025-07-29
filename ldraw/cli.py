@@ -14,12 +14,12 @@ from ldraw.downloads import download as do_download
 from ldraw.generation.exceptions import UnwritableOutputError
 
 
-def generate(force):
+def generate():
     """Generate the ldraw.library modules from downloaded LDraw parts."""
     rw_config = Config.load()
 
     try:
-        do_generate(config=rw_config, force=force, warn=False)
+        do_generate(config=rw_config)
     except UnwritableOutputError:
         print(
             f"{rw_config.generated_path} is unwritable, select another out directory",
@@ -41,6 +41,11 @@ def download():
     )
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the CLI."""
     download()
     generate()
+
+
+if __name__ == "__main__":
+    main()
