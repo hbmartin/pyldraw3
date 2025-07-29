@@ -21,11 +21,8 @@ dependencies = [
     "platformdirs>=4.3.8",
     "pystache>=0.6.0",
     "progress>=1.6.1",
-    "pillow>=11.3.0",
-    "mock>=5.2.0",
     "requests>=2.32.4",
     "inflect>=7.5.0",
-    "ruff>=0.12.4",
     "attridict>=0.0.9",
 ]
 
@@ -36,10 +33,6 @@ Documentation = "https://uv-hypermodern-python.readthedocs.io"
 Changelog = "https://github.com/bosd/uv-hypermodern-python/releases"
 
 [project.scripts]
-ldr2inv = "ldraw.tools.ldr2inv:main"
-ldr2png = "ldraw.tools.ldr2png:main"
-ldr2pov = "ldraw.tools.ldr2pov:main"
-ldr2svg = "ldraw.tools.ldr2svg:main"
 ldraw = "ldraw.cli:main"
 
 [dependency-groups]
@@ -54,7 +47,8 @@ dev = [
     "xdoctest[colors] >=0.15.10",
     "ruff>=0.12.5",
     "ty>=0.0.1a16",
-    "pyrefly>=0.25.1",
+    "pyrefly>=0.26.0",
+    "mock>=5.2.0",
 ]
 docs = [
   "furo >=2021.11.12",

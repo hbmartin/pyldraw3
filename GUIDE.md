@@ -18,7 +18,6 @@ Welcome to PyLDraw3! This guide will help you get started with creating LEGO mod
 - [Advanced Topics](#advanced-topics)
   - [Scene Composition with Lighting](#scene-composition-with-lighting)
   - [Building Complex Structures](#building-complex-structures)
-  - [Exporting Your Models](#exporting-your-models)
   - [Working with Different Part Categories](#working-with-different-part-categories)
   - [Best Practices](#best-practices)
   - [Troubleshooting](#troubleshooting)
@@ -261,24 +260,6 @@ for i in range(1, staircases + 1):
     stairs.matrix = Identity().rotate(-90 * i, YAxis)
     for piece in stairs.pieces:
         print(piece)
-```
-
-### Exporting Your Models
-
-PyLDraw3 includes several export tools:
-
-```bash
-# Convert to PNG image
-uv run python -m ldraw.tools.ldr2png input.ldr output.png
-
-# Convert to POV-Ray format
-uv run python -m ldraw.tools.ldr2pov input.ldr output.pov
-
-# Convert to SVG
-uv run python -m ldraw.tools.ldr2svg input.ldr output.svg
-
-# Generate parts inventory
-uv run python -m ldraw.tools.ldr2inv input.ldr output.inv
 ```
 
 ### Working with Different Part Categories

@@ -25,4 +25,3 @@ def pytest_runtest_setup(item) -> None:
         pytest.skip("skipping test not marked as integration")
     elif "integration" in item.keywords and not run_integration:
         pytest.skip("pass --integration option to pytest to run this test")
-
