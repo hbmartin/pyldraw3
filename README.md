@@ -1,8 +1,10 @@
 # pyldraw3
 
+[![PyPI](https://img.shields.io/pypi/v/pyldraw3.svg)](https://pypi.org/project/pyldraw3/)
 [![Lint and Test](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml/badge.svg)](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hbmartin/pyldraw3/badge.svg?branch=main)](https://coveralls.io/github/hbmartin/pyldraw3?branch=main)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pyldraw3.svg)](https://pypi.python.org/pypi/pyldraw3)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Code style: black](https://img.shields.io/badge/🐧️-black-000000.svg)](https://github.com/psf/black)
 
 A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models. It is a drop-in replacement for the unmaintained `pyldraw` library.
 
@@ -12,6 +14,16 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
 - 📜 **Comprehensive Guide**: Jump into example or the quick start below, or read a [detailed usage guide](GUIDE.md)
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Installation](#installation)
+  - [Setup](#setup)
+  - [Examples](#examples)
+  - [Basic Usage](#basic-usage)
+
 
 ## Quick Start
 
