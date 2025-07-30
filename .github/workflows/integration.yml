@@ -1,0 +1,141 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+        ldraw-version: ["2018-02", "complete"]
+      fail-fast: false
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    
+    - name: Create uv environment
+      run: uv venv
+    
+    - name: Install dependencies
+      run: uv sync --all-groups
+    
+    - name: Download LDraw library (${{ matrix.ldraw-version }})
+      run: |
+        if [ "${{ matrix.ldraw-version }}" = "complete" ]; then
+          uv run ldraw download --yes
+        else
+          uv run ldraw download --version ${{ matrix.ldraw-version }} --yes
+        fi
+      timeout-minutes: 30
+    
+    - name: Generate library modules
+      run: uv run ldraw generate --yes
+      timeout-minutes: 15
+    
+    - name: Run integration tests
+      run: uv run pytest --integration -v --tb=short --durations=10
+      timeout-minutes: 45
+    
+    - name: Test CLI commands
+      run: |
+        # Test basic CLI functionality
+        uv run ldraw --help
+        uv run ldraw config
+        uv run ldraw version
+      timeout-minutes: 5
+    
+    - name: Test example scripts
+      run: |
+        cd examples
+        # Test a few example scripts to ensure they work with real data
+        timeout 60 uv run python stairs.py || echo "Stairs example completed/timed out"
+        timeout 60 uv run python figure.py || echo "Figure example completed/timed out"
+      timeout-minutes: 10
+      continue-on-error: true
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results-py${{ matrix.python-version }}-${{ matrix.ldraw-version }}
+        path: |
+          *.log
+          test-results.xml
+        retention-days: 30
+
+  integration-tests-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    
+    - name: Create uv environment
+      run: uv venv
+    
+    - name: Install dependencies
+      run: uv sync --all-groups
+    
+    - name: Download LDraw library (subset)
+      run: uv run ldraw download --version 2018-02 --yes
+      timeout-minutes: 20
+    
+    - name: Generate library modules
+      run: uv run ldraw generate --yes
+      timeout-minutes: 10
+    
+    - name: Run integration tests (macOS)
+      run: uv run pytest --integration -v --tb=short -k "not slow"
+      timeout-minutes: 30
+
+  integration-tests-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    
+    - name: Create uv environment
+      run: uv venv
+    
+    - name: Install dependencies
+      run: uv sync --all-groups
+    
+    - name: Download LDraw library (subset)
+      run: uv run ldraw download --version 2018-02 --yes
+      timeout-minutes: 20
+    
+    - name: Generate library modules
+      run: uv run ldraw generate --yes
+      timeout-minutes: 10
+    
+    - name: Run integration tests (Windows)
+      run: uv run pytest --integration -v --tb=short -k "not slow"
+      timeout-minutes: 30

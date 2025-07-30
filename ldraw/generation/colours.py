@@ -11,7 +11,7 @@ from ldraw.utils import camel, clean
 
 def gen_colours(parts, library_path):
     """Generate a colours.py from library data."""
-    print("generate ldraw.library.colours...")
+    print("Generating ldraw.library.colours...")
 
     colours_str = colours_module_content(parts)
     colours_py = os.path.join(library_path, "colours.py")

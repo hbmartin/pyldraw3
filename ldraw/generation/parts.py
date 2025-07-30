@@ -16,7 +16,7 @@ SECTION_SEP = "#|#"
 
 def gen_parts(parts: Parts, library_path: str) -> None:
     """Generate the ldraw.library.parts namespace modules."""
-    print("generate ldraw.library.parts, this might take a long time...")
+    print("Generating ldraw.library.parts, this might take a long time...")
     parts_dir = Path(library_path) / "parts"
     parts_dir.mkdir(parents=True, exist_ok=True)
 
