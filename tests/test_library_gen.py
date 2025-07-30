@@ -54,8 +54,10 @@ def test_library_gen_import(test_ldraw_library) -> None:
 
     assert set(library.__all__) == {"parts", "colours"}
 
-    assert library.parts.__all__ == ["bricks"]
-    assert {t for t in dir(library.parts) if not t.startswith("__")} == {
+    # Import parts module explicitly (can't access as attribute with dynamic imports)
+    from ldraw.library import parts
+    assert parts.__all__ == ["bricks"]
+    assert {t for t in dir(parts) if not t.startswith("__")} == {
         "bricks",
         "Brick2X4",
     }

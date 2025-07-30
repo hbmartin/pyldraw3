@@ -1,0 +1,102 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: main
+  pull_request:
+    branches: main
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for performance comparison
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+
+    - name: Create uv environment
+      run: uv venv
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-groups
+        uv add --dev pytest-benchmark asv
+
+    - name: Run benchmarks
+      run: |
+        uv run pytest benchmarks/ --benchmark-json=benchmark-results.json --benchmark-only
+      continue-on-error: true
+
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      if: github.ref == 'refs/heads/main'
+      with:
+        tool: 'pytest'
+        output-file-path: benchmark-results.json
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: true
+        comment-on-alert: true
+        alert-threshold: '150%'
+        fail-on-alert: false
+
+    - name: Store benchmark result (PR)
+      uses: benchmark-action/github-action-benchmark@v1
+      if: github.event_name == 'pull_request'
+      with:
+        tool: 'pytest'
+        output-file-path: benchmark-results.json
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: false
+        comment-on-alert: true
+        alert-threshold: '150%'
+        fail-on-alert: false
+
+    - name: Upload benchmark results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark-results.json
+        retention-days: 30
+
+  memory-profile:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+
+    - name: Create uv environment
+      run: uv venv
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-groups
+        uv add --dev memory-profiler psutil
+
+    - name: Run memory profiling
+      run: |
+        uv run python -m memory_profiler benchmarks/memory_profile.py > memory-profile.txt
+      continue-on-error: true
+
+    - name: Upload memory profile
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: memory-profile
+        path: memory-profile.txt
+        retention-days: 30
