@@ -20,7 +20,7 @@ def test_load_parts() -> None:
 
     part = p.part(code="3001")
 
-    assert part.path == "tests/test_ldraw/ldraw/parts/3001.dat"
+    assert str(part.path) == "tests/test_ldraw/ldraw/parts/3001.dat"
 
 
 def test_load_primitives() -> None:
@@ -32,7 +32,7 @@ def test_load_primitives() -> None:
 
     part = p.part(code="box5")
 
-    assert part.path == "tests/test_ldraw/ldraw/p/box5.dat"
+    assert str(part.path) == "tests/test_ldraw/ldraw/p/box5.dat"
 
 
 @patch.object(ldraw.parts.Parts, "try_load", side_effect=OSError)

@@ -40,10 +40,7 @@ uv build                     # Build package
 
 ### Core Components
 
-1. **CLI Interface (`ldraw/cli.py`)**: Main command-line interface with commands:
-   - `ldraw download` - Download LDraw parts libraries
-   - `ldraw use` - Select which library version to use
-   - `ldraw generate` - Generate Python modules from LDraw library
+1. **CLI Interface (`ldraw/cli.py`)**: Main command-line interface with commands
 
 2. **Dynamic Library Generation (`ldraw/generation/`)**: 
    - Generates Python modules from LDraw parts libraries
@@ -53,18 +50,6 @@ uv build                     # Build package
 3. **Import System (`ldraw/imports.py`)**:
    - Custom meta path hook (`LibraryImporter`) for dynamic imports
    - Enables importing LDraw parts as Python modules
-
-4. **Writers (`ldraw/writers/`)**:
-   - `povray.py` - Export to POV-Ray format
-   - `png.py` - Render to PNG images  
-   - `svg.py` - Export to SVG vector format
-   - `common.py` - Shared writer functionality
-
-5. **Tools (`ldraw/tools/`)**:
-   - `ldr2pov` - Convert LDraw to POV-Ray
-   - `ldr2png` - Convert LDraw to PNG
-   - `ldr2svg` - Convert LDraw to SVG
-   - `ldr2inv` - Generate bill of materials/inventory
 
 ### Key Classes
 
