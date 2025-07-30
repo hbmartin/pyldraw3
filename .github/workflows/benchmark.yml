@@ -28,7 +28,6 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-groups
-        uv add --dev pytest-benchmark asv
 
     - name: Run benchmarks
       run: |

@@ -58,6 +58,8 @@ dev = [
     "pyrefly>=0.26.0",
     "mock>=5.2.0",
     "deptry>=0.23.0",
+    "pytest-benchmark>=5.1.0",
+    "asv>=0.6.4",
 ]
 docs = [
   "furo >=2021.11.12",
