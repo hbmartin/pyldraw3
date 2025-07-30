@@ -2,9 +2,9 @@
 name = "pyldraw3"
 version = "0.11.0"
 description = "Python wrapper for LDraw library."
-readme = "README.rst"
+readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "GPL-3.0"}
+license = "GPL-3.0-or-later"
 authors = [
     { name = "David Boddie", email = "david@boddie.org.uk" },
     { name = "Matthieu Berthomé", email = "rienafairefr@gmail.com" },
@@ -27,10 +27,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bosd/uv-hypermodern-python"
-Repository = "https://github.com/bosd/uv-hypermodern-python"
-Documentation = "https://uv-hypermodern-python.readthedocs.io"
-Changelog = "https://github.com/bosd/uv-hypermodern-python/releases"
+Homepage = "https://github.com/hbmartin/pyldraw3"
+Repository = "https://github.com/hbmartin/pyldraw3"
+Documentation = "https://github.com/hbmartin/pyldraw3/blob/main/GUIDE.md"
+Changelog = "https://github.com/hbmartin/pyldraw3/releases"
 
 [project.scripts]
 ldraw = "ldraw.cli:main"

@@ -4,13 +4,14 @@
 [![Coverage Status](https://coveralls.io/repos/github/hbmartin/pyldraw3/badge.svg?branch=main)](https://coveralls.io/github/hbmartin/pyldraw3?branch=main)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pyldraw3.svg)](https://pypi.python.org/pypi/pyldraw3)
 
-A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models.
+A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models. It is a drop-in replacement for the unmaintained `pyldraw` library.
 
 ## Features
 
 - 🧱 **Complete LDraw Support**: Full compatibility with the LDraw standard format
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
+- 📜 **Comprehensive Guide**: Jump into example or the quick start below, or read a [detailed usage guide](GUIDE.md)
 
 ## Quick Start
 
@@ -22,14 +23,25 @@ uv add pyldraw3
 
 ### Setup
 
-Activate your virtual environment and set up the LDraw library:
+Activate your virtual environment and set up the LDraw library - this will download the LDraw library and create the parts classes:
 
 ```bash
 source .venv/bin/activate
 ldraw
 ```
 
+### Examples
+
+Check the `examples/` directory for sample scripts demonstrating various features:
+
+```bash
+# Run an example
+python examples/figures.py > my_model.ldr
+```
+
 ### Basic Usage
+
+This package allows users to create LDraw scene descriptions using `Piece`s which are `Part`s that have a specific position and orientation.
 
 ```python
 from ldraw.library.colours import Light_Grey
@@ -57,7 +69,6 @@ brick1x1 = parts.others["Brick  1 x  1"]
 ## Requirements
 
 - Python 3.12+
-- Modern dependency management with `uv`
 
 ## Development
 
@@ -114,15 +125,6 @@ uv build
 - `Figure` - High-level minifigure construction
 - Geometry classes - Matrix operations and 3D mathematics
 
-## Examples
-
-Check the `examples/` directory for sample scripts demonstrating various features:
-
-```bash
-# Run an example
-python examples/figures.py > my_model.ldr
-```
-
 ## Contributing
 
 1. Fork the repository
@@ -152,7 +154,7 @@ LDraw is a trademark of the Estate of James Jessiman. LEGO is a registered trade
 ## Credits
 
 - **Original Author**: [David Boddie](mailto:david@boddie.org.uk)
-- **Maintainer**: [Matthieu Berthomé](mailto:matthieu@mmea.fr)
-- **Contributor**: [Harold Martin](mailto:harold.martin@gmail.com)
+- **Previous Maintainer**: [Matthieu Berthomé](mailto:matthieu@mmea.fr)
+- **Current Maintainer**: [Harold Martin](mailto:harold.martin@gmail.com)
 
 This repository was extracted from the original Mercurial repository and modernized for current Python practices.
