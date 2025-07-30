@@ -14,7 +14,7 @@ from ldraw.generate import generate_parts_lst
 logger = logging.getLogger(__name__)
 
 COMPLETE_VERSION = "complete"
-LDRAW_URL = "https://library.ldraw.org/library/updates/"
+LDRAW_URL = "https://library.ldraw.org/library/updates"
 cache_ldraw = Path(get_cache_dir())
 
 
