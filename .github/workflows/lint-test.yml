@@ -59,12 +59,17 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
     - name: Install uv
       uses: astral-sh/setup-uv@v5
     - name: Create uv environment
       run: uv venv
-    - name: Install coveralls
-      run: uv add coveralls
+    - name: Install dependencies
+      run: uv sync --group dev
     - name: Finish parallel build
       run: uv run coveralls --finish
       env:

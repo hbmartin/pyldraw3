@@ -35,7 +35,7 @@ def test_load_primitives() -> None:
     assert part.path == "tests/test_ldraw/ldraw/p/box5.dat"
 
 
-def new_try_load(path) -> Never:
+def new_try_load(self) -> Never:
     raise OSError
 
 

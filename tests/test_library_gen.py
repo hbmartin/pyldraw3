@@ -23,7 +23,7 @@ def test_ldraw_library():
         ldraw_library_path=os.path.join("tests", "test_ldraw"),
         generated_path=generated_path,
     )
-    generate(config, warn=False)
+    generate(config)
     LibraryImporter.set_config(config)
     return config.generated_path
 
