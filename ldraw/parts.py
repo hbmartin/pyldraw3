@@ -203,10 +203,25 @@ class Parts:
 
     def load(self):
         """Load parts from a path."""
-        self.try_load()
+        self._load_parts_list()
+        self._scan_library_directories()
+        self._categorize_parts()
 
-        # If we successfully loaded the files then record the path and look for
-        # part files.
+    def _load_parts_list(self):
+        """Load parts from the parts.lst file."""
+        with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
+            for line in parts_lst_file.readlines():
+                pieces = re.split(DOT_DAT, line)
+                if len(pieces) != 2:
+                    break
+
+                code, description = self.section_find(pieces)
+                self.by_name[description] = code
+                self.by_code[code] = description
+                self.by_code_name[(code, description)] = None
+
+    def _scan_library_directories(self):
+        """Scan the library directory for parts, colours, and primitives."""
         for item in self.path.parent.iterdir():
             if (item.name == "parts" and item.is_dir()) or (
                 item.name == "p" and item.is_dir()
@@ -218,6 +233,8 @@ class Parts:
             elif item.name == "p.lst" and item.is_file():
                 self._load_primitives(item)
 
+    def _categorize_parts(self):
+        """Load part files and categorize them."""
         for code, description in self.by_code_name:
             part = self.part(code=code)
             if part is None:
@@ -232,19 +249,6 @@ class Parts:
                 self.by_category["other"][description] = code
             else:
                 self.by_category[category.lower()][description] = code
-
-    def try_load(self):
-        """Try loading parts from a parts.lst file."""
-        with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
-            for line in parts_lst_file.readlines():
-                pieces = re.split(DOT_DAT, line)
-                if len(pieces) != 2:
-                    break
-
-                code, description = self.section_find(pieces)
-                self.by_name[description] = code
-                self.by_code[code] = description
-                self.by_code_name[(code, description)] = None
 
     def section_find(self, pieces):
         """Return code, description from a pieces element."""

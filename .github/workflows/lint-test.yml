@@ -45,7 +45,7 @@ jobs:
         uv run ty check ldraw
         uv run pyrefly check ldraw
     - name: Run tests with coverage
-      run: uv run pytest --cov=ldraw --cov-report=lcov
+      run: uv run pytest --cov=ldraw --cov-report=lcov --cov-report=html
     - name: Upload coverage to Coveralls
       if: always()
       run: uv run coveralls
@@ -53,6 +53,13 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         COVERALLS_FLAG_NAME: python-${{ matrix.python-version }}
         COVERALLS_PARALLEL: true
+    - name: Upload coverage report as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-python-${{ matrix.python-version }}
+        path: htmlcov/
+        retention-days: 30
 
   coveralls-finish:
     needs: lint-test

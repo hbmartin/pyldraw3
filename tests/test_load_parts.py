@@ -1,12 +1,11 @@
 """Tests for parts loading functionality."""
 
-from typing import Never
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-import ldraw
-from ldraw.parts import PartError, Parts
+from ldraw.parts import Parts
 
 
 def test_load_parts() -> None:
@@ -35,6 +34,7 @@ def test_load_primitives() -> None:
     assert str(part.path) == "tests/test_ldraw/ldraw/p/box5.dat"
 
 
-@patch.object(ldraw.parts.Parts, "try_load", side_effect=OSError)
+@patch.object(Path, "open", side_effect=OSError)
 def test_cantreadpartslst(mocked) -> None:
-    pytest.raises(PartError, lambda: Parts("tests/test_ldraw/ldraw/parts.lst"))
+    with pytest.raises(OSError):
+        Parts("tests/test_ldraw/ldraw/parts.lst")
