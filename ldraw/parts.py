@@ -134,7 +134,7 @@ class Parts:
         self.by_name = {}
         self.by_code = {}
         self.by_code_name = {}
-        self.by_category = defaultdict(dict)
+        self.by_category: defaultdict[str, dict[str, str]] = defaultdict(dict)
 
         self.primitives_by_name = {}
         self.primitives_by_code = {}
