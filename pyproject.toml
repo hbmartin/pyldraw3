@@ -115,6 +115,10 @@ build-backend = "uv_build"
 module-root = ""
 module-name = "ldraw"
 
+[[tool.uv.index]]
+name = "safety"
+url = "https://pkgs.safetycli.com/repository/independent-3c890/project/python-ldraw/pypi/simple/"
+default = false
 [tool.uv]
 package = true
 

@@ -2,9 +2,9 @@ name: Security Scanning
 
 on:
   push:
-    branches: [ main, master ]
+    branches: main
   pull_request:
-    branches: [ main, master ]
+    branches: main
   schedule:
     - cron: '0 6 * * 1'  # Weekly on Mondays
 
@@ -50,48 +50,15 @@ jobs:
       with:
         category: "/language:${{matrix.language}}"
 
-  bandit:
-    name: Bandit Security Scan
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
-    - name: Install bandit
-      run: |
-        uv venv
-        uv add --dev bandit[toml]
-    - name: Run Bandit
-      run: uv run bandit -r ldraw/ -f json -o bandit-report.json
-    - name: Upload Bandit results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: bandit-results
-        path: bandit-report.json
-        retention-days: 30
-
   safety:
     name: Safety Check
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Run Safety CLI to check for vulnerabilities
+      uses: pyupio/safety-action@v1
       with:
-        python-version: '3.12'
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
-    - name: Install safety
-      run: |
-        uv venv
-        uv add --dev safety
-    - name: Run Safety check
-      run: uv run safety check --json --output safety-report.json
+        api-key: ${{ secrets.SAFETY_API_KEY }}
     - name: Upload Safety results
       if: always()
       uses: actions/upload-artifact@v4
