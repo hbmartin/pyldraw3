@@ -3,7 +3,7 @@
 import logging
 import os
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from os.path import join
 
 import pytest
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def test_ldraw_library():
-    generated_path = tempfile.mkdtemp(prefix=datetime.utcnow().isoformat())
+    generated_path = tempfile.mkdtemp(prefix=datetime.now(UTC).isoformat())
     logger.debug(f"generated_path={generated_path}")
     config = Config(
         ldraw_library_path=os.path.join("tests", "test_ldraw"),

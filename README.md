@@ -1,8 +1,8 @@
-# pyldraw
+# pyldraw3
 
-[![Python package](https://github.com/rienafairefr/python-ldraw/workflows/Python%20package/badge.svg)](https://github.com/rienafairefr/python-ldraw/actions?query=workflow%3A%22Python+package%22)
-[![Coverage Status](https://coveralls.io/repos/github/rienafairefr/python-ldraw/badge.svg?branch=master)](https://coveralls.io/github/rienafairefr/python-ldraw?branch=master)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pyldraw.svg)](https://pypi.python.org/pypi/pyldraw)
+[![Lint and Test](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml/badge.svg)](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml)
+[![Coverage Status](https://coveralls.io/repos/github/hbmartin/pyldraw3/badge.svg?branch=main)](https://coveralls.io/github/hbmartin/pyldraw3?branch=main)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pyldraw3.svg)](https://pypi.python.org/pypi/pyldraw3)
 
 A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models.
 
@@ -10,16 +10,14 @@ A modern Python package for creating and manipulating LDraw format files - the s
 
 - 🧱 **Complete LDraw Support**: Full compatibility with the LDraw standard format
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
-- 🎨 **Multiple Export Formats**: Convert to PNG, SVG, POV-Ray, and generate inventories
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
-- 🛠️ **Command Line Tools**: Rich CLI for downloading, managing, and converting models
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-pip install pyldraw3
+uv add pyldraw3
 ```
 
 ### Setup
@@ -28,8 +26,7 @@ Activate your virtual environment and set up the LDraw library:
 
 ```bash
 source .venv/bin/activate
-ldraw download --version 2018-02 --yes
-ldraw generate --yes
+ldraw
 ```
 
 ### Basic Usage
@@ -80,8 +77,7 @@ uv sync
 source .venv/bin/activate
 
 # Download and set up LDraw library
-uv run ldraw download --version 2018-02 --yes
-uv run ldraw generate --yes
+uv run ldraw
 ```
 
 ### Development Commands
@@ -99,32 +95,6 @@ uv run ruff check --fix      # Fix linting issues
 
 # Build package
 uv build
-```
-
-## Command Line Tools
-
-### Core Commands
-
-- `ldraw download` - Download LDraw parts libraries
-- `ldraw use` - Select which library version to use  
-- `ldraw generate` - Generate Python modules from LDraw library
-
-### Conversion Tools
-
-- `ldr2png` - Convert LDraw files to PNG images
-- `ldr2svg` - Convert LDraw files to SVG vector graphics
-- `ldr2pov` - Convert LDraw files to POV-Ray scenes
-- `ldr2inv` - Generate bill of materials/inventory
-
-### Example Usage
-
-```bash
-# Convert a model to different formats
-python examples/figures.py > temp.ldr
-ldr2pov temp.ldr temp.pov 160.0,80.0,-240.0
-ldr2png temp.ldr output.png
-ldr2svg temp.ldr output.svg
-ldr2inv temp.ldr inventory.txt
 ```
 
 ## Architecture
@@ -172,7 +142,7 @@ This project is licensed under the GNU General Public License v3.0 or later - se
 pyldraw, a Python package for creating LDraw format files.
 Copyright (C) 2008 David Boddie <david@boddie.org.uk>
 Some parts Copyright (C) 2021 Matthieu Berthomé <matthieu@mmea.fr>
-Some parts Copyright (C) 2024 Harold Martin <harold.martin@gmail.com>
+Some parts Copyright (C) 2025 Harold Martin <harold.martin@gmail.com>
 ```
 
 ## Trademarks

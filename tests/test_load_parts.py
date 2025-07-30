@@ -35,10 +35,6 @@ def test_load_primitives() -> None:
     assert part.path == "tests/test_ldraw/ldraw/p/box5.dat"
 
 
-def new_try_load(self) -> Never:
-    raise OSError
-
-
-@patch.object(ldraw.parts.Parts, "try_load", side_effect=new_try_load)
+@patch.object(ldraw.parts.Parts, "try_load", side_effect=OSError)
 def test_cantreadpartslst(mocked) -> None:
     pytest.raises(PartError, lambda: Parts("tests/test_ldraw/ldraw/parts.lst"))
