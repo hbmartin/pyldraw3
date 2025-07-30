@@ -80,6 +80,8 @@ def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> 
     )
     if version == COMPLETE_VERSION:
         version = get_latest_release_id()
-        (Path(version_dir) / "ldraw" / "_release.txt").write_text(version)
+        release_file = Path(version_dir) / "ldraw" / "_release.txt"
+        release_file.parent.mkdir(parents=True, exist_ok=True)
+        release_file.write_text(version)
 
     return version

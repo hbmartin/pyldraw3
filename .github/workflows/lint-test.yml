@@ -47,6 +47,7 @@ jobs:
     - name: Run tests with coverage
       run: uv run pytest --cov=ldraw --cov-report=lcov
     - name: Upload coverage to Coveralls
+      if: always()
       run: uv run coveralls
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
