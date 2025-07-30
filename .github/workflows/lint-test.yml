@@ -1,0 +1,84 @@
+name: Lint and Test
+on: push
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    - name: Create uv environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv sync --all-groups
+    - name: Compute pre-commit cache key
+      id: pre-commit-cache
+      shell: python
+      run: |
+        import hashlib
+        import sys
+
+        python = "py{}.{}".format(*sys.version_info[:2])
+        payload = sys.version.encode() + sys.executable.encode()
+        digest = hashlib.sha256(payload).hexdigest()
+        result = "${{ runner.os }}-{}-{}-pre-commit".format(python, digest[:8])
+
+        print(f"result={result}")
+    - name: Restore pre-commit cache
+      uses: actions/cache@v4
+      with:
+          path: ~/.cache/pre-commit
+          key: ${{ steps.pre-commit-cache.outputs.result }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ steps.pre-commit-cache.outputs.result }}-
+    - run: uv run ruff check .
+    - name: Run type checks
+      run: |
+        uv run ty check ldraw
+        uv run pyrefly check ldraw
+    - run: uv run deptry .
+    - name: Run tests with coverage
+      run: uv run pytest --cov=ldraw --cov-report=lcov --cov-report=html --random-order
+    - name: Upload coverage to Coveralls
+      if: always()
+      run: uv run coveralls
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        COVERALLS_FLAG_NAME: python-${{ matrix.python-version }}
+        COVERALLS_PARALLEL: true
+    - name: Upload coverage report as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-python-${{ matrix.python-version }}
+        path: htmlcov/
+        retention-days: 30
+
+  coveralls-finish:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    - name: Create uv environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv sync --group dev
+    - name: Finish parallel build
+      run: uv run coveralls --finish
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

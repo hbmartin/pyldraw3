@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run:*)",
+      "Bash(source:*)",
+      "WebFetch(domain:coveralls-python.readthedocs.io)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,132 @@
+[project]
+name = "pyldraw3"
+version = "0.12.0"
+description = "Python wrapper for LDraw library."
+keywords = ["ldraw", "lego", "cad", "3d", "modeling", "parts", "bricks"]
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    { name = "David Boddie", email = "david@boddie.org.uk" },
+    { name = "Matthieu Berthomé", email = "rienafairefr@gmail.com" },
+    { name = "Harold Martin", email = "harold.martin@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Artistic Software",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "platformdirs>=4.3.8",
+    "pystache>=0.6.0",
+    "progress>=1.6.1",
+    "requests>=2.32.4",
+    "inflect>=7.5.0",
+    "attridict>=0.0.9",
+    "pyyaml>=6.0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/hbmartin/pyldraw3"
+Repository = "https://github.com/hbmartin/pyldraw3"
+Documentation = "https://github.com/hbmartin/pyldraw3/blob/main/GUIDE.md"
+Changelog = "https://github.com/hbmartin/pyldraw3/releases"
+
+[project.scripts]
+ldraw = "ldraw.cli:main"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=2.6.0",
+    "black>=25.1.0",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "pytest-random-order>=1.2.0",
+    "pytest-xdist>=3.8.0",
+    "coveralls>=4.0.1",
+    "xdoctest[colors] >=0.15.10",
+    "ruff>=0.12.7",
+    "ty>=0.0.1a16",
+    "pyrefly>=0.26.0",
+    "mock>=5.2.0",
+    "deptry>=0.23.0",
+]
+docs = [
+  "furo >=2021.11.12",
+  "myst-parser == 3.0.1",
+  "sphinx >= 4.3.2",
+  "sphinx-autobuild >=2021.3.14",
+  "sphinx-click >=3.0.2",
+]
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "setup.py", "site-packages", "venv"]
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN206", "D105", "D107", "EM101", "PLR2004", "PTH110", "PTH112", "PTH118", "PTH123", "PTH206", "PTH208", "S324", "T201", "UP031"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN002", "ANN003", "ARG001", "ARG005", "D103", "D104", "DTZ003", "ERA001", "F403", "F405", "FBT002", "G004", "N802", "PLC0415", "PLR2004", "PT011", "PT013", "PTH110", "PTH118", "PTH119", "PTH122", "PTH123", "PTH207", "S101", "S102", "S311", "SIM115"]
+"examples/*.py" = ["D103", "F403", "F405", "INP001", "S311"]
+
+[tool.ruff.format]
+# Same as Black.
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.coverage.paths]
+source = ["ldraw", "*/site-packages"]
+tests = ["tests", "*/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["ldraw", "tests"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.3,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "ldraw"
+
+[[tool.uv.index]]
+name = "safety"
+url = "https://pkgs.safetycli.com/repository/independent-3c890/project/python-ldraw/pypi/simple/"
+default = false
+[tool.uv]
+package = true
+
+[tool.pydoclint]
+exclude = '\.git|\.nox|noxfile.py'
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (run with '--integration')",
+    "slow: marks tests as slow tests",
+]
