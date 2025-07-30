@@ -138,7 +138,7 @@ uv build
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](COPYING) file for details.
 
 ```
 pyldraw, a Python package for creating LDraw format files.

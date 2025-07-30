@@ -24,6 +24,7 @@ dependencies = [
     "requests>=2.32.4",
     "inflect>=7.5.0",
     "attridict>=0.0.9",
+    "pyyaml>=6.0.1",
 ]
 
 [project.urls]
@@ -45,10 +46,11 @@ dev = [
     "pytest-xdist>=3.8.0",
     "coveralls>=4.0.1",
     "xdoctest[colors] >=0.15.10",
-    "ruff>=0.12.5",
+    "ruff>=0.12.7",
     "ty>=0.0.1a16",
     "pyrefly>=0.26.0",
     "mock>=5.2.0",
+    "deptry>=0.23.0",
 ]
 docs = [
   "furo >=2021.11.12",

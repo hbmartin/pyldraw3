@@ -44,6 +44,7 @@ jobs:
       run: |
         uv run ty check ldraw
         uv run pyrefly check ldraw
+    - run: uv run deptry .
     - name: Run tests with coverage
       run: uv run pytest --cov=ldraw --cov-report=lcov --cov-report=html
     - name: Upload coverage to Coveralls
