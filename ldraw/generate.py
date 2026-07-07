@@ -34,7 +34,7 @@ def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
         try:
             with open(part, encoding="utf-8") as part_file:
                 header = part_file.readline()
-                header_description = header[2:]
+                header_description = header[2:].strip()
                 if "~Moved" in header:
                     continue
                 row = {

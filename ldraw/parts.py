@@ -223,14 +223,15 @@ class Parts:
     def _scan_library_directories(self):
         """Scan the library directory for parts, colours, and primitives."""
         for item in self.path.parent.iterdir():
-            if (item.name == "parts" and item.is_dir()) or (
-                item.name == "p" and item.is_dir()
-            ):
+            # match case-insensitively: official archives and fixtures use
+            # mixed casing such as LDConfig.ldr or PARTS
+            name = item.name.lower()
+            if (item.is_dir() and name in {"parts", "p"}):
                 self.parts_dirs.append(item)
                 self._find_parts_subdirs(item)
-            elif item.name == "ldconfig.ldr":
+            elif name == "ldconfig.ldr":
                 self._load_colours(item)
-            elif item.name == "p.lst" and item.is_file():
+            elif name == "p.lst" and item.is_file():
                 self._load_primitives(item)
 
     def _categorize_parts(self):

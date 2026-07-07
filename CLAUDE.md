@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`pyldraw` is a Python package for creating LDraw format files - a standard used by CAD applications that create LEGO models. The package provides facilities to create LDraw scene descriptions using Python and includes tools for converting LDraw files to various formats (PNG, POV-Ray, SVG, inventory).
+`pyldraw` is a Python package for creating LDraw format files - a standard used by CAD applications that create LEGO models. The package provides facilities to create LDraw scene descriptions using Python.
 
 ## Development Commands
 
@@ -40,7 +40,7 @@ uv build                     # Build package
 
 ### Core Components
 
-1. **CLI Interface (`ldraw/cli.py`)**: Main command-line interface with commands
+1. **CLI Interface (`ldraw/cli.py`)**: argparse CLI with `download`, `generate`, `config`, and `version` subcommands
 
 2. **Dynamic Library Generation (`ldraw/generation/`)**: 
    - Generates Python modules from LDraw parts libraries
@@ -66,7 +66,7 @@ uv build                     # Build package
 
 ## Development Notes
 
-- The project supports Python 3.11+
+- The project supports Python 3.12+
 - Uses uv for dependency management instead of traditional pip/setuptools
 - Generated `ldraw.library.*` modules are cached and should be regenerated when changing library versions
 - Integration tests are marked with `@pytest.mark.integration` and require `--integration` flag

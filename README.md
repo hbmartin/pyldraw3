@@ -39,7 +39,8 @@ Activate your virtual environment and set up the LDraw library - this will downl
 
 ```bash
 source .venv/bin/activate
-ldraw
+ldraw download --yes
+ldraw generate --yes
 ```
 
 ### Examples
@@ -90,8 +91,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management and
 
 ```bash
 # Clone the repository
-git clone https://github.com/rienafairefr/python-ldraw.git
-cd python-ldraw
+git clone https://github.com/hbmartin/pyldraw3.git
+cd pyldraw3
 
 # Install dependencies
 uv sync
@@ -100,7 +101,8 @@ uv sync
 source .venv/bin/activate
 
 # Download and set up LDraw library
-uv run ldraw
+uv run ldraw download --version 2018-02 --yes
+uv run ldraw generate --yes
 ```
 
 ### Development Commands
@@ -124,11 +126,9 @@ uv build
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface for library management
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `config`, and `version` subcommands
 - **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules
 - **Import System** (`ldraw/imports.py`): Custom meta path hook for dynamic imports
-- **Writers** (`ldraw/writers/`): Export to various formats (PNG, SVG, POV-Ray)
-- **Tools** (`ldraw/tools/`): Command-line conversion utilities
 
 ### Key Classes
 

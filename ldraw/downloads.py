@@ -15,17 +15,57 @@ logger = logging.getLogger(__name__)
 
 COMPLETE_VERSION = "complete"
 LDRAW_URL = "https://library.ldraw.org/library/updates"
+ARCHIVE_URL = "https://github.com/rienafairefr/ldraw-parts/archive/refs/tags"
 cache_ldraw = Path(get_cache_dir())
+
+
+def _normalize_tree(destination: Path) -> None:
+    """Normalize an unpacked library to the lowercase `ldraw/parts` layout.
+
+    GitHub tag archives wrap everything in a `ldraw-parts-<tag>` directory and
+    use uppercase entry names (`LDRAW/PARTS`), while the rest of the code
+    expects the lowercase `ldraw/parts` layout that complete.zip uses.
+    """
+    if not destination.is_dir():
+        return
+    children = list(destination.iterdir())
+    if (
+        len(children) == 1
+        and children[0].is_dir()
+        and children[0].name.lower().startswith("ldraw-parts-")
+    ):
+        wrapper = children[0]
+        for entry in wrapper.iterdir():
+            entry.rename(destination / entry.name)
+        wrapper.rmdir()
+
+    ldraw_dir = next(
+        (
+            child
+            for child in destination.iterdir()
+            if child.name.lower() == "ldraw" and child.is_dir()
+        ),
+        None,
+    )
+    if ldraw_dir is None:
+        return
+    if ldraw_dir.name != "ldraw":
+        ldraw_dir = ldraw_dir.rename(destination / "ldraw")
+    for dirpath, dirnames, filenames in ldraw_dir.walk(top_down=False):
+        for name in filenames + dirnames:
+            lower_name = name.lower()
+            if name != lower_name:
+                (dirpath / name).rename(dirpath / lower_name)
 
 
 def unpack_version(version_zip: Path, version: str) -> Path:
     """Unpack a downloaded LDraw library ZIP file to the cache directory."""
     print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
-    zip_ref = zipfile.ZipFile(version_zip, "r")
-    zip_ref.extractall(destination)
-    zip_ref.close()
+    with zipfile.ZipFile(version_zip, "r") as zip_ref:
+        zip_ref.extractall(destination)
     version_zip.unlink()
+    _normalize_tree(destination)
 
     return destination
 
@@ -36,6 +76,7 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
         return retrieved
 
     response = requests.get(url, stream=True)  # noqa: S113
+    response.raise_for_status()
 
     with open(retrieved, "wb") as file:
         file.writelines(response.iter_content(chunk_size=chunk_size))
@@ -50,6 +91,7 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
         return retrieved
 
     response = requests.get(url, stream=True)  # noqa: S113
+    response.raise_for_status()
     total = int(response.headers.get("content-length", 0))
     bar = Bar(f"Downloading {url} ...", max=total)
 
@@ -63,12 +105,21 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
 
 
 def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
-    """Download and unpack an LDraw library version, generating parts.lst file."""
+    """Download and unpack an LDraw library version, generating parts.lst file.
+
+    The complete library comes from ldraw.org; versioned releases come from
+    snapshot tags of the rienafairefr/ldraw-parts GitHub repository.
+    """
     filename = f"{version}.zip"
+    url = (
+        f"{LDRAW_URL}/{filename}"
+        if version == COMPLETE_VERSION
+        else f"{ARCHIVE_URL}/{filename}"
+    )
     retrieved = (
-        _download_progress(f"{LDRAW_URL}/{filename}", filename)
+        _download_progress(url, filename)
         if show_progress
-        else _download(f"{LDRAW_URL}/{filename}", filename)
+        else _download(url, filename)
     )
 
     version_dir = unpack_version(retrieved, version)
