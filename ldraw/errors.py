@@ -57,6 +57,13 @@ class DuplicateSubmodelError(PartError):
         super().__init__(f"Duplicate 0 FILE section named {name!r}")
 
 
+class SubmodelCycleError(PartError):
+    """Submodel references form a cycle."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Submodel reference cycle detected at {name!r}")
+
+
 class SubmodelNameRequiredError(PartError):
     """A multi-part document section has no name to emit after 0 FILE."""
 
