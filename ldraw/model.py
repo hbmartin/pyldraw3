@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
-from ldraw.bom import bill_of_materials as _bill_of_materials
 from ldraw.errors import (
     DuplicateSubmodelError,
     PartError,
@@ -22,7 +21,6 @@ from ldraw.utils import ldraw_file_name, normalize_ref, split_reference
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from ldraw.bom import BomRow
     from ldraw.colour import Colour
     from ldraw.geometry import Matrix
     from ldraw.parts import Parts
@@ -31,6 +29,20 @@ if TYPE_CHECKING:
 _NumberedLine = tuple[int, str]
 
 _MANAGED_HEADER_PREFIXES = ("Name:", "Author:", "BFC")
+
+
+class _BomRowLike(Protocol):
+    """Structural type for bill-of-materials rows."""
+
+    part: str
+    description: str | None
+    colour_code: int | None
+    colour_name: str | None
+    quantity: int
+
+    def to_dict(self) -> dict[str, str | int | None]:
+        """Return the row as a plain dict."""
+        ...
 
 
 def _is_nofile(line: str) -> bool:
@@ -266,9 +278,11 @@ class Model:
         """Recursively yield leaf pieces, expanding submodel references."""
         return _iter_model_pieces(root=self, model=self, visiting=frozenset())
 
-    def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
+    def bill_of_materials(self, *, parts: Parts | None = None) -> list[_BomRowLike]:
         """Count leaf pieces by part and colour, expanding submodel references."""
-        return _bill_of_materials(self, parts=parts)
+        from ldraw.bom import bill_of_materials  # noqa: PLC0415
+
+        return bill_of_materials(self, parts=parts)
 
     def find_pieces(
         self,

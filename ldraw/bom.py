@@ -7,14 +7,14 @@ import io
 import json
 from collections import Counter
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from ldraw.colour import Colour
-    from ldraw.model import Model
     from ldraw.parts import Parts
+    from ldraw.pieces import Piece
 
 BOM_FIELDS: tuple[str, ...] = (
     "part",
@@ -23,6 +23,14 @@ BOM_FIELDS: tuple[str, ...] = (
     "colour_name",
     "quantity",
 )
+
+
+class _ModelLike(Protocol):
+    """Object that can yield fully expanded leaf pieces."""
+
+    def iter_pieces(self) -> Iterator[Piece]:
+        """Yield leaf pieces, expanding submodel references."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +65,11 @@ def _colour_name(colour: Colour, parts: Parts | None) -> str | None:
     return catalogued.name if catalogued is not None else None
 
 
-def bill_of_materials(model: Model, *, parts: Parts | None = None) -> list[BomRow]:
+def bill_of_materials(
+    model: _ModelLike,
+    *,
+    parts: Parts | None = None,
+) -> list[BomRow]:
     """Count leaf pieces by part and colour, expanding submodel references.
 
     A submodel placed twice contributes its pieces twice. Submodel
