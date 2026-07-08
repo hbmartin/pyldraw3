@@ -45,3 +45,6 @@ rules:
       - pattern-not-inside: |
           def $FUNC(...):
               ...
+      - pattern-not-inside: |
+          if TYPE_CHECKING:
+              ...

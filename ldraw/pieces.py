@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING, Self
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.serialization import format_ldraw_colour, format_ldraw_number
+from ldraw.utils import split_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
 MAIN_COLOUR_CODE = 16
+DEFAULT_SUFFIX = ".DAT"
 
 
 def _as_colour(colour: Colour | int) -> Colour:
@@ -31,7 +33,7 @@ class Piece:
     matrix: Matrix
     part: str
     group: Group | None = None
-    suffix: str = ".DAT"
+    suffix: str = DEFAULT_SUFFIX
 
     def __init__(  # noqa: PLR0913 - positional back-compat plus keyword-only suffix
         self,
@@ -41,7 +43,7 @@ class Piece:
         part: str,
         group: Group | None = None,
         *,
-        suffix: str = ".DAT",
+        suffix: str = DEFAULT_SUFFIX,
     ) -> None:
         self.colour = _as_colour(colour)
         self.position = position
@@ -66,9 +68,11 @@ class Piece:
         position: Vector | None = None,
         matrix: Matrix | None = None,
         group: Group | None = None,
-        suffix: str = ".DAT",
+        suffix: str = DEFAULT_SUFFIX,
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
+        if suffix == DEFAULT_SUFFIX and "." in part:
+            part, suffix = split_reference(part)
         return cls(
             colour=colour,
             position=position if position is not None else Vector(0, 0, 0),
