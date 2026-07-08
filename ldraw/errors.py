@@ -30,7 +30,49 @@ class InvalidLineDataError(PartError, ValueError):
 
     def __init__(self, line_type: str, size: int, line: list[str]) -> None:
         super().__init__(
-            f"Line type {line_type} must have {size} parameters:\n{" ".join(line)}",
+            f"Line type {line_type} must have {size} parameters:\n{' '.join(line)}",
+        )
+
+
+class InvalidNumericValueError(PartError, ValueError):
+    """A numeric field in a line could not be parsed."""
+
+    def __init__(self, line_type: str, token: str, line: list[str]) -> None:
+        super().__init__(
+            f'Invalid numeric value {token!r} in {line_type} line "{" ".join(line)}"',
+        )
+
+
+class UnknownCommandError(PartError):
+    """An unrecognized LDraw line-type command."""
+
+    def __init__(self, command: str) -> None:
+        super().__init__(f"Unknown command ({command})")
+
+
+class DuplicateSubmodelError(PartError):
+    """Two 0 FILE sections share the same (case-insensitive) name."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Duplicate 0 FILE section named {name!r}")
+
+
+class SubmodelNameRequiredError(PartError):
+    """A multi-part document section has no name to emit after 0 FILE."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Every model in a multi-part document needs a name to emit after 0 FILE",
+        )
+
+
+class LibraryNotGeneratedError(Exception):
+    """The ldraw.library modules have not been generated yet."""
+
+    def __init__(self, generated_path: str) -> None:
+        super().__init__(
+            f"No generated library found at {generated_path}; "
+            "run `ldraw generate` first.",
         )
 
 

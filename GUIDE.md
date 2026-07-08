@@ -15,6 +15,8 @@ Welcome to PyLDraw3! This guide will help you get started with creating LEGO mod
   - [Working with Groups](#working-with-groups)
   - [Rotations and Transformations](#rotations-and-transformations)
   - [Advanced Minifigure Positioning](#advanced-minifigure-positioning)
+  - [Reading and Writing Model Files](#reading-and-writing-model-files)
+  - [Querying and Validating from the CLI](#querying-and-validating-from-the-cli)
 - [Advanced Topics](#advanced-topics)
   - [Scene Composition with Lighting](#scene-composition-with-lighting)
   - [Building Complex Structures](#building-complex-structures)
@@ -206,6 +208,51 @@ detective.hips(Black)
 detective.left_leg(Black, 50)           # Leg poses
 detective.right_leg(Black, -40)
 ```
+
+### Reading and Writing Model Files
+
+`read_model` reads whole `.ldr` and `.mpd` files into a `Model`. MPD
+documents are split on `0 FILE` / `0 NOFILE`: the first section becomes the
+root model and later sections become its submodels.
+
+```python
+from ldraw import Model, parse_model, read_model
+
+model = read_model("my_model.mpd")
+
+# Header meta-commands are preserved and exposed as properties
+print(model.description, model.header_name, model.author)
+print(model.ldraw_org, model.license, model.bfc)
+
+# Type-1 references are Piece objects; resolve submodel references
+for piece in model.pieces:
+    submodel = model.submodel_for(piece)  # None for library parts
+    print(piece.reference, submodel)
+
+# Modify and write back; content round-trips line-for-line
+model.objects.append(parse_model("1 4 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat").objects[0])
+model.save("my_model_out.mpd")
+```
+
+Every parsed object has a `to_ldraw()` method (`str(model)` serializes the
+whole document), and parse errors always name the file and 1-based line
+number. For new code, `Piece.place("3005", colour=4)` is a keyword-first
+alternative to the positional `Piece` constructor.
+
+### Querying and Validating from the CLI
+
+The parts catalog and the validator are also available without writing
+Python:
+
+```bash
+ldraw parts search "cowboy"     # code, category, description per match
+ldraw parts info 3629           # details + the ldraw.library import to use
+ldraw validate my_model.ldr     # malformed lines and unknown parts, with line numbers
+```
+
+`ldraw validate` exits non-zero when issues are found, so it works in CI and
+git hooks. `ldraw stubs` writes an `ldraw-stubs/` PEP 561 package to your
+project root so IDEs autocomplete `ldraw.library.*` imports.
 
 ## Advanced Topics
 

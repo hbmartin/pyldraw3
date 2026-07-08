@@ -3,15 +3,22 @@
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
-from ldraw.cli import _confirm, build_parser, main
+from ldraw.cli import _confirm, _suggested_import, build_parser, main
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.parts import CatalogEntry, MinifigSection, PartCategory
+
+FIXTURE_CONFIG = Config(
+    ldraw_library_path="tests/test_ldraw",
+    generated_path="/gen",
+)
 
 
 class _FakeStdin:
@@ -214,6 +221,259 @@ def test_confirm_tty_prompts(
     monkeypatch.setattr("builtins.input", lambda _: answer)
 
     assert _confirm("Continue?", yes=False) is expected
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_search_finds_fixture_brick(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "search", "brick"]) == 0
+
+    out = capsys.readouterr().out
+    assert "3001" in out
+    assert "Brick  2 x  4" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_search_no_match_returns_one(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "search", "nonexistent"]) == 1
+
+    assert "No parts found matching" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_search_truncates_at_limit(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "search", "brick", "--limit", "0"]) == 0
+
+    assert "... and 1 more (use --limit)." in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_info_shows_details_and_import(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "info", "3001"]) == 0
+
+    out = capsys.readouterr().out
+    assert "code: 3001" in out
+    assert "description: Brick  2 x  4" in out
+    assert "category: brick" in out
+    assert "import: from ldraw.library.parts.bricks import Brick2X4" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_info_unknown_code_returns_one(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "info", "9999"]) == 1
+
+    assert "No part with code '9999'." in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load")
+def test_parts_commands_without_library_return_one(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_load_mock.return_value = Config(
+        ldraw_library_path=str(tmp_path),
+        generated_path="/gen",
+    )
+
+    assert main(["parts", "search", "brick"]) == 1
+    assert main(["parts", "info", "3001"]) == 1
+
+    assert "run `ldraw download` first" in capsys.readouterr().out
+
+
+def test_suggested_import_minifig_section() -> None:
+    entry = CatalogEntry(
+        code="3901",
+        description="Hair Male",
+        category=PartCategory.OTHER,
+        minifig_section=MinifigSection.HATS,
+    )
+
+    assert _suggested_import(entry) == (
+        "from ldraw.library.parts.minifig.hats import HairMale"
+    )
+
+
+def test_suggested_import_other_category_is_none() -> None:
+    entry = CatalogEntry(
+        code="9999",
+        description="Weird Part",
+        category=PartCategory.OTHER,
+    )
+
+    assert _suggested_import(entry) is None
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_clean_file(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("0 Model\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model)]) == 0
+
+    assert "OK" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_reports_issues_with_line_numbers(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "0 Model\n9 16 0 0 0\n2 16 0 0 x 1 1 1\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 9999.dat\n",
+    )
+
+    assert main(["validate", str(model)]) == 1
+
+    out = capsys.readouterr().out
+    assert f"{model}:2: Unknown command (9)" in out
+    assert f"{model}:3: Invalid numeric value 'x'" in out
+    assert f"{model}:4: unknown part 9999.DAT" in out
+    assert "3 issues found" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_skips_submodel_references(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.write_text(
+        "0 FILE main.ldr\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR\n"
+        "0 NOFILE\n"
+        "0 FILE body.ldr\n"
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "0 NOFILE\n",
+    )
+
+    assert main(["validate", str(model)]) == 0
+
+    assert "OK" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_missing_file_returns_one(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["validate", "does/not/exist.ldr"]) == 1
+
+    assert "not found" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load")
+def test_validate_without_library_is_syntax_only(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_load_mock.return_value = Config(
+        ldraw_library_path=str(tmp_path),
+        generated_path="/gen",
+    )
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 1 0 0 0 1 0 0 0 1 9999.dat\n")
+
+    assert main(["validate", str(model)]) == 0
+
+    out = capsys.readouterr().out
+    assert "skipping unknown-part checks" in out
+    assert "OK" in out
+
+
+def test_parts_requires_subcommand() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["parts"])
+
+    assert excinfo.value.code == 2
+
+
+def test_build_parser_parts_search_defaults() -> None:
+    args = build_parser().parse_args(["parts", "search", "brick"])
+
+    assert args.parts_command == "search"
+    assert args.term == "brick"
+    assert args.limit == 25
+
+
+def test_build_parser_parts_info() -> None:
+    args = build_parser().parse_args(["parts", "info", "3001"])
+
+    assert args.parts_command == "info"
+    assert args.code == "3001"
+
+
+def test_build_parser_validate() -> None:
+    args = build_parser().parse_args(["validate", "model.ldr"])
+
+    assert args.file == Path("model.ldr")
+
+
+def test_build_parser_stubs_defaults() -> None:
+    args = build_parser().parse_args(["stubs"])
+
+    assert args.out == Path()
+
+
+@patch("ldraw.cli.Config.load")
+def test_stubs_writes_package(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    generated = tmp_path / "generated"
+    (generated / "library").mkdir(parents=True)
+    (generated / "library" / "__init__.py").write_text("__all__ = []\n")
+    config_load_mock.return_value = Config(
+        ldraw_library_path="/lib",
+        generated_path=str(generated),
+    )
+    out_dir = tmp_path / "project"
+    out_dir.mkdir()
+
+    assert main(["stubs", "--out", str(out_dir)]) == 0
+
+    assert "Wrote stub package to" in capsys.readouterr().out
+    assert (out_dir / "ldraw-stubs" / "py.typed").read_text() == "partial\n"
+
+
+@patch("ldraw.cli.Config.load")
+def test_stubs_without_generated_library_returns_one(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_load_mock.return_value = Config(
+        ldraw_library_path="/lib",
+        generated_path=str(tmp_path),
+    )
+
+    assert main(["stubs"]) == 1
+
+    assert "run `ldraw generate` first" in capsys.readouterr().out
 
 
 def test_build_parser_download_defaults() -> None:

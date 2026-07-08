@@ -1,0 +1,10 @@
+0 Simple Test Model
+0 Name: simple.ldr
+0 Author: pyldraw3 tests
+0 !LDRAW_ORG Model
+0 !LICENSE Licensed under CC BY 4.0
+0 BFC CERTIFY CCW
+1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.DAT
+1 14 0 -24 0 1 0 0 0 1 0 0 0 1 3001.DAT
+0 STEP
+1 0x2FF0000 0 -48 0 1 0 0 0 1 0 0 0 1 3005.DAT

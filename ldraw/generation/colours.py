@@ -22,6 +22,7 @@ def gen_colours(parts: Parts, library_path: str | Path) -> None:
     colours_str = colours_module_content(parts)
     colours_py = Path(library_path) / "colours.py"
     colours_py.write_text(colours_str, encoding="utf-8")
+    colours_py.with_suffix(".pyi").write_text(colours_str, encoding="utf-8")
 
 
 def colours_module_content(parts: Parts) -> str:

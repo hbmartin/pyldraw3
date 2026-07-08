@@ -4,7 +4,7 @@
 [![Lint and Test](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml/badge.svg)](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hbmartin/pyldraw3/badge.svg?branch=main)](https://coveralls.io/github/hbmartin/pyldraw3?branch=main)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Code style: black](https://img.shields.io/badge/🐧️-black-000000.svg)](https://github.com/psf/black)
+[![Formatter: Ruff](https://img.shields.io/badge/formatter-ruff-46a0d9.svg)](https://github.com/astral-sh/ruff)
 
 A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models. It is a drop-in replacement for the unmaintained `pyldraw` library.
 
@@ -23,6 +23,8 @@ A modern Python package for creating and manipulating LDraw format files - the s
   - [Setup](#setup)
   - [Examples](#examples)
   - [Basic Usage](#basic-usage)
+  - [Reading and Writing Model Files](#reading-and-writing-model-files)
+  - [IDE Autocompletion and Type Checking](#ide-autocompletion-and-type-checking)
 - [Requirements](#requirements)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
@@ -102,6 +104,62 @@ brick1x1 = parts.get_entry_by_description("Brick  1 x  1").code  # -> "3005"
 
 Both `cowboy_hat` and `Brick1X2WithClassicSpaceLogoPattern` are just LDraw part code strings, so either style can be passed as the `part` argument to `Piece`.
 
+For new code, `Piece.place` offers a keyword-first constructor with sensible defaults (main colour, origin position, identity rotation):
+
+```python
+from ldraw.pieces import Piece
+
+piece = Piece.place("3005", colour=4)  # red 1x1 brick at the origin
+```
+
+### Reading and Writing Model Files
+
+`read_model` parses whole `.ldr` and `.mpd` files - including MPD `0 FILE` /
+`0 NOFILE` sections - into a `Model` you can inspect, modify, and save:
+
+```python
+from ldraw import read_model
+
+model = read_model("my_model.ldr")
+print(model.description, model.author)
+
+for piece in model.pieces:
+    print(piece.part, piece.position)
+
+# MPD documents: the first 0 FILE section is the root model,
+# later sections are submodels resolvable from their type-1 references.
+for ref in model.pieces:
+    if (submodel := model.submodel_for(ref)) is not None:
+        print(f"{ref.reference} -> {len(submodel.pieces)} pieces")
+
+model.save("my_model_out.ldr")
+```
+
+Every parsed object (`Piece`, `Line`, `Triangle`, `Quadrilateral`,
+`OptionalLine`, `Comment`, `MetaCommand`) has a `to_ldraw()` method, so
+parsed content round-trips back to LDraw text. Parse errors report the file
+and 1-based line number. `ldraw validate` exposes the same checks on the
+command line.
+
+### IDE Autocompletion and Type Checking
+
+The package ships a `py.typed` marker, so the hand-written API is typed for
+mypy/pyright out of the box. For the *generated* `ldraw.library.*` modules,
+run:
+
+```bash
+ldraw stubs
+```
+
+from your project root. This writes an `ldraw-stubs/` PEP 561 stub package
+that Pylance/pyright discover automatically (for mypy, ensure the project
+root is on `mypy_path`). Regenerate the stubs after switching library
+versions with `ldraw download`/`ldraw generate`, and add `ldraw-stubs/` to
+your `.gitignore`. Use `--out PATH` to write the stubs somewhere else.
+Stub discovery from a project root is standard PEP 561 behavior but can vary
+by tool version - the stubs mirror the generated modules exactly, so pointing
+your checker's stub path at them always works.
+
 ## Requirements
 
 - Python 3.12+
@@ -131,6 +189,9 @@ positional arguments:
   command
     download  Download and unpack an LDraw parts library release.
     generate  Generate the ldraw.library modules from the downloaded library.
+    parts     Query the parts catalog.
+    validate  Validate an LDraw file (.ldr, .mpd, or .dat).
+    stubs     Write a type-stub package for ldraw.library into your project.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
 
@@ -140,6 +201,10 @@ options:
 
 - `ldraw download [--version VERSION] [--yes]` - download and unpack an LDraw release (default version: `complete`)
 - `ldraw generate [--yes] [--force]` - (re)generate `ldraw.library.*` from the currently configured release; `--force` regenerates even if already up to date
+- `ldraw parts search TERM [--limit N]` - search the catalog by description or code substring (exit code 1 when nothing matches)
+- `ldraw parts info CODE` - show a part's description, category, file path, and the generated-library import to use
+- `ldraw validate FILE` - report malformed lines and unknown part references with line numbers (exit code 1 when issues are found)
+- `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
 - `ldraw config` - print the current configuration as YAML
 - `ldraw version` - print the installed `pyldraw3` version
 
@@ -176,7 +241,7 @@ uv run pytest --cov=ldraw     # With coverage
 uv run pytest --integration   # Integration tests only
 
 # Code formatting and linting
-uv run black .               # Format code
+uv run ruff format .         # Format code
 uv run ruff check            # Lint code
 uv run ruff check --fix      # Fix linting issues
 
@@ -188,12 +253,13 @@ uv build
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `config`, and `version` subcommands
-- **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `parts`, `validate`, `stubs`, `config`, and `version` subcommands
+- **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules (with `.pyi` stubs)
 - **Import System** (`ldraw/imports.py`): Custom meta path hook for dynamic imports
 
 ### Key Classes
 
+- `Model` (`ldraw/model.py`) - Reads and writes whole `.ldr`/`.mpd` model files
 - `Parts` - Manages parts catalog and loading
 - `Piece` - Represents individual LEGO pieces in models  
 - `Figure` - High-level minifigure construction

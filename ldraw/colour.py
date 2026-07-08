@@ -28,9 +28,12 @@ def normalized_rgb_hex(rgb: str) -> str:
     raise ValueError(message)
 
 
+OPAQUE_ALPHA = 255
+
+
 @dataclass(frozen=True, slots=True)
 class Colour:
-    """A colour, uniquely identified by a code."""
+    """A colour, identified by a code, or by rgb/alpha for direct colours."""
 
     code: int | None = None
     name: str | None = None
@@ -44,10 +47,22 @@ class Colour:
         if self.code is None and self.rgb is not None:
             normalized_rgb_hex(self.rgb)
 
+    def _direct_key(self) -> tuple[str | None, int]:
+        rgb = normalized_rgb_hex(self.rgb) if self.rgb is not None else None
+        return rgb, OPAQUE_ALPHA if self.alpha is None else self.alpha
+
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, Colour):
-            return self.code == other.code
-        return self.code == other
+        match other:
+            case Colour() if self.code is None and other.code is None:
+                return self._direct_key() == other._direct_key()
+            case Colour():
+                return self.code == other.code
+            case int():
+                return self.code == other
+            case _:
+                return NotImplemented
 
     def __hash__(self) -> int:
+        if self.code is None:
+            return hash(self._direct_key())
         return hash(self.code)

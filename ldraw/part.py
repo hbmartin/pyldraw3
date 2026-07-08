@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from ldraw.colour import Colour
-from ldraw.errors import InvalidLineDataError, PartError
+from ldraw.errors import (
+    InvalidLineDataError,
+    InvalidNumericValueError,
+    PartError,
+    UnknownCommandError,
+)
 from ldraw.geometry import Matrix, Vector
 from ldraw.lines import (
     Comment,
@@ -19,7 +23,6 @@ from ldraw.lines import (
 )
 from ldraw.pieces import Piece
 
-ENDS_DOT_DAT = re.compile(r"\.DAT$", flags=re.IGNORECASE)
 ParsedObject = (
     Comment | MetaCommand | Piece | Line | Triangle | Quadrilateral | OptionalLine
 )
@@ -51,67 +54,82 @@ def _comment_or_meta(pieces: list[str]) -> Comment | MetaCommand:
     return Comment(" ".join(pieces))
 
 
+def _floats(line_type: str, values: list[str], line: list[str]) -> list[float]:
+    """Parse numeric fields, naming the offending token on failure."""
+    result: list[float] = []
+    for value in values:
+        try:
+            result.append(float(value))
+        except ValueError as exc:
+            raise InvalidNumericValueError(line_type, value, line) from exc
+    return result
+
+
+def _split_reference(ref: str) -> tuple[str, str]:
+    """Split a subfile reference into an uppercased stem and extension."""
+    stem, dot, ext = ref.rpartition(".")
+    if not dot:
+        return ref.upper(), ""
+    return stem.upper(), f".{ext.upper()}"
+
+
 def _sub_file(pieces: list[str]) -> Piece:
-    if len(pieces) != 14:
+    if len(pieces) < 14:
         raise InvalidLineDataError("subfile", 14, pieces)
-    position = [float(value) for value in pieces[1:4]]
-    rows = [
-        [float(value) for value in pieces[4:7]],
-        [float(value) for value in pieces[7:10]],
-        [float(value) for value in pieces[10:13]],
-    ]
-    part = pieces[13].upper()
-    if re.search(ENDS_DOT_DAT, part):
-        part = part[:-4]
-    return Piece(_colour(pieces), Vector(*position), Matrix(rows), part)
+    values = _floats("subfile", pieces[1:13], pieces)
+    rows = [values[3:6], values[6:9], values[9:12]]
+    part, suffix = _split_reference(" ".join(pieces[13:]))
+    return Piece(
+        _colour(pieces),
+        Vector(*values[:3]),
+        Matrix(rows),
+        part,
+        suffix=suffix,
+    )
 
 
 def _line(pieces: list[str]) -> Line:
     if len(pieces) != 7:
         raise InvalidLineDataError("line", 7, pieces)
-    point1 = [float(value) for value in pieces[1:4]]
-    point2 = [float(value) for value in pieces[4:7]]
-    return Line(_colour(pieces), Vector(*point1), Vector(*point2))
+    values = _floats("line", pieces[1:7], pieces)
+    return Line(_colour(pieces), Vector(*values[:3]), Vector(*values[3:6]))
 
 
 def _triangle(pieces: list[str]) -> Triangle:
     if len(pieces) != 10:
         raise InvalidLineDataError("triangle", 10, pieces)
-    point1 = [float(value) for value in pieces[1:4]]
-    point2 = [float(value) for value in pieces[4:7]]
-    point3 = [float(value) for value in pieces[7:10]]
-    return Triangle(_colour(pieces), Vector(*point1), Vector(*point2), Vector(*point3))
+    values = _floats("triangle", pieces[1:10], pieces)
+    return Triangle(
+        _colour(pieces),
+        Vector(*values[:3]),
+        Vector(*values[3:6]),
+        Vector(*values[6:9]),
+    )
 
 
 def _quadrilateral(pieces: list[str]) -> Quadrilateral:
     if len(pieces) != 13:
         raise InvalidLineDataError("quadrilateral", 13, pieces)
-    point1 = [float(value) for value in pieces[1:4]]
-    point2 = [float(value) for value in pieces[4:7]]
-    point3 = [float(value) for value in pieces[7:10]]
-    point4 = [float(value) for value in pieces[10:13]]
+    values = _floats("quadrilateral", pieces[1:13], pieces)
     return Quadrilateral(
         _colour(pieces),
-        Vector(*point1),
-        Vector(*point2),
-        Vector(*point3),
-        Vector(*point4),
+        Vector(*values[:3]),
+        Vector(*values[3:6]),
+        Vector(*values[6:9]),
+        Vector(*values[9:12]),
     )
 
 
 def _optional_line(pieces: list[str]) -> OptionalLine:
     if len(pieces) != 13:
         raise InvalidLineDataError("optional", 13, pieces)
-    point1 = [float(value) for value in pieces[1:4]]
-    point2 = [float(value) for value in pieces[4:7]]
-    point3 = [float(value) for value in pieces[7:10]]
-    point4 = [float(value) for value in pieces[10:13]]
+    values = _floats("optional", pieces[1:13], pieces)
     return OptionalLine(
         _colour(pieces),
-        Vector(*point1),
-        Vector(*point2),
-        Vector(*point3),
-        Vector(*point4),
+        Vector(*values[:3]),
+        Vector(*values[3:6]),
+        Vector(*values[6:9]),
+        Vector(*values[9:12]),
     )
 
 
@@ -123,6 +141,16 @@ HANDLERS: dict[str, LineHandler] = {
     "4": _quadrilateral,
     "5": _optional_line,
 }
+
+
+def parse_ldraw_line(line: str) -> ParsedObject | None:
+    """Parse a single LDraw line; return None for a blank line."""
+    pieces = line.split()
+    if not pieces:
+        return None
+    if (handler := HANDLERS.get(pieces[0])) is None:
+        raise UnknownCommandError(pieces[0])
+    return handler(pieces[1:])
 
 
 class Part:
@@ -142,22 +170,14 @@ class Part:
     @property
     def objects(self) -> Iterator[ParsedObject]:
         """Load objects from the part file."""
-        for number, line in enumerate(self.lines):
-            pieces = line.split()
-            if not pieces:
-                continue
+        for number, line in enumerate(self.lines, start=1):
             try:
-                handler = HANDLERS[pieces[0]]
-            except KeyError as exc:
-                message = (
-                    f"Unknown command ({pieces[0]}) in {self.path} at line {number}"
-                )
-                raise PartError(message) from exc
-            try:
-                yield handler(pieces[1:])
+                parsed = parse_ldraw_line(line)
             except PartError as parse_error:
                 message = f"{parse_error.message} in {self.path} at line {number}"
                 raise PartError(message) from parse_error
+            if parsed is not None:
+                yield parsed
 
     @property
     def description(self) -> str:

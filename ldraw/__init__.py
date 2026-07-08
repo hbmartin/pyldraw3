@@ -23,8 +23,9 @@ import sys
 from ldraw.downloads import download
 from ldraw.generation import generate
 from ldraw.imports import LibraryImporter
+from ldraw.model import Model, parse_model, read_model
 
-__all__ = ["download", "generate"]
+__all__ = ["Model", "download", "generate", "parse_model", "read_model"]
 
 # Modern import hook registration: use an instance, not the class
 library_importer_instance = LibraryImporter()

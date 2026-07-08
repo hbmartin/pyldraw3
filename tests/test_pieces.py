@@ -125,6 +125,58 @@ def test_malformed_direct_colour_is_rejected_at_construction() -> None:
         Piece(Colour(rgb="not-a-colour"), Vector(0, 0, 0), Identity(), Brick1X1)
 
 
+def test_piece_suffix_defaults_to_dat() -> None:
+    piece = Piece(White, Vector(0, 0, 0), Identity(), Brick1X1)
+
+    assert piece.suffix == ".DAT"
+    assert piece.reference == "3005.DAT"
+    assert piece.to_ldraw().endswith(" 3005.DAT")
+    assert "suffix='.DAT'" in repr(piece)
+
+
+def test_piece_custom_suffix() -> None:
+    piece = Piece(White, Vector(0, 0, 0), Identity(), "body", suffix=".LDR")
+
+    assert piece.reference == "BODY.LDR"
+    assert piece.to_ldraw() == "1 15 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+
+
+def test_group_copy_preserves_suffix() -> None:
+    group = Group()
+    Piece(White, Vector(0, 0, 0), Identity(), "body", group=group, suffix=".LDR")
+
+    duplicate = group.copy()
+
+    assert duplicate.pieces[0].suffix == ".LDR"
+
+
+def test_piece_place_defaults() -> None:
+    piece = Piece.place(Brick1X1)
+
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert piece.group is None
+
+
+def test_piece_place_explicit_arguments() -> None:
+    group = Group()
+    piece = Piece.place(
+        Brick1X1,
+        colour=White,
+        position=Vector(10, 0, 0),
+        matrix=Identity().rotate(90, YAxis),
+        group=group,
+    )
+
+    assert piece.to_ldraw() == "1 15 10 0 0 0 0 -1 0 1 0 1 0 0 3005.DAT"
+    assert piece in group.pieces
+
+
+def test_piece_place_accepts_int_colour() -> None:
+    piece = Piece.place(Brick1X1, colour=4)
+
+    assert piece.colour == Colour(code=4)
+
+
 @pytest.fixture
 def figure():
     return Person(Vector(0, 0, -10))

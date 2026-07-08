@@ -44,6 +44,10 @@ jobs:
       run: |
         uv run ty check ldraw
         uv run pyrefly check ldraw
+    - name: Run complexity checks
+      run: uv run lizard --languages python ldraw tests
+    - name: Run package metadata checks
+      run: uv run pyroma --min 10 .
     - run: uv run deptry .
     - name: Run tests with coverage
       run: uv run pytest --cov=ldraw --cov-report=lcov --cov-report=html

@@ -38,11 +38,16 @@ def test_library_gen_files(test_ldraw_library) -> None:
 
     library = {
         "__init__.py",
+        "__init__.pyi",
+        "py.typed",
         "colours.py",
+        "colours.pyi",
         "license.txt",
         "__hash__",
         join("parts", "__init__.py"),
+        join("parts", "__init__.pyi"),
         join("parts", "bricks.py"),
+        join("parts", "bricks.pyi"),
     }
 
     assert content == {join("library", el) for el in library}

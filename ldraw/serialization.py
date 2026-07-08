@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ldraw.colour import normalized_rgb_hex
+from ldraw.colour import OPAQUE_ALPHA, normalized_rgb_hex
 
 if TYPE_CHECKING:
     from ldraw.colour import Colour
 
 ZERO_TOLERANCE = 1e-12
 MAX_DECIMAL_PLACES = 12
-OPAQUE_ALPHA = 255
 
 
 def format_ldraw_colour(colour: Colour) -> str:

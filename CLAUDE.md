@@ -28,7 +28,7 @@ uv run pytest --integration   # Run integration tests
 
 ### Code Quality
 ```bash
-uv run black .               # Format code (Black is configured)
+uv run ruff format .         # Format code
 ```
 
 ### Building
@@ -40,7 +40,7 @@ uv build                     # Build package
 
 ### Core Components
 
-1. **CLI Interface (`ldraw/cli.py`)**: argparse CLI with `download`, `generate`, `config`, and `version` subcommands
+1. **CLI Interface (`ldraw/cli.py`)**: argparse CLI with `download`, `generate`, `parts` (search/info), `validate`, `stubs`, `config`, and `version` subcommands
 
 2. **Dynamic Library Generation (`ldraw/generation/`)**: 
    - Generates Python modules from LDraw parts libraries
@@ -53,6 +53,7 @@ uv build                     # Build package
 
 ### Key Classes
 
+- `Model` (`ldraw/model.py`) - Reads and writes whole `.ldr`/`.mpd` model files
 - `Parts` (`ldraw/parts.py`) - Manages parts catalog and loading
 - `Piece` (`ldraw/pieces.py`) - Represents individual LEGO pieces in models
 - `Figure` (`ldraw/figure.py`) - High-level minifigure construction
@@ -70,7 +71,7 @@ uv build                     # Build package
 - Uses uv for dependency management instead of traditional pip/setuptools
 - Generated `ldraw.library.*` modules are cached and should be regenerated when changing library versions
 - Integration tests are marked with `@pytest.mark.integration` and require `--integration` flag
-- Code style uses Black formatter and ruff linter
+- Code style uses Ruff formatter and linter
 
 ## Python Practices
 - Always use or add type hints

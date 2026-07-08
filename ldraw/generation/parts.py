@@ -14,6 +14,12 @@ from ldraw.utils import camel, clean
 SECTION_SEP = "#|#"
 
 
+def _write_module(path: Path, content: str) -> None:
+    """Write a generated module and an identical .pyi stub beside it."""
+    path.write_text(content, encoding="utf-8")
+    path.with_suffix(".pyi").write_text(content, encoding="utf-8")
+
+
 def gen_parts(parts: Parts, library_path: str | Path) -> None:
     """Generate the ldraw.library.parts namespace modules."""
     print("Generating ldraw.library.parts, this might take a long time...")
@@ -58,7 +64,7 @@ def recursive_gen_parts(
 
     for section_name, section_parts in local_sections.items():
         parts_py = directory / f"{section_name}.py"
-        parts_py.write_text(section_content(section_parts, section_name))
+        _write_module(parts_py, section_content(section_parts, section_name))
 
     generate_parts__init__(
         directory=directory,
@@ -70,7 +76,7 @@ def generate_parts__init__(directory: Path, sections: list[str]) -> None:
     """Generate __init__.py to make submodules in ldraw.library.parts."""
     parts__init__ = directory / "__init__.py"
     parts__init__.parent.mkdir(parents=True, exist_ok=True)
-    parts__init__.write_text(parts__init__content(sections))
+    _write_module(parts__init__, parts__init__content(sections))
 
 
 def parts__init__content(sections: list[str]) -> str:
