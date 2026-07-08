@@ -33,7 +33,12 @@ OPAQUE_ALPHA = 255
 
 @dataclass(frozen=True, slots=True)
 class Colour:
-    """A colour, identified by a code, or by rgb/alpha for direct colours."""
+    """A colour, identified by a code, or by rgb/alpha for direct colours.
+
+    ``rgb`` is canonicalized on construction to ``#RRGGBB`` — a leading
+    ``#``, six uppercase hex digits — whatever form it was given in;
+    malformed values raise ``ValueError``.
+    """
 
     code: int | None = None
     name: str | None = None
@@ -42,14 +47,13 @@ class Colour:
     colour_attributes: list[str] | None = None
 
     def __post_init__(self) -> None:
-        # A code-less colour can only ever serialize as a direct colour, so a
-        # malformed rgb value should fail here rather than at write-out time.
-        if self.code is None and self.rgb is not None:
-            normalized_rgb_hex(self.rgb)
+        # Canonicalizing here gives rgb a single invariant everywhere and
+        # fails on malformed values at construction rather than write-out.
+        if self.rgb is not None:
+            object.__setattr__(self, "rgb", f"#{normalized_rgb_hex(self.rgb)}")
 
     def _direct_key(self) -> tuple[str | None, int]:
-        rgb = normalized_rgb_hex(self.rgb) if self.rgb is not None else None
-        return rgb, OPAQUE_ALPHA if self.alpha is None else self.alpha
+        return self.rgb, OPAQUE_ALPHA if self.alpha is None else self.alpha
 
     def __eq__(self, other: object) -> bool:
         match other:

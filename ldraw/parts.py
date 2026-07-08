@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import re
 from collections import defaultdict
@@ -11,7 +10,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
-from ldraw.colour import Colour
+from ldraw.colour import Colour, normalized_rgb_hex
 from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
 from ldraw.part import Part
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class PartCategory(StrEnum):
-    """Known LDraw part categories."""
+    """Known LDraw part categories, mirroring the official LDraw.org list."""
 
     ANIMAL = "animal"
     ANTENNA = "antenna"
@@ -31,24 +30,38 @@ class PartCategory(StrEnum):
     BASEPLATE = "baseplate"
     BELVILLE = "belville"
     BOAT = "boat"
+    BRACKET = "bracket"
     BRICK = "brick"
     CANVAS = "canvas"
     CAR = "car"
+    CLIKITS = "clikits"
+    COCKPIT = "cockpit"
     CONE = "cone"
     CONSTRACTION = "constraction"
+    CONSTRACTION_ACCESSORY = "constraction accessory"
     CONTAINER = "container"
+    CONVEYOR = "conveyor"
     CRANE = "crane"
     CYLINDER = "cylinder"
     DISH = "dish"
     DOOR = "door"
+    DUPLO = "duplo"
     ELECTRIC = "electric"
+    EXHAUST = "exhaust"
     FENCE = "fence"
     FIGURE = "figure"
     FIGURE_ACCESSORY = "figure accessory"
+    FLAG = "flag"
+    FORKLIFT = "forklift"
     FREESTYLE = "freestyle"
+    GARAGE = "garage"
+    GLASS = "glass"
+    GRAB = "grab"
     HINGE = "hinge"
     HOMEMAKER = "homemaker"
     HOSE = "hose"
+    LADDER = "ladder"
+    LEVER = "lever"
     MAGNET = "magnet"
     MINIFIG = "minifig"
     MINIFIG_ACCESSORY = "minifig accessory"
@@ -56,11 +69,17 @@ class PartCategory(StrEnum):
     MINIFIG_HEADWEAR = "minifig headwear"
     MINIFIG_HIPWEAR = "minifig hipwear"
     MINIFIG_NECKWEAR = "minifig neckwear"
+    MONORAIL = "monorail"
+    PANEL = "panel"
     PLANE = "plane"
     PLANT = "plant"
     PLATE = "plate"
+    PLATFORM = "platform"
     PROPELLOR = "propellor"
+    RACK = "rack"
     ROADSIGN = "roadsign"
+    ROCK = "rock"
+    SCALA = "scala"
     SCREW = "screw"
     SHEET_CARDBOARD = "sheet cardboard"
     SHEET_FABRIC = "sheet fabric"
@@ -69,19 +88,26 @@ class PartCategory(StrEnum):
     SPHERE = "sphere"
     STAIRCASE = "staircase"
     STICKER = "sticker"
+    STRING = "string"
     SUPPORT = "support"
+    TAIL = "tail"
     TAP = "tap"
     TECHNIC = "technic"
     TILE = "tile"
+    TIPPER = "tipper"
+    TRACTOR = "tractor"
+    TRAILER = "trailer"
     TRAIN = "train"
     TURNTABLE = "turntable"
     TYRE = "tyre"
     VEHICLE = "vehicle"
+    WEDGE = "wedge"
     WHEEL = "wheel"
     WINCH = "winch"
     WINDOW = "window"
     WINDSCREEN = "windscreen"
     WING = "wing"
+    ZNAP = "znap"
     OTHER = "other"
 
     @classmethod
@@ -113,24 +139,38 @@ _MODULE_NAMES: dict[PartCategory, str] = {
     PartCategory.BASEPLATE: "baseplates",
     PartCategory.BELVILLE: "belvilles",
     PartCategory.BOAT: "boats",
+    PartCategory.BRACKET: "brackets",
     PartCategory.BRICK: "bricks",
     PartCategory.CANVAS: "canvases",
     PartCategory.CAR: "car",
+    PartCategory.CLIKITS: "clikits",
+    PartCategory.COCKPIT: "cockpits",
     PartCategory.CONE: "cones",
     PartCategory.CONSTRACTION: "constractions",
+    PartCategory.CONSTRACTION_ACCESSORY: "constraction_accessory",
     PartCategory.CONTAINER: "containers",
+    PartCategory.CONVEYOR: "conveyors",
     PartCategory.CRANE: "cranes",
     PartCategory.CYLINDER: "cylinders",
     PartCategory.DISH: "dishes",
     PartCategory.DOOR: "doors",
+    PartCategory.DUPLO: "duplo",
     PartCategory.ELECTRIC: "electrics",
+    PartCategory.EXHAUST: "exhausts",
     PartCategory.FENCE: "fences",
     PartCategory.FIGURE: "figures",
     PartCategory.FIGURE_ACCESSORY: "figure_accessory",
+    PartCategory.FLAG: "flags",
+    PartCategory.FORKLIFT: "forklifts",
     PartCategory.FREESTYLE: "freestyles",
+    PartCategory.GARAGE: "garages",
+    PartCategory.GLASS: "glass",
+    PartCategory.GRAB: "grabs",
     PartCategory.HINGE: "hinges",
     PartCategory.HOMEMAKER: "homemakers",
     PartCategory.HOSE: "hoses",
+    PartCategory.LADDER: "ladders",
+    PartCategory.LEVER: "levers",
     PartCategory.MAGNET: "magnets",
     PartCategory.MINIFIG: "minifigs",
     PartCategory.MINIFIG_ACCESSORY: "minifig_accessory",
@@ -138,11 +178,17 @@ _MODULE_NAMES: dict[PartCategory, str] = {
     PartCategory.MINIFIG_HEADWEAR: "minifig_headwear",
     PartCategory.MINIFIG_HIPWEAR: "minifig_hipwear",
     PartCategory.MINIFIG_NECKWEAR: "minifig_neckwear",
+    PartCategory.MONORAIL: "monorail",
+    PartCategory.PANEL: "panels",
     PartCategory.PLANE: "planes",
     PartCategory.PLANT: "plants",
     PartCategory.PLATE: "plates",
+    PartCategory.PLATFORM: "platforms",
     PartCategory.PROPELLOR: "propellors",
+    PartCategory.RACK: "racks",
     PartCategory.ROADSIGN: "roadsigns",
+    PartCategory.ROCK: "rocks",
+    PartCategory.SCALA: "scala",
     PartCategory.SCREW: "screws",
     PartCategory.SHEET_CARDBOARD: "sheet_cardboard",
     PartCategory.SHEET_FABRIC: "sheet_fabric",
@@ -151,19 +197,26 @@ _MODULE_NAMES: dict[PartCategory, str] = {
     PartCategory.SPHERE: "spheres",
     PartCategory.STAIRCASE: "staircases",
     PartCategory.STICKER: "stickers",
+    PartCategory.STRING: "string",
     PartCategory.SUPPORT: "supports",
+    PartCategory.TAIL: "tails",
     PartCategory.TAP: "taps",
     PartCategory.TECHNIC: "technic",
     PartCategory.TILE: "tiles",
+    PartCategory.TIPPER: "tippers",
+    PartCategory.TRACTOR: "tractors",
+    PartCategory.TRAILER: "trailers",
     PartCategory.TRAIN: "train",
     PartCategory.TURNTABLE: "turntables",
     PartCategory.TYRE: "tyres",
     PartCategory.VEHICLE: "vehicles",
+    PartCategory.WEDGE: "wedges",
     PartCategory.WHEEL: "wheels",
     PartCategory.WINCH: "winches",
     PartCategory.WINDOW: "windows",
     PartCategory.WINDSCREEN: "windscreens",
     PartCategory.WING: "wings",
+    PartCategory.ZNAP: "znap",
     PartCategory.OTHER: "others",
 }
 
@@ -196,6 +249,41 @@ _MINIFIG_MARKERS: dict[MinifigSection, str] = {
     MinifigSection.HATS: "Hat",
     MinifigSection.LEGS: "Leg",
 }
+
+_MINIFIG_PREFIX = "Minifig "
+
+
+def _split_minifig_description(
+    description: str,
+) -> tuple[str, MinifigSection] | None:
+    """Return the stripped symbol name and section for a minifig description."""
+    if not description.startswith(_MINIFIG_PREFIX):
+        return None
+
+    stripped = description[len(_MINIFIG_PREFIX) :]
+    if stripped.startswith("(") and stripped.endswith(")"):
+        stripped = stripped[1:-1]
+
+    for section in MinifigSection:
+        searched = section.marker
+        index_find = stripped.find(searched)
+        if index_find != -1 and (
+            index_find + len(searched) == len(stripped)
+            or stripped[index_find + len(searched)] == " "
+        ):
+            return stripped, section
+    return stripped, MinifigSection.ACCESSORIES
+
+
+def symbol_description(description: str) -> str:
+    """Return the description that generated symbol names derive from.
+
+    Minifig part descriptions drop their ``Minifig `` prefix so symbols in
+    the ``minifig``/``minifig_*`` modules read ``Torso``, not
+    ``MinifigTorso``; every other description passes through unchanged.
+    """
+    split = _split_minifig_description(description)
+    return description if split is None else split[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +355,11 @@ class PartsCatalog:
         return tuple(entries)
 
     def module_sections(self) -> dict[tuple[str, ...], dict[str, str]]:
-        """Return generated module sections keyed by package path."""
+        """Return generated module sections keyed by package path.
+
+        Section dicts are keyed by ``symbol_description`` (the minifig
+        prefix is stripped), not by the catalog description.
+        """
         sections: dict[tuple[str, ...], dict[str, str]] = {}
         for category, entries in self.by_category.items():
             if category == PartCategory.OTHER:
@@ -275,13 +367,17 @@ class PartsCatalog:
             module_path = (category.module_name,)
             sections.setdefault(module_path, {})
             for entry in entries:
-                sections[module_path][entry.description] = entry.code
+                sections[module_path][symbol_description(entry.description)] = (
+                    entry.code
+                )
 
         for section, entries in self.by_minifig_section.items():
             module_path = ("minifig", section.value)
             sections.setdefault(module_path, {})
             for entry in entries:
-                sections[module_path][entry.description] = entry.code
+                sections[module_path][symbol_description(entry.description)] = (
+                    entry.code
+                )
 
         return sections
 
@@ -434,8 +530,6 @@ class Parts:
         """Load part files and categorize them."""
         for code, description in self.by_code_name:
             part = self.part(code=code)
-            if part is None:
-                raise PartNotFoundError(code=code, path=str(self.path))
             self.by_code_name[(code, description)] = part
             category = PartCategory.from_label(part.category)
             if category is None and part.category is not None:
@@ -464,50 +558,66 @@ class Parts:
             )
 
     def section_find(self, pieces: list[str]) -> tuple[str, str]:
-        """Return code and normalized description from a parts.lst split line."""
+        """Return code and description from a parts.lst split line.
+
+        The description is kept exactly as written in ``parts.lst``;
+        detected minifig sections are recorded for the catalog. Generated
+        symbol names strip the ``Minifig `` prefix at generation time
+        (see ``symbol_description``).
+        """
         code = pieces[0]
         description = pieces[1].strip()
-        minifig_description = self._normalize_minifig_description(description)
-        if minifig_description is not None:
-            description, section = minifig_description
-            self._minifig_sections_by_code[code] = section
+        if (split := _split_minifig_description(description)) is not None:
+            self._minifig_sections_by_code[code] = split[1]
         return code, description
 
-    def _normalize_minifig_description(
-        self,
-        description: str,
-    ) -> tuple[str, MinifigSection] | None:
-        if not description.startswith("Minifig "):
-            return None
+    def description_for(self, code: str) -> str | None:
+        """Return the ``parts.lst`` description for a part code, or None.
 
-        normalized = description[8:]
-        if normalized.startswith("(") and normalized.endswith(")"):
-            normalized = normalized[1:-1]
-
-        for section in MinifigSection:
-            searched = section.marker
-            index_find = normalized.find(searched)
-            if index_find != -1 and (
-                index_find + len(searched) == len(normalized)
-                or normalized[index_find + len(searched)] == " "
-            ):
-                return normalized, section
-        return normalized, MinifigSection.ACCESSORIES
+        The lookup tolerates casing differences: ``Piece.part`` codes are
+        normalized to uppercase while ``parts.lst`` codes are typically
+        lowercase, so the code is tried as given, lowercased, and
+        uppercased.
+        """
+        for candidate in (code, code.lower(), code.upper()):
+            if (description := self.by_code.get(candidate)) is not None:
+                return description
+        return None
 
     def part(
         self,
         description: str | None = None,
         code: str | None = None,
-    ) -> Part | None:
-        """Get a Part from its description or code."""
+    ) -> Part:
+        """Get a Part from its description or code.
+
+        Raises ``PartNotFoundError`` when the description or code is not
+        in the library or the part file is missing; use ``find_part`` for
+        a lookup that returns None instead.
+        """
         if description is not None:
-            with contextlib.suppress(KeyError):
+            try:
                 code = self.by_name[description]
-        elif code is None:
-            return None
+            except KeyError:
+                raise PartNotFoundError(
+                    code=description,
+                    path=str(self.path),
+                ) from None
         if code is None:
-            return None
+            message = "part() needs a description or a code"
+            raise ValueError(message)
         return self._load_part(code)
+
+    def find_part(
+        self,
+        description: str | None = None,
+        code: str | None = None,
+    ) -> Part | None:
+        """Get a Part from its description or code, or None when not found."""
+        try:
+            return self.part(description=description, code=code)
+        except PartError:
+            return None
 
     def _find_parts_subdirs(self, directory: Path) -> None:
         for item in directory.iterdir():
@@ -516,16 +626,16 @@ class Parts:
                 self.parts_subdirs[item.name.lower()] = item
                 self.parts_subdirs[item.name.upper()] = item
 
-    def _load_part(self, code: str) -> Part | None:
+    def _load_part(self, code: str) -> Part:
         normalized_code = code.replace("\\", "/")
         if "/" in normalized_code:
             pieces = normalized_code.split("/")
             if len(pieces) != 2:
-                return None
+                raise PartNotFoundError(code=code, path=str(self.path))
             try:
                 parts_dirs = [self.parts_subdirs[pieces[0]]]
             except KeyError:
-                return None
+                raise PartNotFoundError(code=code, path=str(self.path)) from None
             normalized_code = pieces[1]
         else:
             parts_dirs = self.parts_dirs
@@ -541,8 +651,7 @@ class Parts:
         for path in paths:
             if path.exists():
                 return Part(path)
-        message = f"part file not found: {code}"
-        raise PartError(message)
+        raise PartNotFoundError(code=code, path=str(self.path))
 
     def _load_colours(self, path: Path) -> None:
         try:
@@ -560,23 +669,41 @@ class Parts:
             except (ValueError, IndexError):
                 continue
 
+            alpha: int | None
             try:
                 alpha = int(pieces[pieces.index("ALPHA") + 1])
-                self.alpha_values[name] = alpha
-                self.alpha_values[code] = alpha
             except (IndexError, ValueError):
-                alpha = 255
+                alpha = None
 
             colour_attributes = [
                 attribute for attribute in Parts.ColourAttributes if attribute in pieces
             ]
 
-            self.colours[name] = rgb
-            self.colours[code] = rgb
+            try:
+                canonical_rgb = f"#{normalized_rgb_hex(rgb)}"
+            except ValueError:
+                logger.warning(
+                    "ignoring colour %r (code %s): invalid VALUE %r",
+                    name,
+                    code,
+                    rgb,
+                )
+                continue
+            colour = Colour(
+                code,
+                name,
+                canonical_rgb,
+                alpha if alpha is not None else 255,
+                colour_attributes,
+            )
+
+            if alpha is not None:
+                self.alpha_values[name] = alpha
+                self.alpha_values[code] = alpha
+            self.colours[name] = canonical_rgb
+            self.colours[code] = canonical_rgb
             self.colour_attributes[name] = colour_attributes
             self.colour_attributes[code] = colour_attributes
-
-            colour = Colour(code, name, rgb, alpha, colour_attributes)
             self.colours_by_name[name] = colour
             self.colours_by_code[code] = colour
 

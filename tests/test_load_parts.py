@@ -6,12 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
+from ldraw.errors import PartNotFoundError
 from ldraw.parts import (
     CatalogEntry,
     MinifigSection,
     PartCategory,
     Parts,
     PartsCatalog,
+    symbol_description,
 )
 
 
@@ -50,7 +52,8 @@ def test_part_category_module_names() -> None:
 
 # Generated module names are a frozen public contract: any change here breaks
 # existing `ldraw.library.parts.*` imports. Values match the historical output
-# of the inflect-based pluralizer this mapping replaced.
+# of the inflect-based pluralizer this mapping replaced; categories added
+# since (the official-list sync) extend the contract but never rename.
 EXPECTED_MODULE_NAMES = {
     PartCategory.ANIMAL: "animals",
     PartCategory.ANTENNA: "antennas",
@@ -60,24 +63,38 @@ EXPECTED_MODULE_NAMES = {
     PartCategory.BASEPLATE: "baseplates",
     PartCategory.BELVILLE: "belvilles",
     PartCategory.BOAT: "boats",
+    PartCategory.BRACKET: "brackets",
     PartCategory.BRICK: "bricks",
     PartCategory.CANVAS: "canvases",
     PartCategory.CAR: "car",
+    PartCategory.CLIKITS: "clikits",
+    PartCategory.COCKPIT: "cockpits",
     PartCategory.CONE: "cones",
     PartCategory.CONSTRACTION: "constractions",
+    PartCategory.CONSTRACTION_ACCESSORY: "constraction_accessory",
     PartCategory.CONTAINER: "containers",
+    PartCategory.CONVEYOR: "conveyors",
     PartCategory.CRANE: "cranes",
     PartCategory.CYLINDER: "cylinders",
     PartCategory.DISH: "dishes",
     PartCategory.DOOR: "doors",
+    PartCategory.DUPLO: "duplo",
     PartCategory.ELECTRIC: "electrics",
+    PartCategory.EXHAUST: "exhausts",
     PartCategory.FENCE: "fences",
     PartCategory.FIGURE: "figures",
     PartCategory.FIGURE_ACCESSORY: "figure_accessory",
+    PartCategory.FLAG: "flags",
+    PartCategory.FORKLIFT: "forklifts",
     PartCategory.FREESTYLE: "freestyles",
+    PartCategory.GARAGE: "garages",
+    PartCategory.GLASS: "glass",
+    PartCategory.GRAB: "grabs",
     PartCategory.HINGE: "hinges",
     PartCategory.HOMEMAKER: "homemakers",
     PartCategory.HOSE: "hoses",
+    PartCategory.LADDER: "ladders",
+    PartCategory.LEVER: "levers",
     PartCategory.MAGNET: "magnets",
     PartCategory.MINIFIG: "minifigs",
     PartCategory.MINIFIG_ACCESSORY: "minifig_accessory",
@@ -85,11 +102,17 @@ EXPECTED_MODULE_NAMES = {
     PartCategory.MINIFIG_HEADWEAR: "minifig_headwear",
     PartCategory.MINIFIG_HIPWEAR: "minifig_hipwear",
     PartCategory.MINIFIG_NECKWEAR: "minifig_neckwear",
+    PartCategory.MONORAIL: "monorail",
+    PartCategory.PANEL: "panels",
     PartCategory.PLANE: "planes",
     PartCategory.PLANT: "plants",
     PartCategory.PLATE: "plates",
+    PartCategory.PLATFORM: "platforms",
     PartCategory.PROPELLOR: "propellors",
+    PartCategory.RACK: "racks",
     PartCategory.ROADSIGN: "roadsigns",
+    PartCategory.ROCK: "rocks",
+    PartCategory.SCALA: "scala",
     PartCategory.SCREW: "screws",
     PartCategory.SHEET_CARDBOARD: "sheet_cardboard",
     PartCategory.SHEET_FABRIC: "sheet_fabric",
@@ -98,19 +121,26 @@ EXPECTED_MODULE_NAMES = {
     PartCategory.SPHERE: "spheres",
     PartCategory.STAIRCASE: "staircases",
     PartCategory.STICKER: "stickers",
+    PartCategory.STRING: "string",
     PartCategory.SUPPORT: "supports",
+    PartCategory.TAIL: "tails",
     PartCategory.TAP: "taps",
     PartCategory.TECHNIC: "technic",
     PartCategory.TILE: "tiles",
+    PartCategory.TIPPER: "tippers",
+    PartCategory.TRACTOR: "tractors",
+    PartCategory.TRAILER: "trailers",
     PartCategory.TRAIN: "train",
     PartCategory.TURNTABLE: "turntables",
     PartCategory.TYRE: "tyres",
     PartCategory.VEHICLE: "vehicles",
+    PartCategory.WEDGE: "wedges",
     PartCategory.WHEEL: "wheels",
     PartCategory.WINCH: "winches",
     PartCategory.WINDOW: "windows",
     PartCategory.WINDSCREEN: "windscreens",
     PartCategory.WING: "wings",
+    PartCategory.ZNAP: "znap",
     PartCategory.OTHER: "others",
 }
 
@@ -140,9 +170,17 @@ def test_module_sections_cover_categories_and_minifig_sections() -> None:
     catalog.add(
         CatalogEntry(
             code="3901",
-            description="Hair Male",
+            description="Minifig Hair Male",
             category=PartCategory.OTHER,
             minifig_section=MinifigSection.HATS,
+        ),
+    )
+    catalog.add(
+        CatalogEntry(
+            code="973",
+            description="Minifig Torso",
+            category=PartCategory.MINIFIG,
+            minifig_section=MinifigSection.TORSOS,
         ),
     )
 
@@ -150,7 +188,10 @@ def test_module_sections_cover_categories_and_minifig_sections() -> None:
 
     assert sections[("bricks",)] == {"Brick  2 x  4": "3001"}
     assert sections[("minifig_accessory",)] == {"Shield Triangular": "3846"}
+    # Symbol names strip the Minifig prefix in every module they appear in.
     assert sections[("minifig", "hats")] == {"Hair Male": "3901"}
+    assert sections[("minifig", "torsos")] == {"Torso": "973"}
+    assert sections[("minifigs",)] == {"Torso": "973"}
     assert ("other",) not in sections
 
 
@@ -161,7 +202,7 @@ def test_unknown_category_warns_and_falls_back_to_other(
     ldraw_dir = tmp_path / "ldraw"
     parts_dir = ldraw_dir / "parts"
     parts_dir.mkdir(parents=True)
-    (parts_dir / "9999.dat").write_text("0 Weird Part\n0 !CATEGORY Duplo\n")
+    (parts_dir / "9999.dat").write_text("0 Weird Part\n0 !CATEGORY Playmobil\n")
     (ldraw_dir / "parts.lst").write_text("9999.dat  Weird Part\n")
 
     with caplog.at_level(logging.WARNING, logger="ldraw.parts"):
@@ -170,7 +211,30 @@ def test_unknown_category_warns_and_falls_back_to_other(
     entry = parts.get_entry_by_code("9999")
     assert entry is not None
     assert entry.category == PartCategory.OTHER
-    assert "unknown LDraw category 'Duplo'" in caplog.text
+    assert "unknown LDraw category 'Playmobil'" in caplog.text
+
+
+def test_official_category_labels_resolve() -> None:
+    assert PartCategory.from_label("Panel") == PartCategory.PANEL
+    assert PartCategory.from_label("Duplo") == PartCategory.DUPLO
+    assert PartCategory.from_label("Constraction Accessory") == (
+        PartCategory.CONSTRACTION_ACCESSORY
+    )
+
+
+def test_description_category_word_resolves_new_categories(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "2409.dat").write_text("0 Panel 10 x 10 x 12 Corner\n")
+    (ldraw_dir / "parts.lst").write_text("2409.dat  Panel 10 x 10 x 12 Corner\n")
+
+    parts = Parts(ldraw_dir / "parts.lst")
+
+    entry = parts.get_entry_by_code("2409")
+    assert entry is not None
+    assert entry.category == PartCategory.PANEL
+    assert ("panels",) in parts.catalog.module_sections()
 
 
 def test_load_primitives() -> None:
@@ -215,3 +279,89 @@ def test_parts_get_memoizes_by_stat(tmp_path: Path) -> None:
 def test_parts_get_missing_file_raises() -> None:
     with pytest.raises(FileNotFoundError):
         Parts.get("does/not/exist/parts.lst")
+
+
+def test_symbol_description_strips_minifig_prefix() -> None:
+    assert symbol_description("Minifig Torso") == "Torso"
+    assert symbol_description("Minifig (Complete)") == "Complete"
+    assert symbol_description("Brick  2 x  4") == "Brick  2 x  4"
+
+
+def test_minifig_descriptions_are_kept_as_written(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "973.dat").write_text("0 Minifig Torso\n")
+    (ldraw_dir / "parts.lst").write_text("973.dat  Minifig Torso\n")
+
+    parts = Parts(ldraw_dir / "parts.lst")
+
+    assert parts.by_code["973"] == "Minifig Torso"
+    assert parts.by_name["Minifig Torso"] == "973"
+    entry = parts.get_entry_by_code("973")
+    assert entry is not None
+    assert entry.description == "Minifig Torso"
+    assert entry.minifig_section == MinifigSection.TORSOS
+    # Generated symbols still strip the prefix.
+    assert parts.catalog.module_sections()[("minifig", "torsos")] == {"Torso": "973"}
+
+
+def test_description_for_tolerates_casing_differences(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "123abc.dat").write_text("0 Test Part\n")
+    (ldraw_dir / "parts.lst").write_text("123abc.dat  Test Part\n")
+
+    parts = Parts(ldraw_dir / "parts.lst")
+
+    assert parts.description_for("123abc") == "Test Part"
+    assert parts.description_for("123ABC") == "Test Part"  # Piece.part casing
+    assert parts.description_for("unknown") is None
+
+
+def test_part_raises_for_unknown_description_code_or_file() -> None:
+    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+
+    with pytest.raises(PartNotFoundError):
+        parts.part(description="No Such Part")
+    with pytest.raises(PartNotFoundError):
+        parts.part(code="99999")
+    with pytest.raises(PartNotFoundError):
+        parts.part(code="nosuchdir/3001")
+    with pytest.raises(ValueError, match="needs a description or a code"):
+        parts.part()
+
+
+def test_find_part_returns_none_instead_of_raising() -> None:
+    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+
+    assert parts.find_part(description="No Such Part") is None
+    assert parts.find_part(code="99999") is None
+    found = parts.find_part(code="3001")
+    assert found is not None
+    assert parts.find_part(description="Brick  2 x  4") is not None
+
+
+def test_malformed_ldconfig_colour_is_skipped(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick\n")
+    (ldraw_dir / "parts.lst").write_text("3001.dat  Brick\n")
+    (ldraw_dir / "LDConfig.ldr").write_text(
+        "0 !COLOUR Bad_Colour   CODE 998   VALUE #NOTHEX\n"
+        "0 !COLOUR Good_Colour   CODE 999   VALUE #05131d\n",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="ldraw.parts"):
+        parts = Parts(ldraw_dir / "parts.lst")
+
+    assert 998 not in parts.colours_by_code
+    assert "Bad_Colour" in caplog.text
+    # Well-formed values are canonicalized to #RRGGBB uppercase.
+    assert parts.colours_by_code[999].rgb == "#05131D"
+    assert parts.colours[999] == "#05131D"

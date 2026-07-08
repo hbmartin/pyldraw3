@@ -66,10 +66,7 @@ class ValidationIssue:
 
 
 def _unknown_part(piece: Piece, parts: Parts) -> bool:
-    try:
-        return parts.part(code=piece.part) is None
-    except PartError:
-        return True
+    return parts.find_part(code=piece.part) is None
 
 
 def _colour_issue(

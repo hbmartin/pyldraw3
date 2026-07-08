@@ -128,7 +128,7 @@ def test_load_catalog_unknown_category_returns_none(tmp_path, slow_catalog) -> N
     md5 = parts_lst_md5(PARTS_LST)
     save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
     with sqlite3.connect(db_path) as connection:
-        connection.execute("UPDATE parts SET category = 'duplo'")
+        connection.execute("UPDATE parts SET category = 'not-a-category'")
 
     assert load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT) is None
 
