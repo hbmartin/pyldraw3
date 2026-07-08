@@ -161,6 +161,7 @@ class Part:
         self.path = Path(path)
         self._category: str | None = None
         self._description: str | None = None
+        self._keywords: tuple[str, ...] | None = None
 
     @property
     def lines(self) -> Iterator[str]:
@@ -200,3 +201,18 @@ class Part:
                     break
 
         return self._category
+
+    @property
+    def keywords(self) -> tuple[str, ...]:
+        """Get the keywords of the part from KEYWORDS meta commands."""
+        if self._keywords is None:
+            keywords: list[str] = []
+            for obj in self.objects:
+                if not isinstance(obj, Comment | MetaCommand):
+                    break
+                if isinstance(obj, MetaCommand) and obj.type == "KEYWORDS":
+                    for keyword in obj.text.split(","):
+                        if (stripped := keyword.strip()) and stripped not in keywords:
+                            keywords.append(stripped)
+            self._keywords = tuple(keywords)
+        return self._keywords

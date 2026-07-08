@@ -207,6 +207,7 @@ class CatalogEntry:
     category: PartCategory
     part: Part | None = None
     minifig_section: MinifigSection | None = None
+    keywords: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -458,6 +459,7 @@ class Parts:
                     category=category,
                     part=part,
                     minifig_section=self._minifig_sections_by_code.get(code),
+                    keywords=part.keywords,
                 ),
             )
 

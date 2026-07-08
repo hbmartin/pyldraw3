@@ -28,7 +28,7 @@ from ldraw.parts import (
 
 logger = logging.getLogger(__name__)
 
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 _CREATE_META = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 _CREATE_PARTS = """
@@ -37,9 +37,12 @@ CREATE TABLE parts (
     description     TEXT NOT NULL,
     category        TEXT NOT NULL,
     minifig_section TEXT,
-    path            TEXT
+    path            TEXT,
+    keywords        TEXT NOT NULL DEFAULT ''
 )
 """
+
+_KEYWORDS_SEPARATOR = "\t"
 
 
 def catalog_db_path(generated_path: str | Path) -> Path:
@@ -69,10 +72,10 @@ def _loaded_part(stored: str | None, library_root: Path) -> Part | None:
 
 
 def _entry_from_row(
-    row: tuple[str, str, str, str | None, str | None],
+    row: tuple[str, str, str, str | None, str | None, str],
     library_root: Path,
 ) -> CatalogEntry:
-    code, description, category, minifig_section, stored = row
+    code, description, category, minifig_section, stored, keywords = row
     return CatalogEntry(
         code=code,
         description=description,
@@ -81,13 +84,14 @@ def _entry_from_row(
         minifig_section=(
             MinifigSection(minifig_section) if minifig_section is not None else None
         ),
+        keywords=tuple(keywords.split(_KEYWORDS_SEPARATOR)) if keywords else (),
     )
 
 
 def _read_index_rows(
     db_path: Path,
     md5: str,
-) -> list[tuple[str, str, str, str | None, str | None]] | None:
+) -> list[tuple[str, str, str, str | None, str | None, str]] | None:
     """Read all part rows from a fresh index, or None when it is unusable."""
     try:
         connection = sqlite3.connect(db_path)
@@ -103,7 +107,7 @@ def _read_index_rows(
         if stored_md5 is None or stored_md5[0] != md5:
             return None
         return connection.execute(
-            "SELECT code, description, category, minifig_section, path"
+            "SELECT code, description, category, minifig_section, path, keywords"
             " FROM parts ORDER BY rowid",
         ).fetchall()
     except sqlite3.Error:
@@ -165,7 +169,7 @@ def save_catalog(
             )
             connection.executemany(
                 "INSERT INTO parts (code, description, category, minifig_section,"
-                " path) VALUES (?, ?, ?, ?, ?)",
+                " path, keywords) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     (
                         entry.code,
@@ -177,6 +181,7 @@ def save_catalog(
                             else None
                         ),
                         _stored_path(entry.part, library_root),
+                        _KEYWORDS_SEPARATOR.join(entry.keywords),
                     )
                     for entry in catalog.by_code.values()
                 ),
