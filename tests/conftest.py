@@ -1,6 +1,19 @@
 """Pytest configuration and fixtures."""
 
+import os
+
 import pytest
+from hypothesis import settings
+
+settings.register_profile(
+    "ci",
+    database=None,
+    derandomize=True,
+    deadline=None,
+    max_examples=100,
+)
+settings.register_profile("dev", database=None, deadline=None)
+settings.load_profile("ci" if os.environ.get("CI") else "dev")
 
 
 def pytest_addoption(parser) -> None:

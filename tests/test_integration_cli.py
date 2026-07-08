@@ -36,6 +36,20 @@ def test_cli_generate_command():
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("command", ["parts", "validate", "stubs"])
+def test_cli_new_command_help(command):
+    """Test help for the parts, validate, and stubs commands."""
+    result = subprocess.run(
+        ["uv", "run", "ldraw", command, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"{command} help failed: {result.stderr}"
+    assert command in result.stdout.lower()
+
+
+@pytest.mark.integration
 def test_cli_config_command():
     """Test CLI config command."""
     result = subprocess.run(

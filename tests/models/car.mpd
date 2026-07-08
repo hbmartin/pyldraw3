@@ -1,0 +1,16 @@
+0 FILE main.ldr
+0 Car
+0 Name: main.ldr
+0 Author: pyldraw3 tests
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 CAR BODY.LDR
+1 4 0 -24 0 1 0 0 0 1 0 0 0 1 wheels.ldr
+1 14 0 -48 0 1 0 0 0 1 0 0 0 1 3001.dat
+0 NOFILE
+0 FILE car body.ldr
+0 Car Body Submodel
+1 4 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat
+0 NOFILE
+0 ignored between sections
+0 FILE wheels.ldr
+0 Wheels Submodel
+1 0 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat

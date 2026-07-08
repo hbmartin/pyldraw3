@@ -116,3 +116,29 @@ def test_load_primitives() -> None:
 def test_cantreadpartslst(mocked) -> None:
     with pytest.raises(OSError):
         Parts("tests/test_ldraw/ldraw/parts.lst")
+
+
+def test_parts_get_memoizes_by_stat(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick 2 x 4\n")
+    parts_lst = ldraw_dir / "parts.lst"
+    parts_lst.write_text("3001.dat  Brick 2 x 4\n")
+    Parts.clear_cache()
+
+    first = Parts.get(parts_lst)
+    assert Parts.get(parts_lst) is first
+
+    # A content change (new mtime/size) must invalidate the cached instance.
+    (parts_dir / "3002.dat").write_text("0 Brick 2 x 3\n")
+    parts_lst.write_text("3001.dat  Brick 2 x 4\n3002.dat  Brick 2 x 3\n")
+    assert Parts.get(parts_lst) is not first
+
+    Parts.clear_cache()
+    assert Parts.get(parts_lst) is not first
+
+
+def test_parts_get_missing_file_raises() -> None:
+    with pytest.raises(FileNotFoundError):
+        Parts.get("does/not/exist/parts.lst")

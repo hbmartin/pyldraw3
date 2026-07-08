@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
+MAIN_COLOUR_CODE = 16
+
+
 def _as_colour(colour: Colour | int) -> Colour:
     if isinstance(colour, Colour):
         return colour
@@ -28,22 +31,50 @@ class Piece:
     matrix: Matrix
     part: str
     group: Group | None = None
+    suffix: str = ".DAT"
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - positional back-compat plus keyword-only suffix
         self,
         colour: Colour | int,
         position: Vector,
         matrix: Matrix,
         part: str,
         group: Group | None = None,
+        *,
+        suffix: str = ".DAT",
     ) -> None:
         self.colour = _as_colour(colour)
         self.position = position
         self.matrix = matrix
         self.part = part.upper()
+        self.suffix = suffix
         self.group = None
         if group is not None:
             group.add_piece(self)
+
+    @property
+    def reference(self) -> str:
+        """The subfile reference this piece serializes to, e.g. ``3001.DAT``."""
+        return f"{self.part}{self.suffix}"
+
+    @classmethod
+    def place(
+        cls,
+        part: str,
+        *,
+        colour: Colour | int = MAIN_COLOUR_CODE,
+        position: Vector | None = None,
+        matrix: Matrix | None = None,
+        group: Group | None = None,
+    ) -> Self:
+        """Create a piece keyword-first, defaulting to the origin and identity."""
+        return cls(
+            colour=colour,
+            position=position if position is not None else Vector(0, 0, 0),
+            matrix=matrix if matrix is not None else Identity(),
+            part=part,
+            group=group,
+        )
 
     def _transformed(self) -> tuple[Vector, Matrix]:
         if self.group is None:
@@ -62,7 +93,7 @@ class Piece:
             *matrix.flatten(),
         )
         values = " ".join(format_ldraw_number(value) for value in fields)
-        return f"1 {format_ldraw_colour(self.colour)} {values} {self.part}.DAT"
+        return f"1 {format_ldraw_colour(self.colour)} {values} {self.reference}"
 
     def __str__(self) -> str:
         return self.to_ldraw()
@@ -70,7 +101,7 @@ class Piece:
     def __repr__(self) -> str:
         return (
             f"Piece(colour={self.colour!r}, position={self.position!r}, "
-            f"matrix={self.matrix!r}, part={self.part!r})"
+            f"matrix={self.matrix!r}, part={self.part!r}, suffix={self.suffix!r})"
         )
 
 
@@ -122,5 +153,6 @@ class Group:
                 matrix=piece.matrix.copy(),
                 part=piece.part,
                 group=duplicate,
+                suffix=piece.suffix,
             )
         return duplicate

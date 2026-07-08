@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import logging
 import re
 from collections import defaultdict
@@ -216,7 +215,7 @@ class PartsCatalog:
 
 
 @lru_cache(maxsize=8)
-def _parts_for_hash(parts_lst: str, _md5_parts_lst: str) -> Parts:
+def _parts_for_stat(parts_lst: str, _stat_key: tuple[int, int]) -> Parts:
     return Parts(parts_lst)
 
 
@@ -227,15 +226,18 @@ class Parts:
 
     @classmethod
     def get(cls, parts_lst: str | Path) -> Parts:
-        """Get a Parts instance using memoization based on file hash."""
+        """Get a memoized Parts instance, keyed by path, mtime, and size."""
         path = Path(parts_lst)
-        md5_parts_lst = hashlib.md5(path.read_bytes()).hexdigest()
-        return _parts_for_hash(str(path), md5_parts_lst)
+        stat_result = path.stat()
+        return _parts_for_stat(
+            str(path),
+            (stat_result.st_mtime_ns, stat_result.st_size),
+        )
 
     @classmethod
     def clear_cache(cls) -> None:
         """Clear the memoized Parts instances."""
-        _parts_for_hash.cache_clear()
+        _parts_for_stat.cache_clear()
 
     def __init__(self, parts_lst: str | Path) -> None:
         logger.debug("reading parts %s", parts_lst)

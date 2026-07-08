@@ -28,7 +28,10 @@ def generate(config: Config, *, force: bool = False) -> None:
     hash_path = generated_library_path / "__hash__"
     library_path = Path(config.ldraw_library_path)
     parts_lst = library_path / "ldraw" / "parts.lst"
-    md5_parts_lst = hashlib.md5(parts_lst.read_bytes()).hexdigest()
+    md5_parts_lst = hashlib.md5(
+        parts_lst.read_bytes(),
+        usedforsecurity=False,
+    ).hexdigest()
 
     if hash_path.exists():
         md5 = hash_path.read_text()
@@ -46,6 +49,8 @@ def generate(config: Config, *, force: bool = False) -> None:
 
     library__init__ = generated_library_path / "__init__.py"
     library__init__.write_text(LIBRARY_INIT)
+    (generated_library_path / "__init__.pyi").write_text(LIBRARY_INIT)
+    (generated_library_path / "py.typed").write_text("")
 
     shutil.copy(
         _get_resource("ldraw-license.txt"),
