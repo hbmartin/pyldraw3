@@ -16,15 +16,18 @@ import requests
 import yaml
 
 from ldraw import generate as do_generate
+from ldraw.bom import BomRow, rows_to_csv, rows_to_json
+from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
-from ldraw.errors import LibraryNotGeneratedError
+from ldraw.errors import LibraryNotGeneratedError, PartError
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.model import read_model
 from ldraw.parts import CatalogEntry, PartCategory, Parts
 from ldraw.stubs import write_stub_package
 from ldraw.utils import camel, clean
-from ldraw.validation import iter_ldr_issues
+from ldraw.validation import Severity, iter_ldr_issues
 
 PACKAGE_NAME = "pyldraw3"
 DEFAULT_SEARCH_LIMIT = 25
@@ -106,6 +109,34 @@ def build_parser() -> ArgumentParser:
         type=Path,
         help="Path to the file to validate.",
     )
+    validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as errors.",
+    )
+
+    bom_parser = subparsers.add_parser(
+        "bom",
+        help="Print a bill of materials for an LDraw model file.",
+    )
+    bom_parser.add_argument(
+        "file",
+        type=Path,
+        help="Path to the .ldr or .mpd file.",
+    )
+    bom_parser.add_argument(
+        "--format",
+        choices=("table", "csv", "json"),
+        default="table",
+        help="Output format (default: table).",
+    )
+    bom_parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Write output to a file instead of stdout.",
+    )
 
     stubs_parser = subparsers.add_parser(
         "stubs",
@@ -179,17 +210,24 @@ def _parts_lst_path() -> Path:
     return Path(Config.load().ldraw_library_path) / "ldraw" / "parts.lst"
 
 
-def _try_load_parts() -> Parts | None:
+def _try_load_parts(*, build_index: bool = False) -> Parts | None:
     """Load the configured parts catalog, or None when missing."""
     parts_lst = _parts_lst_path()
     if not parts_lst.exists():
         return None
-    return Parts.get(parts_lst)
+    generated_path = Config.load().generated_path
+    if build_index and not catalog_db_path(generated_path).is_file():
+        print("Building parts index (first run may take a while)...", file=sys.stderr)
+    return load_parts(parts_lst, generated_path, build_index=build_index)
 
 
 def _load_parts() -> Parts | None:
-    """Load the configured parts catalog, or None with a hint when missing."""
-    if (parts := _try_load_parts()) is None:
+    """Load the configured parts catalog, or None with a hint when missing.
+
+    Catalog-querying commands pass through here, so a missing or stale
+    index is built and persisted as a side effect.
+    """
+    if (parts := _try_load_parts(build_index=True)) is None:
         print(
             f"parts.lst not found at {_parts_lst_path()}; run `ldraw download` first.",
         )
@@ -251,22 +289,76 @@ def parts_info_command(*, code: str) -> int:
     return 0
 
 
-def validate_command(*, file: Path) -> int:
+def validate_command(*, file: Path, strict: bool = False) -> int:
     """Validate an LDraw file, reporting issues with line numbers."""
     if not file.is_file():
         print(f"{file}: not found")
         return 1
     parts = _try_load_parts()
     if parts is None:
-        print("note: no parts library found; skipping unknown-part checks")
+        print("note: no parts library found; skipping unknown-part and colour checks")
     issues = list(iter_ldr_issues(file, parts))
     for issue in issues:
-        print(f"{file}:{issue.line_number}: {issue.message}")
-    if issues:
-        plural = "s" if len(issues) != 1 else ""
-        print(f"{file}: {len(issues)} issue{plural} found")
+        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+    if not issues:
+        print(f"{file}: OK")
+        return 0
+    errors = sum(1 for issue in issues if issue.severity is Severity.ERROR)
+    warnings = len(issues) - errors
+    print(f"{file}: {errors} error(s), {warnings} warning(s)")
+    return 1 if errors or (warnings and strict) else 0
+
+
+def _format_bom_table(rows: list[BomRow]) -> str:
+    """Format BOM rows as an aligned text table."""
+    if not rows:
+        return "no pieces"
+    lines = [f"{'qty':>5}  {'part':<12} {'colour':<20} description"]
+    for row in rows:
+        colour = row.colour_name or (
+            str(row.colour_code) if row.colour_code is not None else ""
+        )
+        line = f"{row.quantity:>5}  {row.part:<12} {colour:<20} {row.description or ''}"
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
+def _format_bom(rows: list[BomRow], *, output_format: str) -> str:
+    """Format BOM rows in the requested output format."""
+    match output_format:
+        case "csv":
+            return rows_to_csv(rows)
+        case "json":
+            return rows_to_json(rows)
+        case _:
+            return _format_bom_table(rows)
+
+
+def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
+    """Print or write a bill of materials for an LDraw model file."""
+    if not file.is_file():
+        print(f"{file}: not found")
         return 1
-    print(f"{file}: OK")
+    parts = _try_load_parts()
+    if parts is None:
+        print(
+            "note: no parts library found; descriptions and colour names omitted",
+            file=sys.stderr,
+        )
+    try:
+        model = read_model(file)
+        rows = model.bill_of_materials(parts=parts)
+    except PartError as exc:
+        print(f"{file}: {exc.message}")
+        return 1
+    text = _format_bom(rows, output_format=output_format)
+    if not text.endswith("\n"):
+        text = f"{text}\n"
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        print(f"Wrote {len(rows)} rows to {out}")
+    else:
+        print(text, end="")
     return 0
 
 
@@ -314,7 +406,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911 - one return pe
         case "parts":
             return parts_info_command(code=args.code)
         case "validate":
-            return validate_command(file=args.file)
+            return validate_command(file=args.file, strict=args.strict)
+        case "bom":
+            return bom_command(
+                file=args.file,
+                output_format=args.format,
+                out=args.output,
+            )
         case "stubs":
             return stubs_command(out=args.out)
         case "config":

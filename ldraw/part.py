@@ -22,6 +22,7 @@ from ldraw.lines import (
     Triangle,
 )
 from ldraw.pieces import Piece
+from ldraw.utils import split_reference
 
 ParsedObject = (
     Comment | MetaCommand | Piece | Line | Triangle | Quadrilateral | OptionalLine
@@ -69,20 +70,12 @@ def _floats(line_type: str, values: list[str], line: list[str]) -> list[float]:
     return result
 
 
-def _split_reference(ref: str) -> tuple[str, str]:
-    """Split a subfile reference into an uppercased stem and extension."""
-    stem, dot, ext = ref.rpartition(".")
-    if not dot:
-        return ref.upper(), ""
-    return stem.upper(), f".{ext.upper()}"
-
-
 def _sub_file(pieces: list[str]) -> Piece:
     if len(pieces) < 14:
         raise InvalidLineDataError(line_type="subfile", size=14, line=pieces)
     values = _floats("subfile", pieces[1:13], pieces)
     rows = [values[3:6], values[6:9], values[9:12]]
-    part, suffix = _split_reference(" ".join(pieces[13:]))
+    part, suffix = split_reference(" ".join(pieces[13:]))
     return Piece(
         _colour(pieces),
         Vector(*values[:3]),

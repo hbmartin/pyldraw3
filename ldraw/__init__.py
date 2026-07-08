@@ -20,12 +20,44 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sys
 
+from ldraw.bom import BomRow, bill_of_materials
+from ldraw.colour import Colour
 from ldraw.downloads import download
+from ldraw.figure import Person
 from ldraw.generation import generate
+from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
 from ldraw.model import Model, parse_model, read_model
+from ldraw.parts import CatalogEntry, MinifigSection, PartCategory, Parts
+from ldraw.pieces import Group, Piece
+from ldraw.validation import Severity, ValidationIssue, iter_ldr_issues
 
-__all__ = ["Model", "download", "generate", "parse_model", "read_model"]
+__all__ = [
+    "BomRow",
+    "CatalogEntry",
+    "Colour",
+    "Group",
+    "Identity",
+    "Matrix",
+    "MinifigSection",
+    "Model",
+    "PartCategory",
+    "Parts",
+    "Person",
+    "Piece",
+    "Severity",
+    "ValidationIssue",
+    "Vector",
+    "XAxis",
+    "YAxis",
+    "ZAxis",
+    "bill_of_materials",
+    "download",
+    "generate",
+    "iter_ldr_issues",
+    "parse_model",
+    "read_model",
+]
 
 # Modern import hook registration: use an instance, not the class
 library_importer_instance = LibraryImporter()

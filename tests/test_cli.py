@@ -1,5 +1,6 @@
 """Tests for the argparse-based ldraw CLI."""
 
+import json
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -347,10 +348,10 @@ def test_validate_reports_issues_with_line_numbers(
     assert main(["validate", str(model)]) == 1
 
     out = capsys.readouterr().out
-    assert f"{model}:2: Unknown command (9)" in out
-    assert f"{model}:3: Invalid numeric value 'x'" in out
-    assert f"{model}:4: unknown part 9999.DAT" in out
-    assert "3 issues found" in out
+    assert f"{model}:2: error: Unknown command (9)" in out
+    assert f"{model}:3: error: Invalid numeric value 'x'" in out
+    assert f"{model}:4: error: unknown part 9999.DAT" in out
+    assert "3 error(s), 0 warning(s)" in out
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
@@ -400,8 +401,55 @@ def test_validate_without_library_is_syntax_only(
     assert main(["validate", str(model)]) == 0
 
     out = capsys.readouterr().out
-    assert "skipping unknown-part checks" in out
+    assert "skipping unknown-part and colour checks" in out
     assert "OK" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_warnings_pass_without_strict(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 2 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model)]) == 0
+
+    out = capsys.readouterr().out
+    assert "warning: transformation matrix is not orthonormal" in out
+    assert "0 error(s), 1 warning(s)" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_strict_fails_on_warnings(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("0 !FOOBAR meta\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model), "--strict"]) == 1
+
+    out = capsys.readouterr().out
+    assert "warning: unknown meta-command !FOOBAR" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_reports_unknown_colours(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 999 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model)]) == 1
+
+    out = capsys.readouterr().out
+    assert f"{model}:1: error: unknown colour code 999" in out
+    assert "1 error(s), 0 warning(s)" in out
 
 
 def test_parts_requires_subcommand() -> None:
@@ -430,6 +478,154 @@ def test_build_parser_validate() -> None:
     args = build_parser().parse_args(["validate", "model.ldr"])
 
     assert args.file == Path("model.ldr")
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_table_output(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "0 Model\n"
+        "1 189 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "1 189 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+    )
+
+    assert main(["bom", str(model)]) == 0
+
+    out = capsys.readouterr().out
+    assert "qty" in out
+    assert "3001" in out
+    assert "Reddish_Gold" in out
+    assert "Brick  2 x  4" in out
+    assert "    2  " in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_csv_stdout_is_machine_clean(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 189 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["bom", str(model), "--format", "csv"]) == 0
+
+    out = capsys.readouterr().out
+    assert out == (
+        "part,description,colour_code,colour_name,quantity\n"
+        "3001,Brick  2 x  4,189,Reddish_Gold,1\n"
+    )
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_json_output(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 189 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["bom", str(model), "--format", "json"]) == 0
+
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed == [
+        {
+            "part": "3001",
+            "description": "Brick  2 x  4",
+            "colour_code": 189,
+            "colour_name": "Reddish_Gold",
+            "quantity": 1,
+        },
+    ]
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_writes_output_file(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 189 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+    out_file = tmp_path / "bom.csv"
+
+    assert main(["bom", str(model), "--format", "csv", "-o", str(out_file)]) == 0
+
+    assert "Wrote 1 rows to" in capsys.readouterr().out
+    assert out_file.read_text().startswith("part,description,")
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_empty_model_prints_no_pieces(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("0 Just a comment\n")
+
+    assert main(["bom", str(model)]) == 0
+
+    assert "no pieces" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_missing_file_returns_one(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["bom", "does/not/exist.ldr"]) == 1
+
+    assert "not found" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_malformed_file_returns_one(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("9 16 0 0 0\n")
+
+    assert main(["bom", str(model)]) == 1
+
+    assert "Unknown command (9)" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.Config.load")
+def test_bom_without_library_notes_on_stderr(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_load_mock.return_value = Config(
+        ldraw_library_path=str(tmp_path),
+        generated_path="/gen",
+    )
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["bom", str(model), "--format", "csv"]) == 0
+
+    captured = capsys.readouterr()
+    assert "no parts library found" in captured.err
+    assert captured.out == (
+        "part,description,colour_code,colour_name,quantity\n3001,,4,,1\n"
+    )
+
+
+def test_build_parser_bom_defaults() -> None:
+    args = build_parser().parse_args(["bom", "model.ldr"])
+
+    assert args.file == Path("model.ldr")
+    assert args.format == "table"
+    assert args.output is None
 
 
 def test_build_parser_stubs_defaults() -> None:

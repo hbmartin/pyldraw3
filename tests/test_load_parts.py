@@ -48,6 +48,79 @@ def test_part_category_module_names() -> None:
     assert PartCategory.SHEET_PLASTIC.module_name == "sheet_plastic"
 
 
+# Generated module names are a frozen public contract: any change here breaks
+# existing `ldraw.library.parts.*` imports. Values match the historical output
+# of the inflect-based pluralizer this mapping replaced.
+EXPECTED_MODULE_NAMES = {
+    PartCategory.ANIMAL: "animals",
+    PartCategory.ANTENNA: "antennas",
+    PartCategory.ARCH: "arches",
+    PartCategory.ARM: "arms",
+    PartCategory.BAR: "bars",
+    PartCategory.BASEPLATE: "baseplates",
+    PartCategory.BELVILLE: "belvilles",
+    PartCategory.BOAT: "boats",
+    PartCategory.BRICK: "bricks",
+    PartCategory.CANVAS: "canvases",
+    PartCategory.CAR: "car",
+    PartCategory.CONE: "cones",
+    PartCategory.CONSTRACTION: "constractions",
+    PartCategory.CONTAINER: "containers",
+    PartCategory.CRANE: "cranes",
+    PartCategory.CYLINDER: "cylinders",
+    PartCategory.DISH: "dishes",
+    PartCategory.DOOR: "doors",
+    PartCategory.ELECTRIC: "electrics",
+    PartCategory.FENCE: "fences",
+    PartCategory.FIGURE: "figures",
+    PartCategory.FIGURE_ACCESSORY: "figure_accessory",
+    PartCategory.FREESTYLE: "freestyles",
+    PartCategory.HINGE: "hinges",
+    PartCategory.HOMEMAKER: "homemakers",
+    PartCategory.HOSE: "hoses",
+    PartCategory.MAGNET: "magnets",
+    PartCategory.MINIFIG: "minifigs",
+    PartCategory.MINIFIG_ACCESSORY: "minifig_accessory",
+    PartCategory.MINIFIG_FOOTWEAR: "minifig_footwear",
+    PartCategory.MINIFIG_HEADWEAR: "minifig_headwear",
+    PartCategory.MINIFIG_HIPWEAR: "minifig_hipwear",
+    PartCategory.MINIFIG_NECKWEAR: "minifig_neckwear",
+    PartCategory.PLANE: "planes",
+    PartCategory.PLANT: "plants",
+    PartCategory.PLATE: "plates",
+    PartCategory.PROPELLOR: "propellors",
+    PartCategory.ROADSIGN: "roadsigns",
+    PartCategory.SCREW: "screws",
+    PartCategory.SHEET_CARDBOARD: "sheet_cardboard",
+    PartCategory.SHEET_FABRIC: "sheet_fabric",
+    PartCategory.SHEET_PLASTIC: "sheet_plastic",
+    PartCategory.SLOPE: "slopes",
+    PartCategory.SPHERE: "spheres",
+    PartCategory.STAIRCASE: "staircases",
+    PartCategory.STICKER: "stickers",
+    PartCategory.SUPPORT: "supports",
+    PartCategory.TAP: "taps",
+    PartCategory.TECHNIC: "technic",
+    PartCategory.TILE: "tiles",
+    PartCategory.TRAIN: "train",
+    PartCategory.TURNTABLE: "turntables",
+    PartCategory.TYRE: "tyres",
+    PartCategory.VEHICLE: "vehicles",
+    PartCategory.WHEEL: "wheels",
+    PartCategory.WINCH: "winches",
+    PartCategory.WINDOW: "windows",
+    PartCategory.WINDSCREEN: "windscreens",
+    PartCategory.WING: "wings",
+    PartCategory.OTHER: "others",
+}
+
+
+def test_module_names_are_frozen_for_every_category() -> None:
+    assert {
+        category: category.module_name for category in PartCategory
+    } == EXPECTED_MODULE_NAMES
+
+
 def test_module_sections_cover_categories_and_minifig_sections() -> None:
     catalog = PartsCatalog()
     catalog.add(

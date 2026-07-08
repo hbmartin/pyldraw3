@@ -6,3 +6,11 @@
 0 // LDraw Solid Colours
 0                              // LEGOID 189 - Reddish Gold
 0 !COLOUR Reddish_Gold                                          CODE 189   VALUE #AC8247   EDGE #333333                               PEARLESCENT
+0                              // Standard solid colours for validation tests
+0 !COLOUR Black                                                 CODE   0   VALUE #05131D   EDGE #595959
+0 !COLOUR Blue                                                  CODE   1   VALUE #0055BF   EDGE #333333
+0 !COLOUR Red                                                   CODE   4   VALUE #C91A09   EDGE #333333
+0 !COLOUR Yellow                                                CODE  14   VALUE #F2CD37   EDGE #333333
+0 !COLOUR White                                                 CODE  15   VALUE #FFFFFF   EDGE #333333
+0 !COLOUR Main_Colour                                           CODE  16   VALUE #FFFF80   EDGE #333333
+0 !COLOUR Edge_Colour                                           CODE  24   VALUE #7F7F7F   EDGE #333333

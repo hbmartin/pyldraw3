@@ -22,6 +22,14 @@ def normalize_ref(ref: str) -> str:
     return " ".join(ref.split()).casefold().replace("\\", "/")
 
 
+def split_reference(ref: str) -> tuple[str, str]:
+    """Split a subfile reference into an uppercased stem and extension."""
+    stem, dot, ext = ref.rpartition(".")
+    if not dot:
+        return ref.upper(), ""
+    return stem.upper(), f".{ext.upper()}"
+
+
 def ldraw_file_name(line: str) -> str | None:
     """Return the section name if the line is a ``0 FILE <name>`` command."""
     match line.split(maxsplit=2):

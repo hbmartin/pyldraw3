@@ -75,3 +75,20 @@ def test_mul_matrix_vector() -> None:
     v = Vector(42, 1, 0)
     v2 = m * v
     assert v2 == Vector(44, 173, 302)
+
+
+def test_is_singular() -> None:
+    assert Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 0]]).is_singular()
+    assert not Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).is_singular()
+    assert Matrix([[1e-9, 0, 0], [0, 1, 0], [0, 0, 1]]).is_singular()
+    assert not Matrix([[1e-9, 0, 0], [0, 1, 0], [0, 0, 1]]).is_singular(
+        tolerance=1e-12,
+    )
+
+
+def test_is_orthonormal() -> None:
+    identity = Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    assert identity.is_orthonormal()
+    assert identity.rotate(37, axis=YAxis).is_orthonormal()
+    assert not identity.scale(2, 1, 1).is_orthonormal()
+    assert identity.scale(1.0000001, 1, 1).is_orthonormal(tolerance=1e-3)

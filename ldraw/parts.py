@@ -11,8 +11,6 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
-import inflect
-
 from ldraw.colour import Colour
 from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
@@ -20,7 +18,6 @@ from ldraw.part import Part
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
-inflect_engine = inflect.engine()
 
 
 class PartCategory(StrEnum):
@@ -97,15 +94,78 @@ class PartCategory(StrEnum):
 
     @property
     def module_name(self) -> str:
-        """Return the generated module name for this category."""
-        if self in {PartCategory.CAR, PartCategory.TRAIN, PartCategory.TECHNIC}:
-            return self.value
-        if " " in self.value:
-            return self.value.replace(" ", "_")
-        return inflect_engine.plural(self.value)
+        """Return the generated module name for this category.
+
+        These names are a frozen public contract: renaming one would break
+        existing ``ldraw.library.parts.*`` imports.
+        """
+        return _MODULE_NAMES[self]
 
 
 _CATEGORY_BY_VALUE = {category.value: category for category in PartCategory}
+
+_MODULE_NAMES: dict[PartCategory, str] = {
+    PartCategory.ANIMAL: "animals",
+    PartCategory.ANTENNA: "antennas",
+    PartCategory.ARCH: "arches",
+    PartCategory.ARM: "arms",
+    PartCategory.BAR: "bars",
+    PartCategory.BASEPLATE: "baseplates",
+    PartCategory.BELVILLE: "belvilles",
+    PartCategory.BOAT: "boats",
+    PartCategory.BRICK: "bricks",
+    PartCategory.CANVAS: "canvases",
+    PartCategory.CAR: "car",
+    PartCategory.CONE: "cones",
+    PartCategory.CONSTRACTION: "constractions",
+    PartCategory.CONTAINER: "containers",
+    PartCategory.CRANE: "cranes",
+    PartCategory.CYLINDER: "cylinders",
+    PartCategory.DISH: "dishes",
+    PartCategory.DOOR: "doors",
+    PartCategory.ELECTRIC: "electrics",
+    PartCategory.FENCE: "fences",
+    PartCategory.FIGURE: "figures",
+    PartCategory.FIGURE_ACCESSORY: "figure_accessory",
+    PartCategory.FREESTYLE: "freestyles",
+    PartCategory.HINGE: "hinges",
+    PartCategory.HOMEMAKER: "homemakers",
+    PartCategory.HOSE: "hoses",
+    PartCategory.MAGNET: "magnets",
+    PartCategory.MINIFIG: "minifigs",
+    PartCategory.MINIFIG_ACCESSORY: "minifig_accessory",
+    PartCategory.MINIFIG_FOOTWEAR: "minifig_footwear",
+    PartCategory.MINIFIG_HEADWEAR: "minifig_headwear",
+    PartCategory.MINIFIG_HIPWEAR: "minifig_hipwear",
+    PartCategory.MINIFIG_NECKWEAR: "minifig_neckwear",
+    PartCategory.PLANE: "planes",
+    PartCategory.PLANT: "plants",
+    PartCategory.PLATE: "plates",
+    PartCategory.PROPELLOR: "propellors",
+    PartCategory.ROADSIGN: "roadsigns",
+    PartCategory.SCREW: "screws",
+    PartCategory.SHEET_CARDBOARD: "sheet_cardboard",
+    PartCategory.SHEET_FABRIC: "sheet_fabric",
+    PartCategory.SHEET_PLASTIC: "sheet_plastic",
+    PartCategory.SLOPE: "slopes",
+    PartCategory.SPHERE: "spheres",
+    PartCategory.STAIRCASE: "staircases",
+    PartCategory.STICKER: "stickers",
+    PartCategory.SUPPORT: "supports",
+    PartCategory.TAP: "taps",
+    PartCategory.TECHNIC: "technic",
+    PartCategory.TILE: "tiles",
+    PartCategory.TRAIN: "train",
+    PartCategory.TURNTABLE: "turntables",
+    PartCategory.TYRE: "tyres",
+    PartCategory.VEHICLE: "vehicles",
+    PartCategory.WHEEL: "wheels",
+    PartCategory.WINCH: "winches",
+    PartCategory.WINDOW: "windows",
+    PartCategory.WINDSCREEN: "windscreens",
+    PartCategory.WING: "wings",
+    PartCategory.OTHER: "others",
+}
 
 
 class MinifigSection(StrEnum):
@@ -271,10 +331,37 @@ class Parts:
         self.colours_by_name: dict[str, Colour] = {}
         self.colours_by_code: dict[int, Colour] = {}
 
-        self.catalog = PartsCatalog()
+        self._catalog = PartsCatalog()
+        self._categorized = False
         self._minifig_sections_by_code: dict[str, MinifigSection] = {}
 
         self.load()
+
+    @classmethod
+    def from_catalog(cls, parts_lst: str | Path, catalog: PartsCatalog) -> Parts:
+        """Construct a Parts that adopts a prebuilt catalog.
+
+        Skips the expensive per-part categorization pass.
+        """
+        parts = cls(parts_lst)
+        parts._catalog = catalog
+        parts._categorized = True
+        for entry in catalog.by_code.values():
+            parts.by_code_name[(entry.code, entry.description)] = entry.part
+            parts.by_category[entry.category.value][entry.description] = entry.code
+            parts.by_category[""][entry.description] = entry.code
+        return parts
+
+    @property
+    def catalog(self) -> PartsCatalog:
+        """The typed parts catalog, categorized on first access."""
+        self._ensure_categorized()
+        return self._catalog
+
+    def _ensure_categorized(self) -> None:
+        if not self._categorized:
+            self._categorize_parts()
+            self._categorized = True
 
     def get_entry_by_code(self, code: str) -> CatalogEntry | None:
         """Return a typed catalog entry by part code."""
@@ -308,10 +395,13 @@ class Parts:
         return PartCategory.from_label(potential)
 
     def load(self) -> None:
-        """Load parts from a path."""
+        """Load the parts list, colours, and primitives (all cheap passes).
+
+        The expensive categorization pass — opening every part file for its
+        ``!CATEGORY`` header — runs lazily on first catalog access.
+        """
         self._load_parts_list()
         self._scan_library_directories()
-        self._categorize_parts()
 
     def _load_parts_list(self) -> None:
         """Load parts from the parts.lst file."""
@@ -361,7 +451,7 @@ class Parts:
 
             self.by_category[category.value][description] = code
             self.by_category[""].update({description: code})
-            self.catalog.add(
+            self._catalog.add(
                 CatalogEntry(
                     code=code,
                     description=description,
