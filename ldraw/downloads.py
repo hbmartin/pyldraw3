@@ -121,21 +121,40 @@ def unpack_version(version_zip: Path, version: str) -> Path:
     return destination
 
 
+def _stream_download(
+    url: str,
+    retrieved: Path,
+    chunk_size: int,
+    *,
+    show_progress: bool,
+) -> Path:
+    """Stream ``url`` to ``retrieved`` through a ``.part`` file.
+
+    The body is written to a sibling ``.part`` file and renamed into place only
+    once it is fully received, so an interrupted download is never cached as a
+    complete file.
+    """
+    partial = retrieved.with_name(f"{retrieved.name}.part")
+    with requests.get(url, stream=True) as response:  # noqa: S113
+        response.raise_for_status()
+        with partial.open("wb") as file:
+            if not show_progress:
+                file.writelines(response.iter_content(chunk_size=chunk_size))
+            else:
+                total = int(response.headers.get("content-length", 0))
+                bar = Bar(f"Downloading {url} ...", max=total)
+                for data in response.iter_content(chunk_size=chunk_size):
+                    bar.next(file.write(data))
+                bar.finish()
+    partial.replace(retrieved)
+    return retrieved
+
+
 def _download(url: str, filename: str, chunk_size: int = 1_024) -> Path:
     retrieved = cache_ldraw / filename
     if retrieved.exists():
         return retrieved
-
-    # Stream to a .part file so an interrupted download is never cached.
-    partial = retrieved.with_name(f"{retrieved.name}.part")
-    with requests.get(url, stream=True) as response:  # noqa: S113
-        response.raise_for_status()
-
-        with partial.open("wb") as file:
-            file.writelines(response.iter_content(chunk_size=chunk_size))
-
-    partial.replace(retrieved)
-    return retrieved
+    return _stream_download(url, retrieved, chunk_size, show_progress=False)
 
 
 def _download_progress(url: str, filename: str, chunk_size: int = 1_024) -> Path:
@@ -143,22 +162,7 @@ def _download_progress(url: str, filename: str, chunk_size: int = 1_024) -> Path
     if retrieved.exists():
         print(f"File {retrieved} already exists")
         return retrieved
-
-    # Stream to a .part file so an interrupted download is never cached.
-    partial = retrieved.with_name(f"{retrieved.name}.part")
-    with requests.get(url, stream=True) as response:  # noqa: S113
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        bar = Bar(f"Downloading {url} ...", max=total)
-
-        with partial.open("wb") as file:
-            for data in response.iter_content(chunk_size=chunk_size):
-                size = file.write(data)
-                bar.next(size)
-
-        bar.finish()
-    partial.replace(retrieved)
-    return retrieved
+    return _stream_download(url, retrieved, chunk_size, show_progress=True)
 
 
 def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:

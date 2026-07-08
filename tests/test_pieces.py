@@ -102,6 +102,31 @@ def test_piece_rejects_colour_without_code_or_rgb() -> None:
         piece.to_ldraw()
 
 
+def test_piece_expands_shorthand_direct_colour() -> None:
+    piece = Piece(Colour(rgb="#0f0"), Vector(0, 0, 0), Identity(), Brick1X1)
+
+    assert piece.to_ldraw() == "1 0x200FF00 0 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+
+
+def test_piece_rejects_translucent_direct_colour() -> None:
+    piece = Piece(
+        Colour(rgb="#00ff00", alpha=128),
+        Vector(0, 0, 0),
+        Identity(),
+        Brick1X1,
+    )
+
+    with pytest.raises(ValueError, match="translucent direct colour"):
+        piece.to_ldraw()
+
+
+def test_piece_rejects_malformed_direct_colour() -> None:
+    piece = Piece(Colour(rgb="not-a-colour"), Vector(0, 0, 0), Identity(), Brick1X1)
+
+    with pytest.raises(ValueError, match="Invalid rgb value"):
+        piece.to_ldraw()
+
+
 @pytest.fixture
 def figure():
     return Person(Vector(0, 0, -10))
