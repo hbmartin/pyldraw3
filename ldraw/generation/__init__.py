@@ -49,7 +49,6 @@ def generate(config: Config, *, force: bool = False) -> None:
 
     library__init__ = generated_library_path / "__init__.py"
     library__init__.write_text(LIBRARY_INIT)
-    (generated_library_path / "__init__.pyi").write_text(LIBRARY_INIT)
     (generated_library_path / "py.typed").write_text("")
 
     shutil.copy(

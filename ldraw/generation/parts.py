@@ -7,7 +7,6 @@ from pathlib import Path
 import pystache
 from progress.bar import Bar
 
-from ldraw.generation.writers import write_module
 from ldraw.parts import PartError, Parts
 from ldraw.resources import _get_resource_content
 from ldraw.utils import camel, clean
@@ -59,7 +58,10 @@ def recursive_gen_parts(
 
     for section_name, section_parts in local_sections.items():
         parts_py = directory / f"{section_name}.py"
-        write_module(parts_py, section_content(section_parts, section_name))
+        parts_py.write_text(
+            section_content(section_parts, section_name),
+            encoding="utf-8",
+        )
 
     generate_parts__init__(
         directory=directory,
@@ -71,7 +73,7 @@ def generate_parts__init__(directory: Path, sections: list[str]) -> None:
     """Generate __init__.py to make submodules in ldraw.library.parts."""
     parts__init__ = directory / "__init__.py"
     parts__init__.parent.mkdir(parents=True, exist_ok=True)
-    write_module(parts__init__, parts__init__content(sections))
+    parts__init__.write_text(parts__init__content(sections), encoding="utf-8")
 
 
 def parts__init__content(sections: list[str]) -> str:
