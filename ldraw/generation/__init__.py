@@ -8,9 +8,9 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ldraw.catalog import load_parts
 from ldraw.generation.colours import gen_colours
 from ldraw.generation.parts import gen_parts
-from ldraw.parts import Parts
 from ldraw.resources import _get_resource, _get_resource_content
 from ldraw.utils import ensure_exists
 
@@ -45,7 +45,7 @@ def generate(config: Config, *, force: bool = False) -> None:
     shutil.rmtree(generated_library_path)
     ensure_exists(generated_library_path)
 
-    parts = Parts(parts_lst)
+    parts = load_parts(parts_lst, config.generated_path, build_index=True)
 
     library__init__ = generated_library_path / "__init__.py"
     library__init__.write_text(LIBRARY_INIT)

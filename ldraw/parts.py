@@ -331,10 +331,37 @@ class Parts:
         self.colours_by_name: dict[str, Colour] = {}
         self.colours_by_code: dict[int, Colour] = {}
 
-        self.catalog = PartsCatalog()
+        self._catalog = PartsCatalog()
+        self._categorized = False
         self._minifig_sections_by_code: dict[str, MinifigSection] = {}
 
         self.load()
+
+    @classmethod
+    def from_catalog(cls, parts_lst: str | Path, catalog: PartsCatalog) -> Parts:
+        """Construct a Parts that adopts a prebuilt catalog.
+
+        Skips the expensive per-part categorization pass.
+        """
+        parts = cls(parts_lst)
+        parts._catalog = catalog
+        parts._categorized = True
+        for entry in catalog.by_code.values():
+            parts.by_code_name[(entry.code, entry.description)] = entry.part
+            parts.by_category[entry.category.value][entry.description] = entry.code
+            parts.by_category[""][entry.description] = entry.code
+        return parts
+
+    @property
+    def catalog(self) -> PartsCatalog:
+        """The typed parts catalog, categorized on first access."""
+        self._ensure_categorized()
+        return self._catalog
+
+    def _ensure_categorized(self) -> None:
+        if not self._categorized:
+            self._categorize_parts()
+            self._categorized = True
 
     def get_entry_by_code(self, code: str) -> CatalogEntry | None:
         """Return a typed catalog entry by part code."""
@@ -368,10 +395,13 @@ class Parts:
         return PartCategory.from_label(potential)
 
     def load(self) -> None:
-        """Load parts from a path."""
+        """Load the parts list, colours, and primitives (all cheap passes).
+
+        The expensive categorization pass — opening every part file for its
+        ``!CATEGORY`` header — runs lazily on first catalog access.
+        """
         self._load_parts_list()
         self._scan_library_directories()
-        self._categorize_parts()
 
     def _load_parts_list(self) -> None:
         """Load parts from the parts.lst file."""
@@ -421,7 +451,7 @@ class Parts:
 
             self.by_category[category.value][description] = code
             self.by_category[""].update({description: code})
-            self.catalog.add(
+            self._catalog.add(
                 CatalogEntry(
                     code=code,
                     description=description,

@@ -17,6 +17,7 @@ import yaml
 
 from ldraw import generate as do_generate
 from ldraw.bom import BomRow, rows_to_csv, rows_to_json
+from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
@@ -209,17 +210,24 @@ def _parts_lst_path() -> Path:
     return Path(Config.load().ldraw_library_path) / "ldraw" / "parts.lst"
 
 
-def _try_load_parts() -> Parts | None:
+def _try_load_parts(*, build_index: bool = False) -> Parts | None:
     """Load the configured parts catalog, or None when missing."""
     parts_lst = _parts_lst_path()
     if not parts_lst.exists():
         return None
-    return Parts.get(parts_lst)
+    generated_path = Config.load().generated_path
+    if build_index and not catalog_db_path(generated_path).is_file():
+        print("Building parts index (first run may take a while)...", file=sys.stderr)
+    return load_parts(parts_lst, generated_path, build_index=build_index)
 
 
 def _load_parts() -> Parts | None:
-    """Load the configured parts catalog, or None with a hint when missing."""
-    if (parts := _try_load_parts()) is None:
+    """Load the configured parts catalog, or None with a hint when missing.
+
+    Catalog-querying commands pass through here, so a missing or stale
+    index is built and persisted as a side effect.
+    """
+    if (parts := _try_load_parts(build_index=True)) is None:
         print(
             f"parts.lst not found at {_parts_lst_path()}; run `ldraw download` first.",
         )

@@ -46,7 +46,8 @@ def test_library_gen_files(test_ldraw_library) -> None:
         join("parts", "bricks.py"),
     }
 
-    assert content == {join("library", el) for el in library}
+    expected = {join("library", el) for el in library} | {"catalog.sqlite"}
+    assert content == expected
 
 
 def test_library_gen_import(test_ldraw_library) -> None:
