@@ -3,10 +3,11 @@
 from ldraw.utils import clean, split_reference
 
 
-def test_split_reference() -> None:
-    assert split_reference("3001.dat") == ("3001", ".DAT")
-    assert split_reference("car body.ldr") == ("CAR BODY", ".LDR")
-    assert split_reference("body") == ("BODY", "")
+def test_split_reference_preserves_case() -> None:
+    assert split_reference("3001.dat") == ("3001", ".dat")
+    assert split_reference("3040B.DAT") == ("3040B", ".DAT")
+    assert split_reference("car body.ldr") == ("car body", ".ldr")
+    assert split_reference("body") == ("body", "")
 
 
 def test_clean() -> None:

@@ -23,11 +23,15 @@ def normalize_ref(ref: str) -> str:
 
 
 def split_reference(ref: str) -> tuple[str, str]:
-    """Split a subfile reference into an uppercased stem and extension."""
+    """Split a subfile reference into its stem and extension.
+
+    Case is preserved so parsed files round-trip byte-identically;
+    comparisons and lookups are case-insensitive instead.
+    """
     stem, dot, ext = ref.rpartition(".")
     if not dot:
-        return ref.upper(), ""
-    return stem.upper(), f".{ext.upper()}"
+        return ref, ""
+    return stem, f".{ext}"
 
 
 def ldraw_file_name(line: str) -> str | None:

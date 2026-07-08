@@ -18,6 +18,14 @@ class PartNotFoundError(PartError):
         self.path = path
 
 
+class NoGeometryError(PartError):
+    """The part (including its subfiles) draws no geometry at all."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"Part {code} has no drawable geometry")
+        self.code = code
+
+
 class PartRequiresPathXorFileError(PartError, ValueError):
     """Part must have one and only one of path or file to init."""
 

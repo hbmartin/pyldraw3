@@ -365,3 +365,37 @@ def test_malformed_ldconfig_colour_is_skipped(
     # Well-formed values are canonicalized to #RRGGBB uppercase.
     assert parts.colours_by_code[999].rgb == "#05131D"
     assert parts.colours[999] == "#05131D"
+
+
+def test_glitter_speckle_and_glow_finishes_are_detected(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick\n")
+    (ldraw_dir / "parts.lst").write_text("3001.dat  Brick\n")
+    (ldraw_dir / "LDConfig.ldr").write_text(
+        "0 !COLOUR Glitter_Trans_Dark_Pink  CODE 114  VALUE #DF6695  EDGE #9A2A66"
+        "  ALPHA 128  MATERIAL GLITTER VALUE #923978"
+        " FRACTION 0.17 VFRACTION 0.2 SIZE 1\n"
+        "0 !COLOUR Speckle_Black_Silver  CODE 132  VALUE #000000  EDGE #595959"
+        "  MATERIAL SPECKLE VALUE #595959 FRACTION 0.4 MINSIZE 1 MAXSIZE 3\n"
+        "0 !COLOUR Glow_In_Dark_Opaque  CODE 21  VALUE #E0FFB0  EDGE #A4C374"
+        "  ALPHA 240  LUMINANCE 15\n"
+        "0 !COLOUR Red  CODE 4  VALUE #C91A09  EDGE #333333\n",
+    )
+
+    parts = Parts(ldraw_dir / "parts.lst")
+
+    glitter = parts.colours_by_code[114]
+    assert glitter.colour_attributes == ["GLITTER"]
+    # The MATERIAL's second VALUE token must not displace the main rgb.
+    assert glitter.rgb == "#DF6695"
+    assert not glitter.is_solid
+
+    assert parts.colours_by_code[132].colour_attributes == ["SPECKLE"]
+    assert parts.colours_by_code[21].colour_attributes == ["LUMINANCE"]
+    assert not parts.colours_by_code[21].is_solid
+
+    red = parts.colours_by_code[4]
+    assert red.colour_attributes == []
+    assert red.is_solid

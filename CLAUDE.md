@@ -15,7 +15,7 @@ Before running any commands be sure to activate the venv `source .venv/bin/activ
 ### Setup and Installation
 ```bash
 uv sync                    # Install dependencies
-uv run ldraw download --version 2018-02 --yes  # Download LDraw library
+uv run ldraw download --yes   # Download LDraw library (latest complete release)
 uv run ldraw generate --yes   # Generate ldraw.library package
 ```
 

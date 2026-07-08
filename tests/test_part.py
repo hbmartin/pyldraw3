@@ -63,7 +63,7 @@ def test_parse_ldraw_line_each_type() -> None:
     piece = parse_ldraw_line("1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat")
     assert isinstance(piece, Piece)
     assert piece.part == "3001"
-    assert piece.suffix == ".DAT"
+    assert piece.suffix == ".dat"
 
     line = parse_ldraw_line("2 16 0 0 0 1 1 1")
     assert isinstance(line, Line)
@@ -90,23 +90,23 @@ def test_parse_ldraw_line_each_type() -> None:
 def test_sub_file_reference_with_spaces() -> None:
     piece = parse_ldraw_line("1 16 0 0 0 1 0 0 0 1 0 0 0 1 my body.ldr")
     assert isinstance(piece, Piece)
-    assert piece.part == "MY BODY"
-    assert piece.suffix == ".LDR"
+    assert piece.part == "my body"
+    assert piece.suffix == ".ldr"
 
 
 def test_sub_file_reference_without_extension() -> None:
     piece = parse_ldraw_line("1 16 0 0 0 1 0 0 0 1 0 0 0 1 submodel")
     assert isinstance(piece, Piece)
-    assert piece.part == "SUBMODEL"
+    assert piece.part == "submodel"
     assert piece.suffix == ""
-    assert piece.to_ldraw().endswith(" SUBMODEL")
+    assert piece.to_ldraw().endswith(" submodel")
 
 
 def test_sub_file_subdirectory_reference() -> None:
     piece = parse_ldraw_line("1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\3001s01.dat")
     assert isinstance(piece, Piece)
-    assert piece.part == "S\\3001S01"
-    assert piece.suffix == ".DAT"
+    assert piece.part == "s\\3001s01"
+    assert piece.suffix == ".dat"
 
 
 def test_objects_adds_path_and_line_context(tmp_path: Path) -> None:

@@ -351,7 +351,7 @@ def test_validate_reports_issues_with_line_numbers(
     out = capsys.readouterr().out
     assert f"{model}:2: error: Unknown command (9)" in out
     assert f"{model}:3: error: Invalid numeric value 'x'" in out
-    assert f"{model}:4: error: unknown part 9999.DAT" in out
+    assert f"{model}:4: error: unknown part 9999.dat" in out
     assert "3 error(s), 0 warning(s)" in out
 
 

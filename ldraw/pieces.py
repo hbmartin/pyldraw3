@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 MAIN_COLOUR_CODE = 16
-DEFAULT_SUFFIX = ".DAT"
+DEFAULT_SUFFIX = ".dat"
 
 
 def _as_colour(colour: Colour | int) -> Colour:
@@ -48,15 +48,18 @@ class Piece:
         self.colour = _as_colour(colour)
         self.position = position
         self.matrix = matrix
-        self.part = part.upper()
-        self.suffix = suffix.upper()
+        # Case is preserved so files round-trip byte-identically and output
+        # matches the library's canonical lowercase filenames; lookups and
+        # comparisons casefold instead.
+        self.part = part
+        self.suffix = suffix
         self.group = None
         if group is not None:
             group.add_piece(self)
 
     @property
     def reference(self) -> str:
-        """The subfile reference this piece serializes to, e.g. ``3001.DAT``."""
+        """The subfile reference this piece serializes to, e.g. ``3001.dat``."""
         return f"{self.part}{self.suffix}"
 
     @classmethod
@@ -71,7 +74,7 @@ class Piece:
         suffix: str = DEFAULT_SUFFIX,
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
-        if suffix.upper() == DEFAULT_SUFFIX and "." in part:
+        if suffix.casefold() == DEFAULT_SUFFIX and "." in part:
             part, suffix = split_reference(part)
         return cls(
             colour=colour,

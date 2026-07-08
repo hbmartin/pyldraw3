@@ -5,6 +5,7 @@ from ldraw import bom, colour, figure, geometry, model, parts, pieces, validatio
 
 EXPECTED_ALL = [
     "BomRow",
+    "BoundingBox",
     "CatalogEntry",
     "Colour",
     "Group",
@@ -17,6 +18,7 @@ EXPECTED_ALL = [
     "Person",
     "Piece",
     "Severity",
+    "StudReference",
     "ValidationIssue",
     "Vector",
     "XAxis",

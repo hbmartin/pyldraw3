@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 _NumberedLine = tuple[int, str]
 
 _MANAGED_HEADER_PREFIXES = ("Name:", "Author:", "BFC")
+_MANAGED_META_TYPES = ("LDRAW_ORG", "LICENSE")
 
 
 def _is_nofile(line: str) -> bool:
@@ -189,14 +190,25 @@ class Model:
         description: str | None = None,
         name: str | None = None,
         author: str | None = None,
+        ldraw_org: str | None = None,
+        license: str | None = None,  # noqa: A002 - mirrors the 0 !LICENSE header
     ) -> None:
-        """Set or replace standard header comments at the top of the model."""
+        """Set or replace standard header lines at the top of the model.
+
+        ``ldraw_org`` and ``license`` write the ``0 !LDRAW_ORG`` and
+        ``0 !LICENSE`` meta commands, placed after any ``Name:``/``Author:``
+        comments in canonical header order.
+        """
         if description is not None:
             self._set_description(description)
         if name is not None:
             self._set_header_comment(prefix="Name:", value=name)
         if author is not None:
             self._set_header_comment(prefix="Author:", value=author)
+        if ldraw_org is not None:
+            self._set_header_meta(meta_type="LDRAW_ORG", value=ldraw_org)
+        if license is not None:
+            self._set_header_meta(meta_type="LICENSE", value=license)
 
     def _has_description(self) -> bool:
         match self.objects:
@@ -229,6 +241,31 @@ class Model:
                 if isinstance(obj, Comment) and obj.text.startswith("Name:"):
                     return index + 1
         return 1 if self._has_description() else 0
+
+    def _set_header_meta(self, *, meta_type: str, value: str) -> None:
+        meta = MetaCommand(meta_type, value)
+        for index, obj in enumerate(self.objects):
+            if not isinstance(obj, Comment | MetaCommand):
+                break
+            if isinstance(obj, MetaCommand) and obj.type == meta_type:
+                self.objects[index] = meta
+                return
+        self.objects.insert(self._meta_insert_index(meta_type), meta)
+
+    def _meta_insert_index(self, meta_type: str) -> int:
+        """Index after the description, Name:/Author:, and earlier metas."""
+        preceding_types = _MANAGED_META_TYPES[: _MANAGED_META_TYPES.index(meta_type)]
+        index = 1 if self._has_description() else 0
+        for position, obj in enumerate(self.objects):
+            if not isinstance(obj, Comment | MetaCommand):
+                break
+            follows_comment = isinstance(obj, Comment) and obj.text.startswith(
+                ("Name:", "Author:"),
+            )
+            follows_meta = isinstance(obj, MetaCommand) and obj.type in preceding_types
+            if follows_comment or follows_meta:
+                index = position + 1
+        return index
 
     def add_submodel(
         self,
@@ -287,6 +324,28 @@ class Model:
             submodels=self.submodels,
         )
 
+    def add_step(self) -> None:
+        """Append a ``0 STEP`` marker ending the current building step."""
+        self.objects.append(Comment("STEP"))
+
+    @property
+    def steps(self) -> list[list[Piece]]:
+        """Pieces grouped by ``0 STEP`` markers.
+
+        Pieces after the last marker form a final step, so a model without
+        any ``0 STEP`` lines is a single step. A trailing marker does not
+        produce an empty step. Submodel references are not expanded.
+        """
+        groups: list[list[Piece]] = [[]]
+        for obj in self.objects:
+            if isinstance(obj, Comment) and obj.text.strip().upper() == "STEP":
+                groups.append([])
+            elif isinstance(obj, Piece):
+                groups[-1].append(obj)
+        if len(groups) > 1 and not groups[-1]:
+            groups.pop()
+        return groups
+
     def iter_pieces(self) -> Iterator[Piece]:
         """Recursively yield leaf pieces, expanding submodel references.
 
@@ -316,13 +375,16 @@ class Model:
         colour: Colour | int | None = None,
         recursive: bool = False,
     ) -> list[Piece]:
-        """Return pieces matching the given part code and/or colour."""
+        """Return pieces matching the given part code and/or colour.
+
+        Part codes are compared case-insensitively.
+        """
         source: Iterable[Piece] = self.iter_pieces() if recursive else self.pieces
-        wanted_part = part.upper() if part is not None else None
+        wanted_part = part.casefold() if part is not None else None
         return [
             piece
             for piece in source
-            if (wanted_part is None or piece.part == wanted_part)
+            if (wanted_part is None or piece.part.casefold() == wanted_part)
             and (colour is None or piece.colour == colour)
         ]
 

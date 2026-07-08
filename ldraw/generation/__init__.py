@@ -19,6 +19,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("ldraw")
 
+# Bump whenever generator output changes (templates, symbol naming, colour
+# attribute detection, …) so previously generated libraries regenerate
+# instead of silently serving stale modules.
+GENERATION_SCHEMA_VERSION = 2
+
+
+def _file_md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+
+
+def _library_fingerprint(parts_lst: Path) -> str:
+    """Fingerprint everything the generated library is derived from.
+
+    Covers the generator schema version, ``parts.lst``, and
+    ``ldconfig.ldr`` — a change to any of them (including upgrading to a
+    pyldraw version with a fixed parser) invalidates the generation.
+    """
+    ldconfig_md5 = ""
+    for item in parts_lst.parent.iterdir():
+        if item.name.lower() == "ldconfig.ldr":
+            ldconfig_md5 = _file_md5(item)
+            break
+    return f"{GENERATION_SCHEMA_VERSION}\n{_file_md5(parts_lst)}\n{ldconfig_md5}\n"
+
 
 def generate(config: Config, *, force: bool = False) -> None:
     """Generate the library from configuration."""
@@ -28,19 +52,14 @@ def generate(config: Config, *, force: bool = False) -> None:
     hash_path = generated_library_path / "__hash__"
     library_path = Path(config.ldraw_library_path)
     parts_lst = library_path / "ldraw" / "parts.lst"
-    md5_parts_lst = hashlib.md5(
-        parts_lst.read_bytes(),
-        usedforsecurity=False,
-    ).hexdigest()
+    fingerprint = _library_fingerprint(parts_lst)
 
-    if hash_path.exists():
-        md5 = hash_path.read_text()
-        if md5 == md5_parts_lst and not force:
-            logger.error(
-                "Path %s already generated (checksums match)",
-                generated_library_path,
-            )
-            return
+    if hash_path.exists() and hash_path.read_text() == fingerprint and not force:
+        logger.error(
+            "Path %s already generated (checksums match)",
+            generated_library_path,
+        )
+        return
 
     shutil.rmtree(generated_library_path)
     ensure_exists(generated_library_path)
@@ -59,7 +78,7 @@ def generate(config: Config, *, force: bool = False) -> None:
     gen_colours(parts, generated_library_path)
     gen_parts(parts, generated_library_path)
 
-    hash_path.write_text(md5_parts_lst)
+    hash_path.write_text(fingerprint)
 
 
 LIBRARY_INIT = _get_resource_content("templates/ldraw__init__")

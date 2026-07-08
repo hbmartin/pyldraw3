@@ -171,7 +171,7 @@ def test_unknown_part_reference_is_an_error(tmp_path, parts) -> None:
     issues = validate(tmp_path, f"1 4 0 0 0 {IDENTITY} 9999.dat\n", parts)
 
     assert issues == [
-        ValidationIssue(line_number=1, message="unknown part 9999.DAT"),
+        ValidationIssue(line_number=1, message="unknown part 9999.dat"),
     ]
 
 
@@ -195,5 +195,5 @@ def test_one_line_can_produce_multiple_issues(tmp_path, parts) -> None:
     assert messages == [
         "unknown colour code 999",
         "transformation matrix is not orthonormal (scaled or sheared part)",
-        "unknown part 9999.DAT",
+        "unknown part 9999.dat",
     ]
