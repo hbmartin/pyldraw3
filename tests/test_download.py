@@ -20,11 +20,11 @@ from ldraw.downloads import (
 
 
 @patch("zipfile.ZipFile", spec=zipfile.ZipFile)
-@patch("ldraw.downloads._download_progress")
+@patch("ldraw.downloads._download")
 @patch("ldraw.downloads.generate_parts_lst")
 def test_download(
     generate_parts_lst_mock: MagicMock,
-    download_progress_mock: MagicMock,
+    download_mock: MagicMock,
     zip_mock: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -38,7 +38,8 @@ def test_download(
     ) as get_latest_release_id_mock:
         download()
 
-    download_progress_mock.assert_called_once()
+    download_mock.assert_called_once()
+    assert download_mock.call_args.kwargs["show_progress"] is True
     get_latest_release_id_mock.assert_called_once()
     generate_parts_lst_mock.assert_called_once()
 

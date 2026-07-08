@@ -120,11 +120,9 @@ def test_piece_rejects_translucent_direct_colour() -> None:
         piece.to_ldraw()
 
 
-def test_piece_rejects_malformed_direct_colour() -> None:
-    piece = Piece(Colour(rgb="not-a-colour"), Vector(0, 0, 0), Identity(), Brick1X1)
-
+def test_malformed_direct_colour_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="Invalid rgb value"):
-        piece.to_ldraw()
+        Piece(Colour(rgb="not-a-colour"), Vector(0, 0, 0), Identity(), Brick1X1)
 
 
 @pytest.fixture

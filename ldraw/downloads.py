@@ -121,19 +121,25 @@ def unpack_version(version_zip: Path, version: str) -> Path:
     return destination
 
 
-def _stream_download(
+def _download(
     url: str,
-    retrieved: Path,
-    chunk_size: int,
+    filename: str,
+    chunk_size: int = 1_024,
     *,
-    show_progress: bool,
+    show_progress: bool = False,
 ) -> Path:
-    """Stream ``url`` to ``retrieved`` through a ``.part`` file.
+    """Download ``url`` to ``filename`` in the cache, streaming via a ``.part`` file.
 
     The body is written to a sibling ``.part`` file and renamed into place only
     once it is fully received, so an interrupted download is never cached as a
     complete file.
     """
+    retrieved = cache_ldraw / filename
+    if retrieved.exists():
+        if show_progress:
+            print(f"File {retrieved} already exists")
+        return retrieved
+
     partial = retrieved.with_name(f"{retrieved.name}.part")
     with requests.get(url, stream=True) as response:  # noqa: S113
         response.raise_for_status()
@@ -150,21 +156,6 @@ def _stream_download(
     return retrieved
 
 
-def _download(url: str, filename: str, chunk_size: int = 1_024) -> Path:
-    retrieved = cache_ldraw / filename
-    if retrieved.exists():
-        return retrieved
-    return _stream_download(url, retrieved, chunk_size, show_progress=False)
-
-
-def _download_progress(url: str, filename: str, chunk_size: int = 1_024) -> Path:
-    retrieved = cache_ldraw / filename
-    if retrieved.exists():
-        print(f"File {retrieved} already exists")
-        return retrieved
-    return _stream_download(url, retrieved, chunk_size, show_progress=True)
-
-
 def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
     """Download and unpack an LDraw library version, generating parts.lst file.
 
@@ -178,9 +169,7 @@ def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> 
         if version == COMPLETE_VERSION
         else f"{ARCHIVE_URL}/{filename}"
     )
-    retrieved = (
-        _download_progress(url, filename) if show_progress else _download(url, filename)
-    )
+    retrieved = _download(url, filename, show_progress=show_progress)
 
     version_dir = unpack_version(retrieved, version)
 
