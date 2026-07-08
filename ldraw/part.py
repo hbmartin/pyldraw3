@@ -188,9 +188,9 @@ class Part:
             self._description = " ".join(next(self.lines).split()[1:])
         return self._description
 
-    def _parse_header(self) -> None:
+    def _parse_header(self) -> tuple[str, ...]:
         if self._keywords is not None:
-            return
+            return self._keywords
 
         keywords: list[str] = []
         for obj in self.objects:
@@ -208,6 +208,7 @@ class Part:
                             keywords.append(stripped)
 
         self._keywords = tuple(keywords)
+        return self._keywords
 
     @property
     def category(self) -> str | None:
@@ -218,5 +219,4 @@ class Part:
     @property
     def keywords(self) -> tuple[str, ...]:
         """Get the keywords of the part from KEYWORDS meta commands."""
-        self._parse_header()
-        return self._keywords or ()
+        return self._parse_header()
