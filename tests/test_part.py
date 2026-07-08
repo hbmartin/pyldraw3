@@ -143,6 +143,35 @@ def test_objects_unknown_command(tmp_path: Path) -> None:
         list(Part(path).objects)
 
 
+def test_keywords_from_multiple_lines(tmp_path: Path) -> None:
+    path = tmp_path / "keyworded.dat"
+    path.write_text(
+        "0 Test Part\n"
+        "0 !CATEGORY Brick\n"
+        "0 !KEYWORDS Space, Castle,  bar \n"
+        "0 !KEYWORDS female stud, Space, rod\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+    )
+
+    assert Part(path).keywords == ("Space", "Castle", "bar", "female stud", "rod")
+
+
+def test_keywords_without_meta_returns_empty(tmp_path: Path) -> None:
+    path = tmp_path / "plain.dat"
+    path.write_text("0 Test Part\n0 !CATEGORY Brick\n")
+
+    assert Part(path).keywords == ()
+
+
+def test_keywords_ignores_lines_after_header(tmp_path: Path) -> None:
+    path = tmp_path / "late.dat"
+    path.write_text(
+        "0 Test Part\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n0 !KEYWORDS too late\n",
+    )
+
+    assert Part(path).keywords == ()
+
+
 def test_objects_parses_valid_lines(tmp_path: Path) -> None:
     path = tmp_path / "good.dat"
     path.write_text(

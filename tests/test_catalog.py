@@ -31,6 +31,7 @@ def entry_key(entry: CatalogEntry) -> tuple:
         entry.category,
         entry.minifig_section,
         str(entry.part.path) if entry.part is not None else None,
+        entry.keywords,
     )
 
 
@@ -76,6 +77,43 @@ def test_load_catalog_wrong_schema_version_returns_none(
         connection.execute(f"PRAGMA user_version = {CATALOG_SCHEMA_VERSION + 1}")
 
     assert load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT) is None
+
+
+def test_fresh_catalog_entries_carry_keywords(slow_catalog) -> None:
+    keywords = slow_catalog.by_code["3959"].keywords
+    assert keywords[:3] == ("Space", "Castle", "Pirates")
+    assert "female stud" in keywords  # from a second !KEYWORDS line
+
+
+def test_keywords_round_trip_through_index(tmp_path, slow_catalog) -> None:
+    db_path = tmp_path / "catalog.sqlite"
+    md5 = parts_lst_md5(PARTS_LST)
+
+    save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
+    loaded = load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT)
+
+    assert loaded is not None
+    assert loaded.by_code["3959"].keywords == slow_catalog.by_code["3959"].keywords
+    assert loaded.by_code["3959"].keywords != ()
+
+
+def test_load_catalog_v1_schema_returns_none(tmp_path) -> None:
+    """An old v1 index (no keywords column) must trigger a rebuild, not crash."""
+    db_path = tmp_path / "catalog.sqlite"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+        connection.execute(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        )
+        connection.execute(
+            "CREATE TABLE parts (code TEXT PRIMARY KEY, description TEXT NOT NULL,"
+            " category TEXT NOT NULL, minifig_section TEXT, path TEXT)",
+        )
+        connection.execute(
+            "INSERT INTO meta (key, value) VALUES ('parts_lst_md5', 'x')",
+        )
+
+    assert load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT) is None
 
 
 def test_load_catalog_corrupt_file_returns_none(tmp_path) -> None:
