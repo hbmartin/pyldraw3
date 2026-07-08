@@ -153,6 +153,12 @@ def test_plain_comments_and_commands_are_never_flagged(tmp_path, parts) -> None:
     assert validate(tmp_path, text, parts) == []
 
 
+def test_blank_lines_are_ignored(tmp_path, parts) -> None:
+    text = f"0 Model\n\n1 4 0 0 0 {IDENTITY} 3001.dat\n\n"
+
+    assert validate(tmp_path, text, parts) == []
+
+
 def test_malformed_line_is_an_error(tmp_path) -> None:
     issues = validate(tmp_path, "9 16 0 0 0\n", None)
 

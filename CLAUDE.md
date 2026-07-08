@@ -40,7 +40,7 @@ uv build                     # Build package
 
 ### Core Components
 
-1. **CLI Interface (`ldraw/cli.py`)**: argparse CLI with `download`, `generate`, `parts` (search/info), `validate`, `stubs`, `config`, and `version` subcommands
+1. **CLI Interface (`ldraw/cli.py`)**: argparse CLI with `download`, `generate`, `parts` (search/info), `validate` (linter with `--strict`), `bom`, `stubs`, `config`, and `version` subcommands
 
 2. **Dynamic Library Generation (`ldraw/generation/`)**: 
    - Generates Python modules from LDraw parts libraries
@@ -51,13 +51,26 @@ uv build                     # Build package
    - Custom meta path hook (`LibraryImporter`) for dynamic imports
    - Enables importing LDraw parts as Python modules
 
+4. **Persistent Parts Index (`ldraw/catalog.py`)**:
+   - Caches the categorized parts catalog in `<generated_path>/catalog.sqlite`
+   - Keyed to the parts.lst MD5; falls back to a full build when stale
+   - `Parts` categorization itself is lazy — only catalog consumers pay for it
+
 ### Key Classes
 
-- `Model` (`ldraw/model.py`) - Reads and writes whole `.ldr`/`.mpd` model files
+- `Model` (`ldraw/model.py`) - Reads, writes, and builds whole `.ldr`/`.mpd` model files (add/add_group/from_pieces/add_submodel/iter_pieces/find_pieces)
 - `Parts` (`ldraw/parts.py`) - Manages parts catalog and loading
 - `Piece` (`ldraw/pieces.py`) - Represents individual LEGO pieces in models
-- `Figure` (`ldraw/figure.py`) - High-level minifigure construction
+- `Person` (`ldraw/figure.py`) - High-level minifigure construction
+- `BomRow`/`bill_of_materials` (`ldraw/bom.py`) - Bill-of-materials counting and CSV/JSON export
+- `ValidationIssue`/`iter_ldr_issues` (`ldraw/validation.py`) - Linter with error/warning severities
 - Geometry classes (`ldraw/geometry.py`) - Matrix operations and 3D math
+
+Core types are re-exported at the top level (`from ldraw import Piece, Model, ...`).
+
+### Local verification
+
+- `.claude/skills/verify-roundtrip/SKILL.md` runs a corpus round-trip check against real OMR models plus the validator against a downloaded library, in an isolated HOME (never in CI)
 
 ### Configuration
 

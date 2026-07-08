@@ -95,6 +95,30 @@ def test_load_catalog_unknown_category_returns_none(tmp_path, slow_catalog) -> N
     assert load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT) is None
 
 
+def test_paths_outside_library_root_stay_absolute(tmp_path) -> None:
+    from ldraw.part import Part
+
+    outside = tmp_path / "elsewhere" / "3001.dat"
+    outside.parent.mkdir()
+    outside.write_text("0 Brick\n")
+    catalog = PartsCatalog()
+    catalog.add(
+        CatalogEntry(
+            code="3001",
+            description="Brick",
+            category=PartCategory.BRICK,
+            part=Part(outside),
+        ),
+    )
+    db_path = tmp_path / "catalog.sqlite"
+
+    save_catalog(db_path, md5="x", catalog=catalog, library_root=LIBRARY_ROOT)
+    loaded = load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT)
+
+    assert loaded is not None
+    assert loaded.by_code["3001"].part.path == outside
+
+
 def test_save_catalog_handles_entries_without_part(tmp_path) -> None:
     catalog = PartsCatalog()
     catalog.add(
