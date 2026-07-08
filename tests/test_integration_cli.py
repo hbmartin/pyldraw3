@@ -37,7 +37,7 @@ def test_cli_generate_command():
 
 @pytest.mark.integration
 @pytest.mark.parametrize("command", ["parts", "validate", "stubs"])
-def test_cli_new_command_help(command):
+def test_cli_new_command_help(command: str) -> None:
     """Test help for the parts, validate, and stubs commands."""
     result = subprocess.run(
         ["uv", "run", "ldraw", command, "--help"],

@@ -15,6 +15,7 @@ build/
 pyldraw3/*.egg-info/
 *.ldr
 !tests/models/*.ldr
+!tests/models/*.mpd
 triage_decisions.db
 reviews_triage/
 .hypothesis/

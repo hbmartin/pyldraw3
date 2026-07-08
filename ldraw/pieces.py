@@ -58,7 +58,7 @@ class Piece:
         return f"{self.part}{self.suffix}"
 
     @classmethod
-    def place(
+    def place(  # noqa: PLR0913 - keyword-first factory mirrors piece placement fields
         cls,
         part: str,
         *,
@@ -66,6 +66,7 @@ class Piece:
         position: Vector | None = None,
         matrix: Matrix | None = None,
         group: Group | None = None,
+        suffix: str = ".DAT",
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
         return cls(
@@ -74,6 +75,7 @@ class Piece:
             matrix=matrix if matrix is not None else Identity(),
             part=part,
             group=group,
+            suffix=suffix,
         )
 
     def _transformed(self) -> tuple[Vector, Matrix]:

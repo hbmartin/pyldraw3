@@ -61,7 +61,11 @@ def _floats(line_type: str, values: list[str], line: list[str]) -> list[float]:
         try:
             result.append(float(value))
         except ValueError as exc:
-            raise InvalidNumericValueError(line_type, value, line) from exc
+            raise InvalidNumericValueError(
+                line_type=line_type,
+                token=value,
+                line=line,
+            ) from exc
     return result
 
 
@@ -75,7 +79,7 @@ def _split_reference(ref: str) -> tuple[str, str]:
 
 def _sub_file(pieces: list[str]) -> Piece:
     if len(pieces) < 14:
-        raise InvalidLineDataError("subfile", 14, pieces)
+        raise InvalidLineDataError(line_type="subfile", size=14, line=pieces)
     values = _floats("subfile", pieces[1:13], pieces)
     rows = [values[3:6], values[6:9], values[9:12]]
     part, suffix = _split_reference(" ".join(pieces[13:]))
@@ -90,14 +94,14 @@ def _sub_file(pieces: list[str]) -> Piece:
 
 def _line(pieces: list[str]) -> Line:
     if len(pieces) != 7:
-        raise InvalidLineDataError("line", 7, pieces)
+        raise InvalidLineDataError(line_type="line", size=7, line=pieces)
     values = _floats("line", pieces[1:7], pieces)
     return Line(_colour(pieces), Vector(*values[:3]), Vector(*values[3:6]))
 
 
 def _triangle(pieces: list[str]) -> Triangle:
     if len(pieces) != 10:
-        raise InvalidLineDataError("triangle", 10, pieces)
+        raise InvalidLineDataError(line_type="triangle", size=10, line=pieces)
     values = _floats("triangle", pieces[1:10], pieces)
     return Triangle(
         _colour(pieces),
@@ -109,7 +113,11 @@ def _triangle(pieces: list[str]) -> Triangle:
 
 def _quadrilateral(pieces: list[str]) -> Quadrilateral:
     if len(pieces) != 13:
-        raise InvalidLineDataError("quadrilateral", 13, pieces)
+        raise InvalidLineDataError(
+            line_type="quadrilateral",
+            size=13,
+            line=pieces,
+        )
     values = _floats("quadrilateral", pieces[1:13], pieces)
     return Quadrilateral(
         _colour(pieces),
@@ -122,7 +130,7 @@ def _quadrilateral(pieces: list[str]) -> Quadrilateral:
 
 def _optional_line(pieces: list[str]) -> OptionalLine:
     if len(pieces) != 13:
-        raise InvalidLineDataError("optional", 13, pieces)
+        raise InvalidLineDataError(line_type="optional", size=13, line=pieces)
     values = _floats("optional", pieces[1:13], pieces)
     return OptionalLine(
         _colour(pieces),

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pystache
 
+from ldraw.generation.writers import write_module
 from ldraw.resources import _get_resource_content
 from ldraw.utils import camel, clean
 
@@ -21,8 +22,7 @@ def gen_colours(parts: Parts, library_path: str | Path) -> None:
 
     colours_str = colours_module_content(parts)
     colours_py = Path(library_path) / "colours.py"
-    colours_py.write_text(colours_str, encoding="utf-8")
-    colours_py.with_suffix(".pyi").write_text(colours_str, encoding="utf-8")
+    write_module(path=colours_py, content=colours_str)
 
 
 def colours_module_content(parts: Parts) -> str:
