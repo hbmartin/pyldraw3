@@ -1,155 +1,118 @@
 """Integration tests for example scripts."""
 
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLES_DIR = REPO_ROOT / "examples"
+
+
+def example_script(script_name: str) -> Path:
+    """Return an example script path or skip when examples are unavailable."""
+    if not EXAMPLES_DIR.exists():
+        pytest.skip("Examples directory not found")
+
+    script = EXAMPLES_DIR / script_name
+    if not script.exists():
+        pytest.skip(f"{script_name} example script not found")
+
+    return script
+
+
+def run_example(
+    script_name: str,
+    tmp_path: Path,
+    *,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Run an example from an isolated output directory."""
+    return subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(REPO_ROOT),
+            "python",
+            str(example_script(script_name)),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def assert_example_completed(
+    example_name: str,
+    result: subprocess.CompletedProcess[str],
+) -> None:
+    """Assert an example either succeeds or exits gracefully."""
+    assert result.returncode in [
+        0,
+        1,
+    ], f"{example_name} script failed unexpectedly: {result.stderr}"
+
+    if result.returncode == 0:
+        assert result.stdout.strip(), (
+            f"{example_name} script should write LDraw output to stdout"
+        )
+
 
 @pytest.mark.integration
-def test_example_stairs():
+def test_example_stairs(tmp_path: Path) -> None:
     """Test stairs example script."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
-        pytest.skip("Examples directory not found")
+    try:
+        result = run_example("stairs.py", tmp_path=tmp_path)
+    except subprocess.TimeoutExpired:
+        pytest.skip("Stairs example timed out")
 
-    stairs_script = examples_dir / "stairs.py"
-    if not stairs_script.exists():
-        pytest.skip("Stairs example script not found")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            result = subprocess.run(
-                ["uv", "run", "python", str(stairs_script)],
-                cwd=temp_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-
-            # Script should either succeed or fail gracefully
-            assert result.returncode in [
-                0,
-                1,
-            ], f"Stairs script failed unexpectedly: {result.stderr}"
-
-            # Check if LDraw file was created
-            output_files = list(Path(temp_dir).glob("*.ldr"))
-            if result.returncode == 0:
-                assert len(output_files) > 0, "Should create LDraw output file"
-
-        except subprocess.TimeoutExpired:
-            pytest.skip("Stairs example timed out")
+    assert_example_completed("Stairs", result)
 
 
 @pytest.mark.integration
-def test_example_figure():
+def test_example_figure(tmp_path: Path) -> None:
     """Test figure example script."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
-        pytest.skip("Examples directory not found")
+    try:
+        result = run_example("figure.py", tmp_path=tmp_path)
+    except subprocess.TimeoutExpired:
+        pytest.skip("Figure example timed out")
 
-    figure_script = examples_dir / "figure.py"
-    if not figure_script.exists():
-        pytest.skip("Figure example script not found")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            result = subprocess.run(
-                ["uv", "run", "python", str(figure_script)],
-                cwd=temp_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-
-            # Script should either succeed or fail gracefully
-            assert result.returncode in [
-                0,
-                1,
-            ], f"Figure script failed unexpectedly: {result.stderr}"
-
-            # Check if LDraw file was created
-            output_files = list(Path(temp_dir).glob("*.ldr"))
-            if result.returncode == 0:
-                assert len(output_files) > 0, "Should create LDraw output file"
-
-        except subprocess.TimeoutExpired:
-            pytest.skip("Figure example timed out")
+    assert_example_completed("Figure", result)
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_example_buggy():
+def test_example_buggy(tmp_path: Path) -> None:
     """Test buggy example script."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
-        pytest.skip("Examples directory not found")
+    try:
+        result = run_example("buggy.py", tmp_path=tmp_path, timeout=120)
+    except subprocess.TimeoutExpired:
+        pytest.skip("Buggy example timed out")
 
-    buggy_script = examples_dir / "buggy.py"
-    if not buggy_script.exists():
-        pytest.skip("Buggy example script not found")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            result = subprocess.run(
-                ["uv", "run", "python", str(buggy_script)],
-                cwd=temp_dir,
-                capture_output=True,
-                text=True,
-                timeout=120,  # Buggy might be more complex
-            )
-
-            # Script should either succeed or fail gracefully
-            assert result.returncode in [
-                0,
-                1,
-            ], f"Buggy script failed unexpectedly: {result.stderr}"
-
-        except subprocess.TimeoutExpired:
-            pytest.skip("Buggy example timed out")
+    assert_example_completed("Buggy", result)
 
 
 @pytest.mark.integration
-def test_example_spaceman():
+def test_example_spaceman(tmp_path: Path) -> None:
     """Test spaceman example script."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
-        pytest.skip("Examples directory not found")
+    try:
+        result = run_example("spaceman.py", tmp_path=tmp_path)
+    except subprocess.TimeoutExpired:
+        pytest.skip("Spaceman example timed out")
 
-    spaceman_script = examples_dir / "spaceman.py"
-    if not spaceman_script.exists():
-        pytest.skip("Spaceman example script not found")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            result = subprocess.run(
-                ["uv", "run", "python", str(spaceman_script)],
-                cwd=temp_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-
-            # Script should either succeed or fail gracefully
-            assert result.returncode in [
-                0,
-                1,
-            ], f"Spaceman script failed unexpectedly: {result.stderr}"
-
-        except subprocess.TimeoutExpired:
-            pytest.skip("Spaceman example timed out")
+    assert_example_completed("Spaceman", result)
 
 
 @pytest.mark.integration
 def test_all_examples_syntax():
     """Test that all example scripts have valid Python syntax."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
+    if not EXAMPLES_DIR.exists():
         pytest.skip("Examples directory not found")
 
-    python_files = list(examples_dir.glob("*.py"))
+    python_files = list(EXAMPLES_DIR.glob("*.py"))
     assert len(python_files) > 0, "Should find Python example files"
 
     for script in python_files:
@@ -162,9 +125,9 @@ def test_all_examples_syntax():
                 timeout=30,
             )
 
-            assert (
-                result.returncode == 0
-            ), f"Syntax error in {script.name}: {result.stderr}"
+            assert result.returncode == 0, (
+                f"Syntax error in {script.name}: {result.stderr}"
+            )
 
         except subprocess.TimeoutExpired:
             pytest.fail(f"Syntax check for {script.name} timed out")
@@ -173,8 +136,7 @@ def test_all_examples_syntax():
 @pytest.mark.integration
 def test_examples_import_ldraw():
     """Test that example scripts can import ldraw modules."""
-    examples_dir = Path("examples")
-    if not examples_dir.exists():
+    if not EXAMPLES_DIR.exists():
         pytest.skip("Examples directory not found")
 
     # Test a simple import check

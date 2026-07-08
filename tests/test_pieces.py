@@ -178,6 +178,20 @@ def test_piece_place_custom_suffix() -> None:
     assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
 
 
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        ("body.ldr", "BODY.LDR"),
+        ("s\\3001s01.dat", "S\\3001S01.DAT"),
+    ],
+)
+def test_piece_place_uses_existing_extension(part: str, expected: str) -> None:
+    piece = Piece.place(part)
+
+    assert piece.reference == expected
+    assert piece.to_ldraw() == f"1 16 0 0 0 1 0 0 0 1 0 0 0 1 {expected}"
+
+
 def test_piece_place_accepts_int_colour() -> None:
     piece = Piece.place(Brick1X1, colour=4)
 
