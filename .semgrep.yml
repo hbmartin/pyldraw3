@@ -5,7 +5,7 @@ rules:
     severity: ERROR
     paths:
       include:
-        - ldraw/downloads.py
+        - /ldraw/downloads.py
     message: Validate archive member paths before calling extractall().
     patterns:
       - pattern: $ARCHIVE.extractall(...)
@@ -20,7 +20,7 @@ rules:
     severity: ERROR
     paths:
       include:
-        - ldraw/downloads.py
+        - /ldraw/downloads.py
     message: Validate the LDraw download version before using it as a path component.
     patterns:
       - pattern: cache_ldraw / version
@@ -30,3 +30,18 @@ rules:
               _validate_version(version)
               ...
               cache_ldraw / version
+
+  - id: pyldraw-no-model-bom-module-import-cycle
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/model.py
+        - /ldraw/bom.py
+    message: Keep ldraw.model and ldraw.bom decoupled at module import time.
+    patterns:
+      - pattern-regex: '^\s*(from\s+ldraw\.(bom|model)\s+import|import\s+ldraw\.(bom|model)\b)'
+      - pattern-not-inside: |
+          def $FUNC(...):
+              ...
