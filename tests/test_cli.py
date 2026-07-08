@@ -348,10 +348,10 @@ def test_validate_reports_issues_with_line_numbers(
     assert main(["validate", str(model)]) == 1
 
     out = capsys.readouterr().out
-    assert f"{model}:2: Unknown command (9)" in out
-    assert f"{model}:3: Invalid numeric value 'x'" in out
-    assert f"{model}:4: unknown part 9999.DAT" in out
-    assert "3 issues found" in out
+    assert f"{model}:2: error: Unknown command (9)" in out
+    assert f"{model}:3: error: Invalid numeric value 'x'" in out
+    assert f"{model}:4: error: unknown part 9999.DAT" in out
+    assert "3 error(s), 0 warning(s)" in out
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
@@ -401,8 +401,55 @@ def test_validate_without_library_is_syntax_only(
     assert main(["validate", str(model)]) == 0
 
     out = capsys.readouterr().out
-    assert "skipping unknown-part checks" in out
+    assert "skipping unknown-part and colour checks" in out
     assert "OK" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_warnings_pass_without_strict(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 2 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model)]) == 0
+
+    out = capsys.readouterr().out
+    assert "warning: transformation matrix is not orthonormal" in out
+    assert "0 error(s), 1 warning(s)" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_strict_fails_on_warnings(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("0 !FOOBAR meta\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model), "--strict"]) == 1
+
+    out = capsys.readouterr().out
+    assert "warning: unknown meta-command !FOOBAR" in out
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_reports_unknown_colours(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 999 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+
+    assert main(["validate", str(model)]) == 1
+
+    out = capsys.readouterr().out
+    assert f"{model}:1: error: unknown colour code 999" in out
+    assert "1 error(s), 0 warning(s)" in out
 
 
 def test_parts_requires_subcommand() -> None:

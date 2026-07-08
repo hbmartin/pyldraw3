@@ -76,7 +76,8 @@ def test_library_gen_import(test_ldraw_library) -> None:
 
     expected_color = Colour(189, "Reddish_Gold", "#AC8247", 255, ["PEARLESCENT"])
 
-    assert ColoursByCode == {expected_color.code: expected_color}
-    assert ColoursByName == {expected_color.name: expected_color}
+    assert ColoursByCode[expected_color.code] == expected_color
+    assert ColoursByName[expected_color.name] == expected_color
+    assert set(ColoursByCode) == {0, 1, 4, 14, 15, 16, 24, 189}
 
     assert Reddish_Gold == expected_color

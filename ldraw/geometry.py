@@ -160,6 +160,15 @@ class Matrix:
         """Return the determinant of the matrix."""
         return float(np.linalg.det(self._array))
 
+    def is_singular(self, *, tolerance: float = 1e-6) -> bool:
+        """Return whether the matrix flattens geometry (determinant near zero)."""
+        return abs(self.det()) < tolerance
+
+    def is_orthonormal(self, *, tolerance: float = 1e-6) -> bool:
+        """Return whether the matrix is a pure rotation or reflection."""
+        product = self._array @ self._array.T
+        return bool(np.allclose(product, np.eye(3), atol=tolerance))
+
     def flatten(self) -> tuple[float, ...]:
         """Flatten the matrix in row-major order."""
         return tuple(float(value) for value in self._array.reshape(9))

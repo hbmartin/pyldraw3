@@ -26,7 +26,7 @@ from ldraw.model import read_model
 from ldraw.parts import CatalogEntry, PartCategory, Parts
 from ldraw.stubs import write_stub_package
 from ldraw.utils import camel, clean
-from ldraw.validation import iter_ldr_issues
+from ldraw.validation import Severity, iter_ldr_issues
 
 PACKAGE_NAME = "pyldraw3"
 DEFAULT_SEARCH_LIMIT = 25
@@ -107,6 +107,11 @@ def build_parser() -> ArgumentParser:
         "file",
         type=Path,
         help="Path to the file to validate.",
+    )
+    validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as errors.",
     )
 
     bom_parser = subparsers.add_parser(
@@ -276,23 +281,24 @@ def parts_info_command(*, code: str) -> int:
     return 0
 
 
-def validate_command(*, file: Path) -> int:
+def validate_command(*, file: Path, strict: bool = False) -> int:
     """Validate an LDraw file, reporting issues with line numbers."""
     if not file.is_file():
         print(f"{file}: not found")
         return 1
     parts = _try_load_parts()
     if parts is None:
-        print("note: no parts library found; skipping unknown-part checks")
+        print("note: no parts library found; skipping unknown-part and colour checks")
     issues = list(iter_ldr_issues(file, parts))
     for issue in issues:
-        print(f"{file}:{issue.line_number}: {issue.message}")
-    if issues:
-        plural = "s" if len(issues) != 1 else ""
-        print(f"{file}: {len(issues)} issue{plural} found")
-        return 1
-    print(f"{file}: OK")
-    return 0
+        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+    if not issues:
+        print(f"{file}: OK")
+        return 0
+    errors = sum(1 for issue in issues if issue.severity is Severity.ERROR)
+    warnings = len(issues) - errors
+    print(f"{file}: {errors} error(s), {warnings} warning(s)")
+    return 1 if errors or (warnings and strict) else 0
 
 
 def _format_bom_table(rows: list[BomRow]) -> str:
@@ -392,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911 - one return pe
         case "parts":
             return parts_info_command(code=args.code)
         case "validate":
-            return validate_command(file=args.file)
+            return validate_command(file=args.file, strict=args.strict)
         case "bom":
             return bom_command(
                 file=args.file,
