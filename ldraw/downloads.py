@@ -121,7 +121,7 @@ def unpack_version(version_zip: Path, version: str) -> Path:
     return destination
 
 
-def _download(url: str, filename: str, chunk_size=1024) -> Path:
+def _download(url: str, filename: str, chunk_size: int = 1_024) -> Path:
     retrieved = cache_ldraw / filename
     if retrieved.exists():
         return retrieved
@@ -135,7 +135,7 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
     return retrieved
 
 
-def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
+def _download_progress(url: str, filename: str, chunk_size: int = 1_024) -> Path:
     retrieved = cache_ldraw / filename
     if retrieved.exists():
         print(f"File {retrieved} already exists")

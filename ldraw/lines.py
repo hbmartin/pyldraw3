@@ -1,74 +1,81 @@
-# pylint: disable=too-few-public-methods, too-many-arguments
+"""Classes for lines in parts paths."""
 
-"""classes for lines in parts path."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ldraw.colour import Colour
+    from ldraw.geometry import Vector
 
 
+@dataclass(slots=True)
 class OptionalLine:
-    """an optional Line."""
+    """An optional line."""
 
-    def __init__(self, colour, point1, point2, point3, point4):
-        self.colour = colour
-        self.point1 = point1
-        self.point2 = point2
-        self.point3 = point3
-        self.point4 = point4
+    colour: Colour
+    point1: Vector
+    point2: Vector
+    point3: Vector
+    point4: Vector
 
 
+@dataclass(slots=True)
 class Quadrilateral:
-    """a quadrilateral."""
+    """A quadrilateral."""
 
-    def __init__(self, colour, point1, point2, point3, point4):
-        self.colour = colour
-        self.point1 = point1
-        self.point2 = point2
-        self.point3 = point3
-        self.point4 = point4
+    colour: Colour
+    point1: Vector
+    point2: Vector
+    point3: Vector
+    point4: Vector
 
     @property
-    def points(self):
-        """Returns the points array."""
+    def points(self) -> list[Vector]:
+        """Return the points array."""
         return [self.point1, self.point2, self.point3, self.point4]
 
 
+@dataclass(slots=True)
 class Line:
-    """a 3D line."""
+    """A 3D line."""
 
-    def __init__(self, colour, point1, point2):
-        self.colour = colour
-        self.point1 = point1
-        self.point2 = point2
+    colour: Colour
+    point1: Vector
+    point2: Vector
 
     @property
-    def points(self):
-        """Returns the points array."""
+    def points(self) -> list[Vector]:
+        """Return the points array."""
         return [self.point1, self.point2]
 
 
+@dataclass(slots=True)
 class Triangle:
-    """a triangle."""
+    """A triangle."""
 
-    def __init__(self, colour, point1, point2, point3):
-        self.colour = colour
-        self.point1 = point1
-        self.point2 = point2
-        self.point3 = point3
+    colour: Colour
+    point1: Vector
+    point2: Vector
+    point3: Vector
 
     @property
-    def points(self):
-        """Returns the points array."""
+    def points(self) -> list[Vector]:
+        """Return the points array."""
         return [self.point1, self.point2, self.point3]
 
 
+@dataclass(frozen=True, slots=True)
 class MetaCommand:
-    """a metacommand."""
+    """A metacommand."""
 
-    def __init__(self, type, text):  # noqa: A002
-        self.type = type
-        self.text = text
+    type: str
+    text: str
 
 
+@dataclass(frozen=True, slots=True)
 class Comment:
-    """a comment."""
+    """A comment."""
 
-    def __init__(self, text):
-        self.text = text
+    text: str

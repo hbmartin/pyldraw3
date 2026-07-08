@@ -13,13 +13,13 @@ TARGET_HREF = "https://library.ldraw.org/library/updates/complete.zip"
 class AnchorTagParser(html.parser.HTMLParser):
     """A custom HTML parser to find the data-pan attribute of a specific anchor tag."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.target_href = TARGET_HREF
-        self.data_pan_value = None
+        self.data_pan_value: str | None = None
         self.found = False
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         """Extract data-pan attribute from target anchor tag."""
         # Stop parsing if the tag has already been found
         if self.found:
@@ -36,7 +36,7 @@ class AnchorTagParser(html.parser.HTMLParser):
                 self.found = True
 
 
-def extract_data_pan_from_html(html_content):
+def extract_data_pan_from_html(html_content: str) -> str | None:
     """Parse HTML content to extract the 'data-pan' attribute from the updates page.
 
     Args:

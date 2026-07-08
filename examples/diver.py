@@ -19,7 +19,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.figure import *
 from ldraw.library.colours import *
 from ldraw.library.parts.minifig.accessories import (
     Airtanks,
@@ -29,6 +28,8 @@ from ldraw.library.parts.minifig.accessories import (
     HairMale,
 )
 from ldraw.library.parts.minifig.torsos import Torso
+
+from ldraw.figure import *
 from ldraw.pieces import Piece
 
 figure = Person(Vector(0, 0, -10), Identity().rotate(-15, ZAxis).rotate(20, XAxis))

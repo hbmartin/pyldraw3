@@ -69,7 +69,7 @@ python examples/figures.py > my_model.ldr
 
 ### Basic Usage
 
-This package allows users to create LDraw scene descriptions using `Piece`s which are `Part`s that have a specific position and orientation. Pieces are collected into a `Group`, whose `repr()` is the LDraw file content:
+This package allows users to create LDraw scene descriptions using `Piece`s which are `Part`s that have a specific position and orientation. `Piece.to_ldraw()` and `Group.to_ldraw()` produce LDraw file content; `str(piece)` and `str(group)` delegate to those serializers:
 
 ```python
 from ldraw.library.colours import Light_Grey
@@ -95,9 +95,9 @@ from ldraw.parts import Parts
 
 config = Config.load()
 parts = Parts(Path(config.ldraw_library_path) / "ldraw" / "parts.lst")
-cowboy_hat = parts.by_name["Hat Cowboy"]  # -> "3629"
-head = parts.by_name["Head with Solid Stud"]  # -> "3626a"
-brick1x1 = parts.by_name["Brick  1 x  1"]  # -> "3005"
+cowboy_hat = parts.get_entry_by_description("Hat Cowboy").code  # -> "3629"
+head = parts.get_entry_by_description("Head with Solid Stud").code  # -> "3626a"
+brick1x1 = parts.get_entry_by_description("Brick  1 x  1").code  # -> "3005"
 ```
 
 Both `cowboy_hat` and `Brick1X2WithClassicSpaceLogoPattern` are just LDraw part code strings, so either style can be passed as the `part` argument to `Piece`.

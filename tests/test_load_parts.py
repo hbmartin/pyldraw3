@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ldraw.parts import Parts
+from ldraw.parts import PartCategory, Parts
 
 
 def test_load_parts() -> None:
@@ -20,6 +20,18 @@ def test_load_parts() -> None:
     part = p.part(code="3001")
 
     assert str(part.path) == "tests/test_ldraw/ldraw/parts/3001.dat"
+
+
+def test_typed_catalog_entries() -> None:
+    p = Parts("tests/test_ldraw/ldraw/parts.lst")
+
+    entry = p.get_entry_by_code("3001")
+    assert entry is not None
+    assert entry.description == "Brick  2 x  4"
+    assert entry.category == PartCategory.BRICK
+    assert p.get_entry_by_description("Brick  2 x  4") == entry
+    assert p.entries_by_category(PartCategory.BRICK) == (entry,)
+    assert not hasattr(p, "parts")
 
 
 def test_load_primitives() -> None:

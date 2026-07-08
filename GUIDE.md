@@ -74,10 +74,10 @@ brick = Piece(
     part=Brick2X2                  # The part to use
 )
 
-print(brick)
+print(brick.to_ldraw())
 ```
 
-This outputs LDraw format text that can be saved to a `.ldr` file and opened in any LDraw-compatible viewer.
+This outputs LDraw format text that can be saved to a `.ldr` file and opened in any LDraw-compatible viewer. `str(brick)` produces the same text; `repr(brick)` is reserved for debugging.
 
 ### 3. Understanding the Coordinate System
 

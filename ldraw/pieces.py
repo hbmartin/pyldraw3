@@ -1,80 +1,117 @@
-"""pieces.py - Classes representing pieces and groups for the ldraw Python package.
+"""Classes representing pieces and groups for the ldraw Python package."""
 
-Copyright (C) 2008 David Boddie <david@boddie.org.uk>
+from __future__ import annotations
 
-This file is part of the ldraw Python package.
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Self
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-# pylint: disable=too-many-arguments, too-few-public-methods
-from functools import reduce
-
+from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
+from ldraw.serialization import format_ldraw_number
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
+def _as_colour(colour: Colour | int) -> Colour:
+    if isinstance(colour, Colour):
+        return colour
+    return Colour(code=colour)
+
+
+@dataclass(slots=True, eq=False, init=False)
 class Piece:
-    """A Piece is a Part with a defined colour, position, and rotation."""
+    """A part with a defined colour, position, and rotation."""
 
-    def __init__(self, colour, position, matrix, part, group=None):
-        self.position = position
-        self.colour = colour
-        self.matrix = matrix
-        self.part = part.upper()
-        self.group = group
-        if group:
-            group.add_piece(self)
-
-    def __repr__(self) -> str:
-        if self.group:
-            position = self.group.position + self.group.matrix * self.position
-            matrix = self.group.matrix * self.matrix
-        else:
-            position = self.position
-            matrix = self.matrix
-        tup = tuple(reduce(lambda row1, row2: row1 + row2, matrix.rows))
-        return (
-            ("1 %i " % self.colour.code)
-            + ("%f " * 3) % (position.x, position.y, position.z)
-            + ("%f " * 9) % tup
-            + ("%s.DAT" % self.part)
-        )
-
-
-class Group:
-    """a Group of Pieces."""
+    colour: Colour
+    position: Vector
+    matrix: Matrix
+    part: str
+    group: Group | None = None
 
     def __init__(
         self,
-        position: Vector | None = None,
-        matrix: Matrix | None = None,
+        colour: Colour | int,
+        position: Vector,
+        matrix: Matrix,
+        part: str,
+        group: Group | None = None,
     ) -> None:
-        self.position = position if position is not None else Vector(0, 0, 0)
-        self.matrix = matrix if matrix is not None else Identity()
-        self.pieces: list[Piece] = []
+        self.colour = _as_colour(colour)
+        self.position = position
+        self.matrix = matrix
+        self.part = part.upper()
+        self.group = group
+        if self.group is not None and self not in self.group.pieces:
+            self.group.add_piece(self)
+
+    def _transformed(self) -> tuple[Vector, Matrix]:
+        if self.group is None:
+            return self.position, self.matrix
+        position = self.group.position + self.group.matrix * self.position
+        matrix = self.group.matrix * self.matrix
+        return position, matrix
+
+    def to_ldraw(self) -> str:
+        """Serialize this piece to an LDraw type 1 line."""
+        position, matrix = self._transformed()
+        fields: Iterable[int | float] = (
+            position.x,
+            position.y,
+            position.z,
+            *matrix.flatten(),
+        )
+        values = " ".join(format_ldraw_number(value) for value in fields)
+        return f"1 {self.colour.code} {values} {self.part}.DAT"
+
+    def __str__(self) -> str:
+        return self.to_ldraw()
 
     def __repr__(self) -> str:
-        return "\n".join([repr(piece) for piece in self.pieces])
+        return (
+            f"Piece(colour={self.colour!r}, position={self.position!r}, "
+            f"matrix={self.matrix!r}, part={self.part!r})"
+        )
+
+
+@dataclass(slots=True, eq=False)
+class Group:
+    """A group of pieces."""
+
+    position: Vector = field(default_factory=lambda: Vector(0, 0, 0))
+    matrix: Matrix = field(default_factory=Identity)
+    pieces: list[Piece] = field(default_factory=list)
+
+    def to_ldraw(self) -> str:
+        """Serialize all pieces in this group to LDraw lines."""
+        return "\n".join(piece.to_ldraw() for piece in self.pieces)
+
+    def __str__(self) -> str:
+        return self.to_ldraw()
+
+    def __repr__(self) -> str:
+        return (
+            f"Group(position={self.position!r}, matrix={self.matrix!r}, "
+            f"pieces={len(self.pieces)})"
+        )
 
     def add_piece(self, piece: Piece) -> None:
         """Add a piece to the group."""
-        self.pieces.append(piece)
-        if piece.group and piece.group != self:
+        if piece.group is not None and piece.group != self:
             piece.group.remove_piece(piece)
+        if piece not in self.pieces:
+            self.pieces.append(piece)
         piece.group = self
 
     def remove_piece(self, piece: Piece) -> None:
         """Remove a piece from the group."""
         self.pieces.remove(piece)
         piece.group = None
+
+    def copy(self) -> Self:
+        """Return a shallow copy of group transforms and piece references."""
+        return type(self)(
+            position=self.position.copy(),
+            matrix=self.matrix.copy(),
+            pieces=list(self.pieces),
+        )

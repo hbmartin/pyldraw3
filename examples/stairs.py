@@ -19,8 +19,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.figure import *
-from ldraw.geometry import Identity
 from ldraw.library.colours import *
 from ldraw.library.parts import Arch1X6, Brick1X1, Brick2X3, Plate6X6
 from ldraw.library.parts.minifig.accessories import ToolMagnifyingGlass
@@ -29,6 +27,9 @@ from ldraw.library.parts.minifig.heads import HeadWithMonocle_Scar_AndMoustacheP
 from ldraw.library.parts.minifig.torsos import (
     TorsoWithBlackSuit_RedShirt_GoldClaspsPattern,
 )
+
+from ldraw.figure import *
+from ldraw.geometry import Identity
 from ldraw.pieces import Group, Piece
 
 group = Group(Vector(0, 0, -40), Identity())
