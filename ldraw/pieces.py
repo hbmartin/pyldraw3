@@ -71,7 +71,7 @@ class Piece:
         suffix: str = DEFAULT_SUFFIX,
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
-        if suffix == DEFAULT_SUFFIX and "." in part:
+        if suffix.upper() == DEFAULT_SUFFIX and "." in part:
             part, suffix = split_reference(part)
         return cls(
             colour=colour,

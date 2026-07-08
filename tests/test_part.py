@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import ldraw.part as part_module
 from ldraw.errors import (
     InvalidLineDataError,
     InvalidNumericValueError,
@@ -19,7 +20,7 @@ from ldraw.lines import (
     Quadrilateral,
     Triangle,
 )
-from ldraw.part import HANDLERS, Part, parse_ldraw_line
+from ldraw.part import HANDLERS, ParsedObject, Part, parse_ldraw_line
 from ldraw.pieces import Piece
 
 
@@ -170,6 +171,34 @@ def test_keywords_ignores_lines_after_header(tmp_path: Path) -> None:
     )
 
     assert Part(path).keywords == ()
+
+
+def test_category_and_keywords_share_header_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "keyworded.dat"
+    path.write_text(
+        "0 Test Part\n"
+        "0 !CATEGORY Brick\n"
+        "0 !KEYWORDS Space, Castle\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+    )
+    parse_count = 0
+    original_parse = part_module.parse_ldraw_line
+
+    def counting_parse(line: str) -> ParsedObject | None:
+        nonlocal parse_count
+        parse_count += 1
+        return original_parse(line)
+
+    monkeypatch.setattr(part_module, "parse_ldraw_line", counting_parse)
+
+    part = Part(path)
+
+    assert part.category == "Brick"
+    assert part.keywords == ("Space", "Castle")
+    assert parse_count == 4
 
 
 def test_objects_parses_valid_lines(tmp_path: Path) -> None:

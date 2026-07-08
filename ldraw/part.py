@@ -188,31 +188,35 @@ class Part:
             self._description = " ".join(next(self.lines).split()[1:])
         return self._description
 
+    def _parse_header(self) -> None:
+        if self._keywords is not None:
+            return
+
+        keywords: list[str] = []
+        for obj in self.objects:
+            if not isinstance(obj, Comment | MetaCommand):
+                break
+            if not isinstance(obj, MetaCommand):
+                continue
+
+            match obj.type:
+                case "CATEGORY" if self._category is None:
+                    self._category = obj.text
+                case "KEYWORDS":
+                    for keyword in obj.text.split(","):
+                        if (stripped := keyword.strip()) and stripped not in keywords:
+                            keywords.append(stripped)
+
+        self._keywords = tuple(keywords)
+
     @property
     def category(self) -> str | None:
         """Get the category of the part from CATEGORY meta command."""
-        if self._category is None:
-            for obj in self.objects:
-                if not isinstance(obj, Comment | MetaCommand):
-                    self._category = None
-                    break
-                if isinstance(obj, MetaCommand) and obj.type == "CATEGORY":
-                    self._category = obj.text
-                    break
-
+        self._parse_header()
         return self._category
 
     @property
     def keywords(self) -> tuple[str, ...]:
         """Get the keywords of the part from KEYWORDS meta commands."""
-        if self._keywords is None:
-            keywords: list[str] = []
-            for obj in self.objects:
-                if not isinstance(obj, Comment | MetaCommand):
-                    break
-                if isinstance(obj, MetaCommand) and obj.type == "KEYWORDS":
-                    for keyword in obj.text.split(","):
-                        if (stripped := keyword.strip()) and stripped not in keywords:
-                            keywords.append(stripped)
-            self._keywords = tuple(keywords)
-        return self._keywords
+        self._parse_header()
+        return self._keywords or ()

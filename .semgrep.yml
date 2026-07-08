@@ -48,3 +48,15 @@ rules:
       - pattern-not-inside: |
           if TYPE_CHECKING:
               ...
+
+  - id: pyldraw-default-suffix-comparison-must-normalize-case
+    languages:
+      - python
+    severity: WARNING
+    paths:
+      include:
+        - /ldraw/pieces.py
+    message: Normalize suffix case before comparing it with DEFAULT_SUFFIX.
+    pattern-either:
+      - pattern: suffix == DEFAULT_SUFFIX
+      - pattern: DEFAULT_SUFFIX == suffix

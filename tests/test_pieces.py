@@ -178,6 +178,13 @@ def test_piece_place_custom_suffix() -> None:
     assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
 
 
+def test_piece_place_splits_existing_extension_with_lowercase_default_suffix() -> None:
+    piece = Piece.place("body.ldr", suffix=".dat")
+
+    assert piece.reference == "BODY.LDR"
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+
+
 @pytest.mark.parametrize(
     ("part", "expected"),
     [
