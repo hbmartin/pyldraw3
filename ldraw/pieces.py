@@ -49,7 +49,7 @@ class Piece:
         self.position = position
         self.matrix = matrix
         self.part = part.upper()
-        self.suffix = suffix
+        self.suffix = suffix.upper()
         self.group = None
         if group is not None:
             group.add_piece(self)
