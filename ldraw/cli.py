@@ -203,6 +203,10 @@ def generate_command(*, yes: bool, force: bool) -> int:
     except UnwritableOutputError:
         print(f"{config.generated_path} is unwritable, select another out directory")
         return 1
+    print(
+        "Run 'ldraw stubs' from your project root to refresh the ldraw-stubs "
+        "package for IDE autocomplete and type checking.",
+    )
     return 0
 
 

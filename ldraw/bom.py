@@ -81,21 +81,29 @@ def bill_of_materials(
     ``root.submodel_view(name)`` rather than a model taken straight from
     ``Model.submodels`` — the latter treats nested submodel references as
     leaf parts.
+
+    Part codes are counted case-insensitively; each row shows the code as
+    first written in the model.
     """
-    counts = Counter((piece.part, piece.colour) for piece in model.iter_pieces())
+    counts: Counter[tuple[str, Colour]] = Counter()
+    display: dict[str, str] = {}
+    for piece in model.iter_pieces():
+        part_key = piece.part.casefold()
+        display.setdefault(part_key, piece.part)
+        counts[(part_key, piece.colour)] += 1
     rows = [
         BomRow(
-            part=part,
-            description=_description(part, parts),
+            part=display[part_key],
+            description=_description(part_key, parts),
             colour_code=colour.code,
             colour_name=_colour_name(colour, parts),
             quantity=quantity,
         )
-        for (part, colour), quantity in counts.items()
+        for (part_key, colour), quantity in counts.items()
     ]
     rows.sort(
         key=lambda row: (
-            row.part,
+            row.part.casefold(),
             row.colour_code is None,
             row.colour_code or 0,
             row.colour_name or "",

@@ -52,6 +52,20 @@ class Colour:
         if self.rgb is not None:
             object.__setattr__(self, "rgb", f"#{normalized_rgb_hex(self.rgb)}")
 
+    @property
+    def is_solid(self) -> bool:
+        """Whether this colour is plain opaque paint — no alpha, no finish.
+
+        Judged from the data on this instance: full alpha (or none given)
+        and no colour attributes (``CHROME``, ``GLITTER``, ``LUMINANCE``,
+        …). Colours from a parts catalog carry both fields; a bare
+        ``Colour(code=...)`` placeholder carries neither and so reads as
+        solid — look the code up in ``Parts.colours_by_code`` to judge the
+        real palette entry.
+        """
+        opaque = self.alpha is None or self.alpha == OPAQUE_ALPHA
+        return opaque and not self.colour_attributes
+
     def _direct_key(self) -> tuple[str | None, int]:
         return self.rgb, OPAQUE_ALPHA if self.alpha is None else self.alpha
 

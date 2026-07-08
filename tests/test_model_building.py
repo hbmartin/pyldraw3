@@ -45,7 +45,7 @@ def test_add_group_applies_transform_at_serialization() -> None:
     model.add_group(group)
 
     assert model.pieces == [piece]
-    assert model.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3001.DAT"
+    assert model.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
 
 
 def test_add_group_captures_all_figure_pieces() -> None:
@@ -147,7 +147,7 @@ def test_add_submodel_round_trips_through_mpd() -> None:
 
     piece = root.add_submodel(body, colour=14, position=Vector(0, -24, 0))
 
-    assert piece.reference == "CAR BODY.LDR"
+    assert piece.reference == "car body.ldr"
     assert root.submodel_for(piece) is body
     reparsed = parse_model(root.to_ldraw())
     assert sorted(reparsed.submodels) == ["car body.ldr"]
@@ -160,7 +160,7 @@ def test_add_submodel_defaults_and_extensionless_name() -> None:
 
     piece = root.add_submodel(sub)
 
-    assert piece.reference == "BODY"
+    assert piece.reference == "body"
     assert piece.colour == Colour(code=16)
     assert piece.position == Vector(0, 0, 0)
     assert root.submodel_for(piece) is sub
@@ -264,7 +264,7 @@ def test_bare_submodel_iteration_treats_nested_references_as_leaves() -> None:
 
     leaves = sorted(piece.reference for piece in bare.iter_pieces())
 
-    assert leaves == ["3001.DAT", "INNER.LDR"]
+    assert leaves == ["3001.dat", "inner.LDR"]
 
 
 def test_submodel_view_expands_nested_references_against_the_root() -> None:
@@ -273,7 +273,7 @@ def test_submodel_view_expands_nested_references_against_the_root() -> None:
     view = root.submodel_view("outer.ldr")
     leaves = sorted(piece.reference for piece in view.iter_pieces())
 
-    assert leaves == ["3001.DAT", "3005.DAT"]
+    assert leaves == ["3001.dat", "3005.dat"]
 
 
 def test_submodel_view_bill_of_materials_counts_nested_leaves() -> None:
@@ -349,3 +349,104 @@ def test_find_pieces_recursive() -> None:
     assert model.find_pieces(part="3005") == []
     recursive = model.find_pieces(part="3005", recursive=True)
     assert [piece.colour.code for piece in recursive] == [4, 0]
+
+
+def test_set_header_meta_inserts_in_canonical_order() -> None:
+    model = Model()
+
+    model.set_header(
+        description="A Model",
+        name="a.ldr",
+        author="someone",
+        ldraw_org="Model",
+        license="Licensed under CC BY 4.0",
+    )
+
+    assert model.objects == [
+        Comment("A Model"),
+        Comment("Name: a.ldr"),
+        Comment("Author: someone"),
+        MetaCommand("LDRAW_ORG", "Model"),
+        MetaCommand("LICENSE", "Licensed under CC BY 4.0"),
+    ]
+    assert model.ldraw_org == "Model"
+    assert model.license == "Licensed under CC BY 4.0"
+
+
+def test_set_header_meta_replaces_existing_values() -> None:
+    model = parse_model(
+        "0 A Model\n0 Name: a.ldr\n0 !LDRAW_ORG Unofficial_Model\n0 !LICENSE Old\n",
+    )
+
+    model.set_header(ldraw_org="Model", license="New")
+
+    assert model.to_ldraw() == (
+        "0 A Model\n0 Name: a.ldr\n0 !LDRAW_ORG Model\n0 !LICENSE New"
+    )
+
+
+def test_set_header_meta_lands_before_unmanaged_header_lines() -> None:
+    model = parse_model("0 A Model\n0 BFC CERTIFY CCW\n")
+
+    model.set_header(license="CC BY 4.0")
+
+    assert model.objects == [
+        Comment("A Model"),
+        MetaCommand("LICENSE", "CC BY 4.0"),
+        Comment("BFC CERTIFY CCW"),
+    ]
+
+
+def test_set_header_meta_skips_non_header_objects() -> None:
+    model = Model(objects=[brick(), MetaCommand("LDRAW_ORG", "Part")])
+
+    model.set_header(ldraw_org="Model")
+
+    assert model.objects[0] == MetaCommand("LDRAW_ORG", "Model")
+    assert isinstance(model.objects[1], Piece)
+    assert model.objects[2] == MetaCommand("LDRAW_ORG", "Part")
+
+
+def test_add_step_groups_pieces_into_steps() -> None:
+    model = Model()
+    first = brick()
+    second = brick("3002")
+    third = brick("3003")
+
+    model.add(first)
+    model.add_step()
+    model.add(second, third)
+
+    assert model.steps == [[first], [second, third]]
+    assert "0 STEP" in model.to_ldraw()
+
+
+def test_steps_without_markers_is_a_single_step() -> None:
+    first = brick()
+    second = brick("3002")
+    model = Model(objects=[first, second])
+
+    assert model.steps == [[first, second]]
+
+
+def test_steps_ignores_a_trailing_marker() -> None:
+    model = Model()
+    piece = brick()
+    model.add(piece)
+    model.add_step()
+
+    assert model.steps == [[piece]]
+
+
+def test_steps_parses_markers_case_insensitively() -> None:
+    model = parse_model(
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "0 step\n"
+        "1 16 0 0 24 1 0 0 0 1 0 0 0 1 3001.dat\n",
+    )
+
+    assert [len(step) for step in model.steps] == [1, 1]
+
+
+def test_empty_model_has_one_empty_step() -> None:
+    assert Model().steps == [[]]

@@ -24,6 +24,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
   - [Examples](#examples)
   - [Basic Usage](#basic-usage)
   - [Reading and Writing Model Files](#reading-and-writing-model-files)
+  - [Part Geometry Queries](#part-geometry-queries)
   - [IDE Autocompletion and Type Checking](#ide-autocompletion-and-type-checking)
 - [Requirements](#requirements)
 - [Configuration](#configuration)
@@ -173,9 +174,38 @@ model.save("my_model_out.ldr")
 
 Every parsed object (`Piece`, `Line`, `Triangle`, `Quadrilateral`,
 `OptionalLine`, `Comment`, `MetaCommand`) has a `to_ldraw()` method, so
-parsed content round-trips back to LDraw text. Parse errors report the file
-and 1-based line number. `ldraw validate` exposes the same checks on the
-command line.
+parsed content round-trips back to LDraw text - subfile reference casing
+included, byte for byte. Parse errors report the file and 1-based line
+number. `ldraw validate` exposes the same checks on the command line.
+
+Building steps are first-class: `model.add_step()` appends a `0 STEP`
+marker and `model.steps` returns the pieces grouped step by step. Header
+lines are managed through `model.set_header(description=..., name=...,
+author=..., ldraw_org=..., license=...)`.
+
+### Part Geometry Queries
+
+`Parts` can answer placement questions directly from the library's part
+files, resolving subfile references recursively:
+
+```python
+from ldraw import Parts
+
+parts = Parts.get("~/ldraw/parts.lst")
+
+box = parts.bounding_box("3001")     # axis-aligned, in LDU
+print(box.min, box.max, box.size)    # origin sits on the stud plane; +Y is down
+
+print(parts.stud_positions("3001"))  # centres of the 8 top studs
+
+for stud in parts.studs("3062b"):    # every stud primitive, tubes included
+    print(stud.name, stud.description, stud.position, stud.is_top_stud)
+```
+
+Boxes are composed from memoized per-subfile boxes, exact under the
+axis-aligned rotations that dominate the library. Stud queries expand stud
+group primitives down to individual `stud*` references; `is_top_stud`
+distinguishes upward connectors from underside tubes.
 
 ### IDE Autocompletion and Type Checking
 
@@ -265,8 +295,9 @@ uv sync
 # Activate virtual environment
 source .venv/bin/activate
 
-# Download and set up LDraw library
-uv run ldraw download --version 2018-02 --yes
+# Download and set up LDraw library (fetches the latest complete release;
+# pass --version 2018-02 to pin a dated release for reproducible builds)
+uv run ldraw download --yes
 uv run ldraw generate --yes
 ```
 

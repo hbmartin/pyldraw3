@@ -217,3 +217,25 @@ def test_mid_body_meta_preserved_in_order() -> None:
         "2026-07-07 [tests] created",
     )
     assert model.to_ldraw() == text.rstrip("\n")
+
+
+def test_mixed_case_references_round_trip_byte_identically() -> None:
+    text = (
+        "0 Name: main.ldr\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3040b.dat\n"
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 s\\3040s01.dat\n"
+        "1 14 0 0 0 1 0 0 0 1 0 0 0 1 LEGACY.DAT"
+    )
+
+    assert parse_model(text).to_ldraw() == text
+
+
+def test_submodel_reference_case_matches_its_file_section() -> None:
+    root = Model(name="main.ldr")
+    sub = Model(name="wing.ldr", objects=[Piece.place("3001")])
+
+    root.add_submodel(sub)
+
+    text = root.to_ldraw()
+    assert "1 16 0 0 0 1 0 0 0 1 0 0 0 1 wing.ldr" in text
+    assert "0 FILE wing.ldr" in text

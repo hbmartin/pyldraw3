@@ -82,3 +82,11 @@ def test_colour_not_equal_to_other_types() -> None:
     assert Colour() != None  # noqa: E711 - exercises __eq__, not identity
     assert Colour(rgb="#ABCDEF") != None  # noqa: E711
     assert Colour(code=1) != "1"
+
+
+def test_is_solid_reflects_alpha_and_attributes() -> None:
+    assert Colour(code=4, rgb="#C91A09", alpha=255, colour_attributes=[]).is_solid
+    assert Colour(code=16).is_solid
+    assert not Colour(code=36, rgb="#C91A09", alpha=128).is_solid
+    assert not Colour(code=383, colour_attributes=["CHROME"]).is_solid
+    assert not Colour(code=114, alpha=128, colour_attributes=["GLITTER"]).is_solid

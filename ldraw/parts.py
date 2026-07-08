@@ -9,11 +9,16 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
-from ldraw.colour import Colour, normalized_rgb_hex
+from ldraw.colour import Colour
 from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
 from ldraw.part import Part
+
+if TYPE_CHECKING:
+    from ldraw.geometry import Vector
+    from ldraw.part_geometry import BoundingBox, StudReference
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
@@ -365,19 +370,15 @@ class PartsCatalog:
             if category == PartCategory.OTHER:
                 continue
             module_path = (category.module_name,)
-            sections.setdefault(module_path, {})
+            module_dict = sections.setdefault(module_path, {})
             for entry in entries:
-                sections[module_path][symbol_description(entry.description)] = (
-                    entry.code
-                )
+                module_dict[symbol_description(entry.description)] = entry.code
 
         for section, entries in self.by_minifig_section.items():
             module_path = ("minifig", section.value)
-            sections.setdefault(module_path, {})
+            module_dict = sections.setdefault(module_path, {})
             for entry in entries:
-                sections[module_path][symbol_description(entry.description)] = (
-                    entry.code
-                )
+                module_dict[symbol_description(entry.description)] = entry.code
 
         return sections
 
@@ -390,7 +391,20 @@ def _parts_for_stat(parts_lst: str, _stat_key: tuple[int, int]) -> Parts:
 class Parts:
     """Part catalog loader."""
 
-    ColourAttributes = ("CHROME", "PEARLESCENT", "RUBBER", "MATTE_METALLIC", "METAL")
+    # Finish tokens recognized in LDConfig !COLOUR lines. GLITTER and
+    # SPECKLE appear after a MATERIAL token; LUMINANCE marks glow-in-the-dark
+    # colours. MATERIAL itself is not an attribute — it always accompanies
+    # GLITTER or SPECKLE and would only add noise.
+    ColourAttributes = (
+        "CHROME",
+        "PEARLESCENT",
+        "RUBBER",
+        "MATTE_METALLIC",
+        "METAL",
+        "GLITTER",
+        "SPECKLE",
+        "LUMINANCE",
+    )
 
     @classmethod
     def get(cls, parts_lst: str | Path) -> Parts:
@@ -502,6 +516,7 @@ class Parts:
 
     def _load_parts_list(self) -> None:
         """Load parts from the parts.lst file."""
+        duplicate_descriptions = 0
         with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
             for line in parts_lst_file:
                 pieces = re.split(DOT_DAT, line)
@@ -509,9 +524,19 @@ class Parts:
                     break
 
                 code, description = self.section_find(pieces)
+                if description in self.by_name and self.by_name[description] != code:
+                    duplicate_descriptions += 1
                 self.by_name[description] = code
                 self.by_code[code] = description
                 self.by_code_name[(code, description)] = None
+        if duplicate_descriptions:
+            logger.info(
+                "%d parts in %s share a description with another part"
+                " (mostly '=' alias parts); lookups by description and"
+                " generated symbols resolve to the last listed code",
+                duplicate_descriptions,
+                self.path,
+            )
 
     def _scan_library_directories(self) -> None:
         """Scan the library directory for parts, colours, and primitives."""
@@ -574,12 +599,12 @@ class Parts:
     def description_for(self, code: str) -> str | None:
         """Return the ``parts.lst`` description for a part code, or None.
 
-        The lookup tolerates casing differences: ``Piece.part`` codes are
-        normalized to uppercase while ``parts.lst`` codes are typically
-        lowercase, so the code is tried as given, lowercased, and
-        uppercased.
+        The lookup tolerates casing differences: ``Piece.part`` preserves
+        whatever casing the source used while ``parts.lst`` codes are
+        typically lowercase, so the code is tried as given, lowercased,
+        and uppercased.
         """
-        for candidate in (code, code.lower(), code.upper()):
+        for candidate in dict.fromkeys((code, code.lower(), code.upper())):
             if (description := self.by_code.get(candidate)) is not None:
                 return description
         return None
@@ -618,6 +643,31 @@ class Parts:
             return self.part(description=description, code=code)
         except PartError:
             return None
+
+    def bounding_box(self, code: str) -> BoundingBox:
+        """Axis-aligned bounding box of a part's geometry, in LDU.
+
+        Subfiles are resolved recursively; unresolvable ones are skipped
+        with a warning. Raises ``PartNotFoundError`` for an unknown code
+        and ``NoGeometryError`` when the part draws nothing.
+        """
+        from ldraw.part_geometry import part_bounding_box  # noqa: PLC0415
+
+        return part_bounding_box(self, code)
+
+    def studs(self, code: str) -> tuple[StudReference, ...]:
+        """All stud primitives a part places, in the part's own coordinates.
+
+        Includes underside tubes and other downward studs; filter with
+        ``StudReference.is_top_stud`` or use ``stud_positions``.
+        """
+        from ldraw.part_geometry import part_studs  # noqa: PLC0415
+
+        return part_studs(self, code)
+
+    def stud_positions(self, code: str) -> tuple[Vector, ...]:
+        """Positions of a part's top studs (upward connectors), in LDU."""
+        return tuple(stud.position for stud in self.studs(code) if stud.is_top_stud)
 
     def _find_parts_subdirs(self, directory: Path) -> None:
         for item in directory.iterdir():
@@ -680,7 +730,13 @@ class Parts:
             ]
 
             try:
-                canonical_rgb = f"#{normalized_rgb_hex(rgb)}"
+                colour = Colour(
+                    code=code,
+                    name=name,
+                    rgb=rgb,
+                    alpha=alpha if alpha is not None else 255,
+                    colour_attributes=colour_attributes,
+                )
             except ValueError:
                 logger.warning(
                     "ignoring colour %r (code %s): invalid VALUE %r",
@@ -689,14 +745,8 @@ class Parts:
                     rgb,
                 )
                 continue
-            colour = Colour(
-                code,
-                name,
-                canonical_rgb,
-                alpha if alpha is not None else 255,
-                colour_attributes,
-            )
 
+            canonical_rgb = cast("str", colour.rgb)
             if alpha is not None:
                 self.alpha_values[name] = alpha
                 self.alpha_values[code] = alpha

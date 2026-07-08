@@ -47,7 +47,7 @@ def test_piece_to_ldraw_and_str_are_compact() -> None:
         Brick1X1,
     )
 
-    expected = "1 15 40 0.125 0 0 0 -1 0 1 0 1 0 0 3005.DAT"
+    expected = "1 15 40 0.125 0 0 0 -1 0 1 0 1 0 0 3005.dat"
     assert piece.to_ldraw() == expected
     assert str(piece) == expected
     assert not repr(piece).startswith("1 ")
@@ -57,7 +57,7 @@ def test_group_to_ldraw_applies_transform() -> None:
     group = Group(position=Vector(10, 0, 0))
     Piece(White, Vector(40, 0, 0), Identity(), Brick1X1, group=group)
 
-    assert group.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert group.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
     assert str(group) == group.to_ldraw()
 
 
@@ -77,8 +77,8 @@ def test_group_copy_is_independent() -> None:
     duplicate = group.copy()
     duplicate.position = Vector(20, 0, 0)
 
-    assert duplicate.to_ldraw() == "1 15 60 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
-    assert group.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert duplicate.to_ldraw() == "1 15 60 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
+    assert group.to_ldraw() == "1 15 50 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
     assert piece in group.pieces
     assert duplicate.pieces[0] is not piece
     assert duplicate.pieces[0].group is duplicate
@@ -92,7 +92,7 @@ def test_piece_serializes_direct_colour() -> None:
         Brick1X1,
     )
 
-    assert piece.to_ldraw() == "1 0x200FF00 0 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert piece.to_ldraw() == "1 0x200FF00 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
 
 
 def test_piece_rejects_colour_without_code_or_rgb() -> None:
@@ -105,7 +105,7 @@ def test_piece_rejects_colour_without_code_or_rgb() -> None:
 def test_piece_expands_shorthand_direct_colour() -> None:
     piece = Piece(Colour(rgb="#0f0"), Vector(0, 0, 0), Identity(), Brick1X1)
 
-    assert piece.to_ldraw() == "1 0x200FF00 0 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert piece.to_ldraw() == "1 0x200FF00 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
 
 
 def test_piece_rejects_translucent_direct_colour() -> None:
@@ -128,17 +128,17 @@ def test_malformed_direct_colour_is_rejected_at_construction() -> None:
 def test_piece_suffix_defaults_to_dat() -> None:
     piece = Piece(White, Vector(0, 0, 0), Identity(), Brick1X1)
 
-    assert piece.suffix == ".DAT"
-    assert piece.reference == "3005.DAT"
-    assert piece.to_ldraw().endswith(" 3005.DAT")
-    assert "suffix='.DAT'" in repr(piece)
+    assert piece.suffix == ".dat"
+    assert piece.reference == "3005.dat"
+    assert piece.to_ldraw().endswith(" 3005.dat")
+    assert "suffix='.dat'" in repr(piece)
 
 
 def test_piece_custom_suffix() -> None:
     piece = Piece(White, Vector(0, 0, 0), Identity(), "body", suffix=".LDR")
 
-    assert piece.reference == "BODY.LDR"
-    assert piece.to_ldraw() == "1 15 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+    assert piece.reference == "body.LDR"
+    assert piece.to_ldraw() == "1 15 0 0 0 1 0 0 0 1 0 0 0 1 body.LDR"
 
 
 def test_group_copy_preserves_suffix() -> None:
@@ -153,7 +153,7 @@ def test_group_copy_preserves_suffix() -> None:
 def test_piece_place_defaults() -> None:
     piece = Piece.place(Brick1X1)
 
-    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3005.DAT"
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3005.dat"
     assert piece.group is None
 
 
@@ -167,42 +167,43 @@ def test_piece_place_explicit_arguments() -> None:
         group=group,
     )
 
-    assert piece.to_ldraw() == "1 15 10 0 0 0 0 -1 0 1 0 1 0 0 3005.DAT"
+    assert piece.to_ldraw() == "1 15 10 0 0 0 0 -1 0 1 0 1 0 0 3005.dat"
     assert piece in group.pieces
 
 
 def test_piece_place_custom_suffix() -> None:
     piece = Piece.place("body", suffix=".LDR")
 
-    assert piece.reference == "BODY.LDR"
-    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+    assert piece.reference == "body.LDR"
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 body.LDR"
 
 
-def test_piece_place_splits_existing_extension_with_lowercase_default_suffix() -> None:
+def test_piece_place_splits_existing_extension_with_default_suffix() -> None:
     piece = Piece.place("body.ldr", suffix=".dat")
 
-    assert piece.reference == "BODY.LDR"
-    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+    assert piece.reference == "body.ldr"
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 body.ldr"
 
 
-def test_piece_normalizes_lowercase_suffix() -> None:
+def test_piece_preserves_suffix_case() -> None:
     piece = Piece(White, Vector(0, 0, 0), Identity(), "body", suffix=".ldr")
 
-    assert piece.suffix == ".LDR"
-    assert piece.reference == "BODY.LDR"
+    assert piece.suffix == ".ldr"
+    assert piece.reference == "body.ldr"
 
 
-def test_piece_place_normalizes_lowercase_custom_suffix() -> None:
-    piece = Piece.place("3001", suffix=".dat")
+def test_piece_place_preserves_reference_case() -> None:
+    piece = Piece.place("3040B.DAT")
 
-    assert piece.reference == "3001.DAT"
+    assert piece.reference == "3040B.DAT"
 
 
 @pytest.mark.parametrize(
     ("part", "expected"),
     [
-        ("body.ldr", "BODY.LDR"),
-        ("s\\3001s01.dat", "S\\3001S01.DAT"),
+        ("body.ldr", "body.ldr"),
+        ("BODY.LDR", "BODY.LDR"),
+        ("s\\3001s01.dat", "s\\3001s01.dat"),
     ],
 )
 def test_piece_place_uses_existing_extension(part: str, expected: str) -> None:

@@ -32,7 +32,7 @@ CODED_COLOURS = st.integers(min_value=0, max_value=511).map(Colour)
 DIRECT_COLOURS = st.integers(min_value=0, max_value=0xFF_FF_FF).map(
     lambda value: Colour(rgb=f"#{value:06X}", alpha=255),
 )
-PART_NAMES = st.from_regex(r"[0-9A-Z]{1,10}", fullmatch=True)
+PART_NAMES = st.from_regex(r"[0-9A-Za-z]{1,10}", fullmatch=True)
 # The tokenizing parser collapses whitespace, so text is built from single words.
 WORDS = st.text(
     alphabet=st.characters(categories=("L", "N")),
@@ -104,7 +104,7 @@ def test_piece_round_trip(
     assert isinstance(parsed, Piece)
     assert parsed.colour == colour
     assert parsed.part == part
-    assert parsed.suffix == ".DAT"
+    assert parsed.suffix == ".dat"
     for actual, expected in zip(
         (parsed.position.x, parsed.position.y, parsed.position.z),
         (position.x, position.y, position.z),

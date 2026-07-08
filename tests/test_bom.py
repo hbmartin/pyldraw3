@@ -81,18 +81,22 @@ def test_bom_resolves_description_and_colour_name_from_catalog() -> None:
     ]
 
 
-def test_bom_falls_back_to_lowercase_code_lookup(tmp_path: Path) -> None:
+def test_bom_counts_codes_case_insensitively(tmp_path: Path) -> None:
     ldraw_dir = tmp_path / "ldraw"
     parts_dir = ldraw_dir / "parts"
     parts_dir.mkdir(parents=True)
     (parts_dir / "123abc.dat").write_text("0 Test Part\n")
     (ldraw_dir / "parts.lst").write_text("123abc.dat  Test Part\n")
     parts = Parts(ldraw_dir / "parts.lst")
-    model = Model(objects=[Piece.place("123abc")])
+    # Mixed-case references to the same part count as one row, shown with
+    # the code as first written; the description lookup is case-tolerant.
+    model = Model(objects=[Piece.place("123ABC"), Piece.place("123abc")])
 
     rows = bill_of_materials(model, parts=parts)
 
+    assert len(rows) == 1
     assert rows[0].part == "123ABC"
+    assert rows[0].quantity == 2
     assert rows[0].description == "Test Part"
 
 
