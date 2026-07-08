@@ -29,8 +29,7 @@ PyLDraw3 is a Python package that allows you to create LDraw format files - a st
 
 - Build LEGO models using Python code
 - Create minifigures with detailed positioning
-- Export models to various formats (PNG, POV-Ray, SVG)
-- Generate parts inventories
+- Write standard `.ldr` files viewable in any LDraw-compatible viewer (LDView, LeoCAD, Stud.io)
 - Work with groups and transformations for complex scenes
 
 
@@ -212,7 +211,7 @@ detective.right_leg(Black, -40)
 
 ### Scene Composition with Lighting
 
-Add lighting to your scenes for better renders:
+You can embed `LIGHT` pseudo-pieces in a scene. They have no effect in PyLDraw3 itself, but are honored by some downstream raytracers when rendering the exported `.ldr` file:
 
 ```python
 from ldraw.pieces import Piece
@@ -318,9 +317,8 @@ uv run ldraw generate --yes
 Now that you understand the basics:
 
 1. Explore the `examples/` directory for more complex model ideas
-2. Experiment with the export tools to visualize your creations
+2. Open your generated `.ldr` files in an LDraw viewer (LDView, LeoCAD, Stud.io) to render them
 3. Try building your own custom minifigures and vehicles
-4. Look into the POV-Ray export for high-quality renderings
-5. Create your own library of reusable model components
+4. Create your own library of reusable model components
 
 Happy building with PyLDraw3!
