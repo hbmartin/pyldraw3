@@ -16,11 +16,13 @@ import requests
 import yaml
 
 from ldraw import generate as do_generate
+from ldraw.bom import BomRow, rows_to_csv, rows_to_json
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
-from ldraw.errors import LibraryNotGeneratedError
+from ldraw.errors import LibraryNotGeneratedError, PartError
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.model import read_model
 from ldraw.parts import CatalogEntry, PartCategory, Parts
 from ldraw.stubs import write_stub_package
 from ldraw.utils import camel, clean
@@ -105,6 +107,29 @@ def build_parser() -> ArgumentParser:
         "file",
         type=Path,
         help="Path to the file to validate.",
+    )
+
+    bom_parser = subparsers.add_parser(
+        "bom",
+        help="Print a bill of materials for an LDraw model file.",
+    )
+    bom_parser.add_argument(
+        "file",
+        type=Path,
+        help="Path to the .ldr or .mpd file.",
+    )
+    bom_parser.add_argument(
+        "--format",
+        choices=("table", "csv", "json"),
+        default="table",
+        help="Output format (default: table).",
+    )
+    bom_parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Write output to a file instead of stdout.",
     )
 
     stubs_parser = subparsers.add_parser(
@@ -270,6 +295,59 @@ def validate_command(*, file: Path) -> int:
     return 0
 
 
+def _format_bom_table(rows: list[BomRow]) -> str:
+    """Format BOM rows as an aligned text table."""
+    if not rows:
+        return "no pieces"
+    lines = [f"{'qty':>5}  {'part':<12} {'colour':<20} description"]
+    for row in rows:
+        colour = row.colour_name or (
+            str(row.colour_code) if row.colour_code is not None else ""
+        )
+        line = f"{row.quantity:>5}  {row.part:<12} {colour:<20} {row.description or ''}"
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
+def _format_bom(rows: list[BomRow], *, output_format: str) -> str:
+    """Format BOM rows in the requested output format."""
+    match output_format:
+        case "csv":
+            return rows_to_csv(rows)
+        case "json":
+            return rows_to_json(rows)
+        case _:
+            return _format_bom_table(rows)
+
+
+def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
+    """Print or write a bill of materials for an LDraw model file."""
+    if not file.is_file():
+        print(f"{file}: not found")
+        return 1
+    parts = _try_load_parts()
+    if parts is None:
+        print(
+            "note: no parts library found; descriptions and colour names omitted",
+            file=sys.stderr,
+        )
+    try:
+        model = read_model(file)
+        rows = model.bill_of_materials(parts=parts)
+    except PartError as exc:
+        print(f"{file}: {exc.message}")
+        return 1
+    text = _format_bom(rows, output_format=output_format)
+    if not text.endswith("\n"):
+        text = f"{text}\n"
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        print(f"Wrote {len(rows)} rows to {out}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def stubs_command(*, out: Path) -> int:
     """Write the ldraw-stubs package for IDE autocomplete and type checking."""
     try:
@@ -315,6 +393,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911 - one return pe
             return parts_info_command(code=args.code)
         case "validate":
             return validate_command(file=args.file)
+        case "bom":
+            return bom_command(
+                file=args.file,
+                output_format=args.format,
+                out=args.output,
+            )
         case "stubs":
             return stubs_command(out=args.out)
         case "config":

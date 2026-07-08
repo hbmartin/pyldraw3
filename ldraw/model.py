@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
+from ldraw.bom import bill_of_materials as _bill_of_materials
 from ldraw.errors import (
     DuplicateSubmodelError,
     PartError,
@@ -21,8 +22,10 @@ from ldraw.utils import ldraw_file_name, normalize_ref, split_reference
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from ldraw.bom import BomRow
     from ldraw.colour import Colour
     from ldraw.geometry import Matrix
+    from ldraw.parts import Parts
     from ldraw.pieces import Group
 
 _NumberedLine = tuple[int, str]
@@ -262,6 +265,10 @@ class Model:
     def iter_pieces(self) -> Iterator[Piece]:
         """Recursively yield leaf pieces, expanding submodel references."""
         return _iter_model_pieces(root=self, model=self, visiting=frozenset())
+
+    def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
+        """Count leaf pieces by part and colour, expanding submodel references."""
+        return _bill_of_materials(self, parts=parts)
 
     def find_pieces(
         self,
