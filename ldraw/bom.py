@@ -30,7 +30,7 @@ class _ModelLike(Protocol):
 
     def iter_pieces(self) -> Iterator[Piece]:  # pragma: no cover
         """Yield leaf pieces, expanding submodel references."""
-        ...
+        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)

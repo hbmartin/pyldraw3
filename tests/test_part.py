@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import ldraw.part as part_module
 from ldraw.errors import (
     InvalidLineDataError,
     InvalidNumericValueError,
@@ -185,14 +184,14 @@ def test_category_and_keywords_share_header_parse(
         "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
     )
     parse_count = 0
-    original_parse = part_module.parse_ldraw_line
+    original_parse = parse_ldraw_line
 
     def counting_parse(line: str) -> ParsedObject | None:
         nonlocal parse_count
         parse_count += 1
         return original_parse(line)
 
-    monkeypatch.setattr(part_module, "parse_ldraw_line", counting_parse)
+    monkeypatch.setattr("ldraw.part.parse_ldraw_line", counting_parse)
 
     part = Part(path)
 
