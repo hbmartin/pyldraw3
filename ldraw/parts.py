@@ -226,13 +226,14 @@ class Parts:
             # match case-insensitively: official archives and fixtures use
             # mixed casing such as LDConfig.ldr or PARTS
             name = item.name.lower()
-            if (item.is_dir() and name in {"parts", "p"}):
-                self.parts_dirs.append(item)
-                self._find_parts_subdirs(item)
-            elif name == "ldconfig.ldr":
-                self._load_colours(item)
-            elif name == "p.lst" and item.is_file():
-                self._load_primitives(item)
+            match name:
+                case "parts" | "p" if item.is_dir():
+                    self.parts_dirs.append(item)
+                    self._find_parts_subdirs(item)
+                case "ldconfig.ldr":
+                    self._load_colours(item)
+                case "p.lst" if item.is_file():
+                    self._load_primitives(item)
 
     def _categorize_parts(self):
         """Load part files and categorize them."""

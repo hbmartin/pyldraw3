@@ -6,8 +6,11 @@ ldraw.library Python modules, show the configuration, and print the version.
 
 import sys
 from argparse import ArgumentParser
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from zipfile import BadZipFile
 
+import requests
 import yaml
 
 from ldraw import generate as do_generate
@@ -89,7 +92,11 @@ def download_command(*, version: str, yes: bool) -> int:
         print("Aborted.")
         return 1
 
-    release_id = do_download(version=version, show_progress=sys.stderr.isatty())
+    try:
+        release_id = do_download(version=version, show_progress=sys.stderr.isatty())
+    except (requests.RequestException, ValueError, BadZipFile) as exc:
+        print(f"Download failed: {exc}")
+        return 1
 
     config = Config.load()
     config.ldraw_library_path = str(cache_ldraw / version)
@@ -118,13 +125,16 @@ def generate_command(*, yes: bool, force: bool) -> int:
 
 def config_command() -> int:
     """Print the current pyldraw configuration as YAML."""
-    print(yaml.dump(Config.load().__dict__))
+    print(yaml.dump(Config.load().to_dict()))
     return 0
 
 
 def version_command() -> int:
     """Print the installed pyldraw3 package version."""
-    print(package_version(PACKAGE_NAME))
+    try:
+        print(package_version(PACKAGE_NAME))
+    except PackageNotFoundError:
+        print("unknown (not installed)")
     return 0
 
 

@@ -2,27 +2,35 @@
 
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from ldraw import download
-from ldraw.downloads import ARCHIVE_URL, LDRAW_URL, _normalize_tree
+from ldraw.downloads import ARCHIVE_URL, LDRAW_URL, _normalize_tree, unpack_version
 
 
 @patch("zipfile.ZipFile", spec=zipfile.ZipFile)
 @patch("ldraw.downloads._download_progress")
 @patch("ldraw.downloads.generate_parts_lst")
 def test_download(
-    generate_parts_lst_mock,
-    download_progress_mock,
-    zip_mock,
-    tmp_path,
-    monkeypatch,
+    generate_parts_lst_mock: MagicMock,
+    download_progress_mock: MagicMock,
+    zip_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    zip_mock.return_value.__enter__.return_value.infolist.return_value = []
 
-    download()
+    with patch(
+        "ldraw.downloads.get_latest_release_id",
+        return_value="2099-01",
+    ) as get_latest_release_id_mock:
+        download()
 
     download_progress_mock.assert_called_once()
+    get_latest_release_id_mock.assert_called_once()
     generate_parts_lst_mock.assert_called_once()
 
 
@@ -30,9 +38,9 @@ def test_download(
 @patch("ldraw.downloads.unpack_version")
 @patch("ldraw.downloads._download")
 def test_download_versioned_uses_archive_url(
-    download_mock,
-    unpack_version_mock,
-    generate_parts_lst_mock,
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
 ) -> None:
     download(show_progress=False, version="2018-02")
 
@@ -44,11 +52,11 @@ def test_download_versioned_uses_archive_url(
 @patch("ldraw.downloads.unpack_version")
 @patch("ldraw.downloads._download")
 def test_download_complete_uses_ldraw_url(
-    download_mock,
-    unpack_version_mock,
-    generate_parts_lst_mock,
-    get_latest_release_id_mock,
-    tmp_path,
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    get_latest_release_id_mock: MagicMock,
+    tmp_path: Path,
 ) -> None:
     unpack_version_mock.return_value = tmp_path
 
@@ -56,6 +64,31 @@ def test_download_complete_uses_ldraw_url(
 
     assert download_mock.call_args.args[0] == f"{LDRAW_URL}/complete.zip"
     assert (tmp_path / "ldraw" / "_release.txt").read_text() == "2099-01"
+
+
+def test_download_rejects_invalid_version() -> None:
+    with pytest.raises(ValueError, match="Unsupported LDraw library version"):
+        download(show_progress=False, version="../bad")
+
+
+def test_unpack_version_rejects_unsafe_zip_member(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version_zip = tmp_path / "bad.zip"
+    with zipfile.ZipFile(version_zip, "w") as zip_file:
+        zip_file.writestr("../escape.dat", "bad")
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path / "cache")
+
+    with pytest.raises(ValueError, match="Unsafe ZIP member path"):
+        unpack_version(version_zip, "2018-02")
+
+    assert not (tmp_path / "escape.dat").exists()
+
+
+def test_unpack_version_rejects_invalid_version(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Unsupported LDraw library version"):
+        unpack_version(tmp_path / "missing.zip", "../bad")
 
 
 def test_normalize_tree_github_snapshot(tmp_path: Path) -> None:

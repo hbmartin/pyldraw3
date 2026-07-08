@@ -1,8 +1,9 @@
 """LDraw library file download and extraction functionality."""
 
 import logging
+import re
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import requests
 from progress.bar import Bar
@@ -16,7 +17,54 @@ logger = logging.getLogger(__name__)
 COMPLETE_VERSION = "complete"
 LDRAW_URL = "https://library.ldraw.org/library/updates"
 ARCHIVE_URL = "https://github.com/rienafairefr/ldraw-parts/archive/refs/tags"
+VERSION_RE = re.compile(r"^\d{4}-\d{2}$")
 cache_ldraw = Path(get_cache_dir())
+
+
+def _validate_version(version: str) -> None:
+    if version != COMPLETE_VERSION and not VERSION_RE.fullmatch(version):
+        message = f"Unsupported LDraw library version: {version!r}"
+        raise ValueError(message)
+
+
+def _temporary_rename_path(path: Path) -> Path:
+    for index in range(10_000):
+        suffix = "__pyldraw_tmp__" if index == 0 else f"__pyldraw_tmp_{index}__"
+        candidate = path.with_name(f"{path.name}{suffix}")
+        if not candidate.exists():
+            return candidate
+    message = f"No temporary rename path available for {path}"
+    raise FileExistsError(message)
+
+
+def _case_safe_rename(path: Path, destination: Path) -> Path:
+    temp_path = _temporary_rename_path(path)
+    path.rename(temp_path)
+    return temp_path.rename(destination)
+
+
+def _is_unsafe_zip_member(filename: str) -> bool:
+    posix_path = PurePosixPath(filename)
+    windows_path = PureWindowsPath(filename)
+    return (
+        posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or ".." in posix_path.parts
+        or ".." in windows_path.parts
+    )
+
+
+def _validate_zip_members(zip_ref: zipfile.ZipFile, destination: Path) -> None:
+    destination_root = destination.resolve()
+    for member in zip_ref.infolist():
+        message = f"Unsafe ZIP member path: {member.filename!r}"
+        if _is_unsafe_zip_member(member.filename):
+            raise ValueError(message)
+        target = (destination / member.filename).resolve()
+        try:
+            target.relative_to(destination_root)
+        except ValueError as exc:
+            raise ValueError(message) from exc
 
 
 def _normalize_tree(destination: Path) -> None:
@@ -50,19 +98,22 @@ def _normalize_tree(destination: Path) -> None:
     if ldraw_dir is None:
         return
     if ldraw_dir.name != "ldraw":
-        ldraw_dir = ldraw_dir.rename(destination / "ldraw")
+        ldraw_dir = _case_safe_rename(ldraw_dir, destination / "ldraw")
     for dirpath, dirnames, filenames in ldraw_dir.walk(top_down=False):
         for name in filenames + dirnames:
             lower_name = name.lower()
             if name != lower_name:
-                (dirpath / name).rename(dirpath / lower_name)
+                _case_safe_rename(dirpath / name, dirpath / lower_name)
 
 
 def unpack_version(version_zip: Path, version: str) -> Path:
     """Unpack a downloaded LDraw library ZIP file to the cache directory."""
+    _validate_version(version)
     print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
     with zipfile.ZipFile(version_zip, "r") as zip_ref:
+        destination.mkdir(parents=True, exist_ok=True)
+        _validate_zip_members(zip_ref, destination)
         zip_ref.extractall(destination)
     version_zip.unlink()
     _normalize_tree(destination)
@@ -75,11 +126,11 @@ def _download(url: str, filename: str, chunk_size=1024) -> Path:
     if retrieved.exists():
         return retrieved
 
-    response = requests.get(url, stream=True)  # noqa: S113
-    response.raise_for_status()
+    with requests.get(url, stream=True) as response:  # noqa: S113
+        response.raise_for_status()
 
-    with open(retrieved, "wb") as file:
-        file.writelines(response.iter_content(chunk_size=chunk_size))
+        with retrieved.open("wb") as file:
+            file.writelines(response.iter_content(chunk_size=chunk_size))
 
     return retrieved
 
@@ -90,17 +141,17 @@ def _download_progress(url: str, filename: str, chunk_size=1024) -> Path:
         print(f"File {retrieved} already exists")
         return retrieved
 
-    response = requests.get(url, stream=True)  # noqa: S113
-    response.raise_for_status()
-    total = int(response.headers.get("content-length", 0))
-    bar = Bar(f"Downloading {url} ...", max=total)
+    with requests.get(url, stream=True) as response:  # noqa: S113
+        response.raise_for_status()
+        total = int(response.headers.get("content-length", 0))
+        bar = Bar(f"Downloading {url} ...", max=total)
 
-    with open(retrieved, "wb") as file:
-        for data in response.iter_content(chunk_size=chunk_size):
-            size = file.write(data)
-            bar.next(size)
+        with retrieved.open("wb") as file:
+            for data in response.iter_content(chunk_size=chunk_size):
+                size = file.write(data)
+                bar.next(size)
 
-    bar.finish()
+        bar.finish()
     return retrieved
 
 
@@ -110,6 +161,7 @@ def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> 
     The complete library comes from ldraw.org; versioned releases come from
     snapshot tags of the rienafairefr/ldraw-parts GitHub repository.
     """
+    _validate_version(version)
     filename = f"{version}.zip"
     url = (
         f"{LDRAW_URL}/{filename}"
@@ -117,9 +169,7 @@ def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> 
         else f"{ARCHIVE_URL}/{filename}"
     )
     retrieved = (
-        _download_progress(url, filename)
-        if show_progress
-        else _download(url, filename)
+        _download_progress(url, filename) if show_progress else _download(url, filename)
     )
 
     version_dir = unpack_version(retrieved, version)

@@ -1,0 +1,32 @@
+rules:
+  - id: pyldraw-unsafe-archive-extractall
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/downloads.py
+    message: Validate archive member paths before calling extractall().
+    patterns:
+      - pattern: $ARCHIVE.extractall(...)
+      - pattern-not-inside: |
+          _validate_zip_members($ARCHIVE, ...)
+          ...
+          $ARCHIVE.extractall(...)
+
+  - id: pyldraw-unvalidated-download-version-path
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/downloads.py
+    message: Validate the LDraw download version before using it as a path component.
+    patterns:
+      - pattern: cache_ldraw / version
+      - pattern-not-inside: |
+          def $FUNC(...):
+              ...
+              _validate_version(version)
+              ...
+              cache_ldraw / version

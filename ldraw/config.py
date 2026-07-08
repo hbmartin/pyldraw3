@@ -75,14 +75,18 @@ class Config:
     def __str__(self):
         return f"Config({self.ldraw_library_path=}, {self.generated_path=})"
 
+    def to_dict(self) -> dict[str, str]:
+        """Return public configuration values for serialization."""
+        written = {}
+        if self.ldraw_library_path is not None:
+            written["ldraw_library_path"] = self.ldraw_library_path
+        if self.generated_path is not None:
+            written["generated_path"] = self.generated_path
+        return written
+
     def write(self, config_file=None):
         """Write the config to config.yml."""
         config_path = get_config(config_file=config_file)
 
         with open(config_path, "w") as _config_file:
-            written = {}
-            if self.ldraw_library_path is not None:
-                written["ldraw_library_path"] = self.ldraw_library_path
-            if self.generated_path is not None:
-                written["generated_path"] = self.generated_path
-            yaml.dump(written, _config_file)
+            yaml.dump(self.to_dict(), _config_file)
