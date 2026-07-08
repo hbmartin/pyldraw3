@@ -107,9 +107,45 @@ Both `cowboy_hat` and `Brick1X2WithClassicSpaceLogoPattern` are just LDraw part 
 For new code, `Piece.place` offers a keyword-first constructor with sensible defaults (main colour, origin position, identity rotation):
 
 ```python
-from ldraw.pieces import Piece
+from ldraw import Piece
 
 piece = Piece.place("3005", colour=4)  # red 1x1 brick at the origin
+```
+
+The core construction types are all importable from the top-level package:
+`Model`, `Piece`, `Group`, `Person`, `Colour`, `Vector`, `Matrix`,
+`Identity`, `Parts`, and the read/validate/BOM helpers. Deep imports
+(`from ldraw.pieces import Piece`) keep working.
+
+### Building Models Programmatically
+
+`Model` bridges piece construction and file I/O — build, query, and save:
+
+```python
+from ldraw import Group, Model, Person, Piece, Vector
+
+model = Model.from_pieces(
+    [Piece.place("3001", colour=4)],
+    name="scene.ldr",
+    description="A scene",
+    author="you",
+)
+
+# Figures flow in through their group
+group = Group()
+figure = Person(position=Vector(0, -48, 0), group=group)
+figure.head(colour=14)
+figure.torso(colour=4)
+model.add_group(group)
+
+# Submodels: registers the section and returns the referencing piece
+wheels = Model.from_pieces([Piece.place("3005", colour=0)], name="wheels.ldr")
+model.add_submodel(wheels, position=Vector(0, -24, 0))
+
+model.find_pieces(colour=4)          # query by part and/or colour
+list(model.iter_pieces())            # leaf pieces, submodels expanded
+model.bill_of_materials()            # counted (part, colour) rows
+model.save("scene.ldr")
 ```
 
 ### Reading and Writing Model Files
@@ -191,6 +227,7 @@ positional arguments:
     generate  Generate the ldraw.library modules from the downloaded library.
     parts     Query the parts catalog.
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
+    bom       Print a bill of materials for an LDraw model file.
     stubs     Write a type-stub package for ldraw.library into your project.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
@@ -203,7 +240,8 @@ options:
 - `ldraw generate [--yes] [--force]` - (re)generate `ldraw.library.*` from the currently configured release; `--force` regenerates even if already up to date
 - `ldraw parts search TERM [--limit N]` - search the catalog by description or code substring (exit code 1 when nothing matches)
 - `ldraw parts info CODE` - show a part's description, category, file path, and the generated-library import to use
-- `ldraw validate FILE` - report malformed lines and unknown part references with line numbers (exit code 1 when issues are found)
+- `ldraw validate FILE [--strict]` - lint a file: malformed lines, unknown parts and colour codes are errors; suspect matrices, legacy dithered colours, and unknown meta-commands are warnings (`--strict` makes warnings fail; exit code 1 on errors)
+- `ldraw bom FILE [--format table|csv|json] [-o OUT]` - print a bill of materials counted by part and colour, submodels expanded
 - `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
 - `ldraw config` - print the current configuration as YAML
 - `ldraw version` - print the installed `pyldraw3` version

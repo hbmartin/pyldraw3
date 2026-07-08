@@ -15,6 +15,7 @@ Welcome to PyLDraw3! This guide will help you get started with creating LEGO mod
   - [Working with Groups](#working-with-groups)
   - [Rotations and Transformations](#rotations-and-transformations)
   - [Advanced Minifigure Positioning](#advanced-minifigure-positioning)
+  - [Building Models Programmatically](#building-models-programmatically)
   - [Reading and Writing Model Files](#reading-and-writing-model-files)
   - [Querying and Validating from the CLI](#querying-and-validating-from-the-cli)
 - [Advanced Topics](#advanced-topics)
@@ -209,6 +210,51 @@ detective.left_leg(Black, 50)           # Leg poses
 detective.right_leg(Black, -40)
 ```
 
+### Building Models Programmatically
+
+`Model` is also the way to assemble programmatically built pieces into a
+saveable document. `from_pieces` builds a model with header comments,
+`add`/`add_group` append content (a `Person` figure's pieces flow in through
+its `Group`), and `add_submodel` registers an MPD section and returns the
+type-1 piece that references it:
+
+```python
+from ldraw import Group, Model, Person, Piece, Vector
+
+model = Model.from_pieces(
+    [Piece.place("3001", colour=4)],
+    name="scene.ldr",
+    description="A scene",
+    author="you",
+)
+
+group = Group()
+figure = Person(position=Vector(0, -48, 0), group=group)
+figure.head(colour=14)
+figure.torso(colour=4)
+model.add_group(group)
+
+wheels = Model.from_pieces([Piece.place("3005", colour=0)], name="wheels.ldr")
+reference = model.add_submodel(wheels, position=Vector(0, -24, 0))
+
+model.save("scene.ldr")
+```
+
+Query helpers work on built and parsed models alike:
+
+```python
+model.find_pieces(part="3001")            # by part code
+model.find_pieces(colour=4)               # by colour code or Colour
+model.find_pieces(colour=4, recursive=True)  # expand submodels too
+list(model.iter_pieces())                 # every leaf piece, references expanded
+model.bill_of_materials()                 # BomRow(part, description, colour, qty)
+```
+
+`bill_of_materials` counts leaf pieces by part and colour — a submodel
+placed twice contributes its pieces twice. Pass `parts=Parts.get(...)` to
+resolve human-readable descriptions and colour names, and use
+`ldraw.bom.rows_to_csv` / `rows_to_json` (or the `ldraw bom` CLI) to export.
+
 ### Reading and Writing Model Files
 
 `read_model` reads whole `.ldr` and `.mpd` files into a `Model`. MPD
@@ -247,11 +293,14 @@ Python:
 ```bash
 ldraw parts search "cowboy"     # code, category, description per match
 ldraw parts info 3629           # details + the ldraw.library import to use
-ldraw validate my_model.ldr     # malformed lines and unknown parts, with line numbers
+ldraw validate my_model.ldr     # lint: syntax, parts, colours, matrices, metas
+ldraw bom my_model.mpd          # bill of materials (table, csv, or json)
 ```
 
-`ldraw validate` exits non-zero when issues are found, so it works in CI and
-git hooks. `ldraw stubs` writes an `ldraw-stubs/` PEP 561 package to your
+`ldraw validate` reports errors (malformed lines, unknown parts, unknown
+colour codes) and warnings (legacy dithered colours, scaled/sheared or
+singular matrices, unknown `!`-meta-commands). It exits non-zero on errors —
+add `--strict` to fail on warnings too — so it works in CI and git hooks. `ldraw stubs` writes an `ldraw-stubs/` PEP 561 package to your
 project root so IDEs autocomplete `ldraw.library.*` imports.
 
 ## Advanced Topics
