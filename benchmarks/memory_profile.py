@@ -14,12 +14,7 @@ def test_parts_loading() -> list[object]:  # type: ignore[name-defined]
     """Profile memory usage during parts loading."""
     parts = Parts(PARTS_LST)
     part_numbers = ["3001", "box5", "stud", "stud4"]
-    loaded_parts = []
-
-    for part_num in part_numbers:
-        loaded_parts.append(parts.part(code=part_num))
-
-    return loaded_parts
+    return [parts.part(code=part_num) for part_num in part_numbers]
 
 
 @profile

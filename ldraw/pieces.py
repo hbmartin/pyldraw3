@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Self
 
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
-from ldraw.serialization import format_ldraw_number
+from ldraw.serialization import format_ldraw_colour, format_ldraw_number
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -41,9 +41,9 @@ class Piece:
         self.position = position
         self.matrix = matrix
         self.part = part.upper()
-        self.group = group
-        if self.group is not None and self not in self.group.pieces:
-            self.group.add_piece(self)
+        self.group = None
+        if group is not None:
+            group.add_piece(self)
 
     def _transformed(self) -> tuple[Vector, Matrix]:
         if self.group is None:
@@ -62,7 +62,7 @@ class Piece:
             *matrix.flatten(),
         )
         values = " ".join(format_ldraw_number(value) for value in fields)
-        return f"1 {self.colour.code} {values} {self.part}.DAT"
+        return f"1 {format_ldraw_colour(self.colour)} {values} {self.part}.DAT"
 
     def __str__(self) -> str:
         return self.to_ldraw()
@@ -97,10 +97,11 @@ class Group:
 
     def add_piece(self, piece: Piece) -> None:
         """Add a piece to the group."""
-        if piece.group is not None and piece.group != self:
+        if piece.group is self:
+            return
+        if piece.group is not None:
             piece.group.remove_piece(piece)
-        if piece not in self.pieces:
-            self.pieces.append(piece)
+        self.pieces.append(piece)
         piece.group = self
 
     def remove_piece(self, piece: Piece) -> None:
@@ -109,9 +110,17 @@ class Group:
         piece.group = None
 
     def copy(self) -> Self:
-        """Return a shallow copy of group transforms and piece references."""
-        return type(self)(
+        """Return an independent copy of this group with copies of its pieces."""
+        duplicate = type(self)(
             position=self.position.copy(),
             matrix=self.matrix.copy(),
-            pieces=list(self.pieces),
         )
+        for piece in self.pieces:
+            Piece(
+                colour=piece.colour,
+                position=piece.position.copy(),
+                matrix=piece.matrix.copy(),
+                part=piece.part,
+                group=duplicate,
+            )
+        return duplicate

@@ -334,6 +334,13 @@ class Parts:
                 raise PartNotFoundError(code=code, path=str(self.path))
             self.by_code_name[(code, description)] = part
             category = PartCategory.from_label(part.category)
+            if category is None and part.category is not None:
+                logger.warning(
+                    "unknown LDraw category %r for part %s;"
+                    " falling back to description",
+                    part.category,
+                    code,
+                )
             if category is None:
                 category = self.get_category(description)
             if category is None:

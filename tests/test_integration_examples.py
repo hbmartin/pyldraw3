@@ -13,11 +13,11 @@ def test_example_stairs():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     stairs_script = examples_dir / "stairs.py"
     if not stairs_script.exists():
         pytest.skip("Stairs example script not found")
-    
+
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             result = subprocess.run(
@@ -25,17 +25,20 @@ def test_example_stairs():
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            
+
             # Script should either succeed or fail gracefully
-            assert result.returncode in [0, 1], f"Stairs script failed unexpectedly: {result.stderr}"
-            
+            assert result.returncode in [
+                0,
+                1,
+            ], f"Stairs script failed unexpectedly: {result.stderr}"
+
             # Check if LDraw file was created
             output_files = list(Path(temp_dir).glob("*.ldr"))
             if result.returncode == 0:
                 assert len(output_files) > 0, "Should create LDraw output file"
-            
+
         except subprocess.TimeoutExpired:
             pytest.skip("Stairs example timed out")
 
@@ -46,11 +49,11 @@ def test_example_figure():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     figure_script = examples_dir / "figure.py"
     if not figure_script.exists():
         pytest.skip("Figure example script not found")
-    
+
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             result = subprocess.run(
@@ -58,17 +61,20 @@ def test_example_figure():
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            
+
             # Script should either succeed or fail gracefully
-            assert result.returncode in [0, 1], f"Figure script failed unexpectedly: {result.stderr}"
-            
+            assert result.returncode in [
+                0,
+                1,
+            ], f"Figure script failed unexpectedly: {result.stderr}"
+
             # Check if LDraw file was created
             output_files = list(Path(temp_dir).glob("*.ldr"))
             if result.returncode == 0:
                 assert len(output_files) > 0, "Should create LDraw output file"
-            
+
         except subprocess.TimeoutExpired:
             pytest.skip("Figure example timed out")
 
@@ -80,11 +86,11 @@ def test_example_buggy():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     buggy_script = examples_dir / "buggy.py"
     if not buggy_script.exists():
         pytest.skip("Buggy example script not found")
-    
+
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             result = subprocess.run(
@@ -92,12 +98,15 @@ def test_example_buggy():
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=120  # Buggy might be more complex
+                timeout=120,  # Buggy might be more complex
             )
-            
+
             # Script should either succeed or fail gracefully
-            assert result.returncode in [0, 1], f"Buggy script failed unexpectedly: {result.stderr}"
-            
+            assert result.returncode in [
+                0,
+                1,
+            ], f"Buggy script failed unexpectedly: {result.stderr}"
+
         except subprocess.TimeoutExpired:
             pytest.skip("Buggy example timed out")
 
@@ -108,11 +117,11 @@ def test_example_spaceman():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     spaceman_script = examples_dir / "spaceman.py"
     if not spaceman_script.exists():
         pytest.skip("Spaceman example script not found")
-    
+
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             result = subprocess.run(
@@ -120,12 +129,15 @@ def test_example_spaceman():
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            
+
             # Script should either succeed or fail gracefully
-            assert result.returncode in [0, 1], f"Spaceman script failed unexpectedly: {result.stderr}"
-            
+            assert result.returncode in [
+                0,
+                1,
+            ], f"Spaceman script failed unexpectedly: {result.stderr}"
+
         except subprocess.TimeoutExpired:
             pytest.skip("Spaceman example timed out")
 
@@ -136,10 +148,10 @@ def test_all_examples_syntax():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     python_files = list(examples_dir.glob("*.py"))
     assert len(python_files) > 0, "Should find Python example files"
-    
+
     for script in python_files:
         try:
             # Test syntax by compiling
@@ -147,11 +159,13 @@ def test_all_examples_syntax():
                 ["python", "-m", "py_compile", str(script)],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
-            
-            assert result.returncode == 0, f"Syntax error in {script.name}: {result.stderr}"
-            
+
+            assert (
+                result.returncode == 0
+            ), f"Syntax error in {script.name}: {result.stderr}"
+
         except subprocess.TimeoutExpired:
             pytest.fail(f"Syntax check for {script.name} timed out")
 
@@ -162,7 +176,7 @@ def test_examples_import_ldraw():
     examples_dir = Path("examples")
     if not examples_dir.exists():
         pytest.skip("Examples directory not found")
-    
+
     # Test a simple import check
     test_code = """
 import sys
@@ -174,17 +188,17 @@ except ImportError as e:
     print(f"FAILED: {e}")
     sys.exit(1)
 """
-    
+
     try:
         result = subprocess.run(
             ["uv", "run", "python", "-c", test_code],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
-        
+
         assert result.returncode == 0, f"Failed to import ldraw: {result.stderr}"
         assert "SUCCESS" in result.stdout, "Should confirm successful import"
-        
+
     except subprocess.TimeoutExpired:
         pytest.skip("Import test timed out")

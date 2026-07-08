@@ -13,7 +13,10 @@ from ldraw.errors import InvalidConfigFileError
 CONFIG_FILE = Path(get_config_dir()) / "config.yml"
 
 
-def is_valid_config_file(parser: argparse.ArgumentParser, arg: str) -> Path:  # noqa: ARG001
+def is_valid_config_file(
+    parser: argparse.ArgumentParser,  # noqa: ARG001
+    arg: str,
+) -> Path:
     """Validate that the given config file exists and is valid YAML."""
     path = Path(arg)
     if not path.exists():
