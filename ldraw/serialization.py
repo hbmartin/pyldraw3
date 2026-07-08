@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
+
+from ldraw.colour import normalized_rgb_hex
 
 if TYPE_CHECKING:
     from ldraw.colour import Colour
@@ -11,18 +12,6 @@ if TYPE_CHECKING:
 ZERO_TOLERANCE = 1e-12
 MAX_DECIMAL_PLACES = 12
 OPAQUE_ALPHA = 255
-_DIRECT_COLOUR_RE = re.compile(r"[0-9A-F]{6}")
-
-
-def _direct_colour_hex(rgb: str) -> str:
-    """Normalize an ``#RRGGBB`` (or ``#RGB`` shorthand) string to six hex digits."""
-    hex_digits = rgb.removeprefix("#").upper()
-    if len(hex_digits) == 3:  # shorthand such as "0F0"
-        hex_digits = "".join(digit * 2 for digit in hex_digits)
-    if not _DIRECT_COLOUR_RE.fullmatch(hex_digits):
-        message = f"Invalid rgb value for a direct colour: {rgb!r}"
-        raise ValueError(message)
-    return hex_digits
 
 
 def format_ldraw_colour(colour: Colour) -> str:
@@ -43,7 +32,7 @@ def format_ldraw_colour(colour: Colour) -> str:
                 f"{colour!r}"
             )
             raise ValueError(message)
-        return f"0x2{_direct_colour_hex(colour.rgb)}"
+        return f"0x2{normalized_rgb_hex(colour.rgb)}"
     message = f"Colour has neither a code nor an rgb value: {colour!r}"
     raise ValueError(message)
 
