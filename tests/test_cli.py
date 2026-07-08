@@ -300,11 +300,12 @@ def test_parts_commands_without_library_return_one(
 def test_suggested_import_minifig_section() -> None:
     entry = CatalogEntry(
         code="3901",
-        description="Hair Male",
+        description="Minifig Hair Male",
         category=PartCategory.OTHER,
         minifig_section=MinifigSection.HATS,
     )
 
+    # The Minifig prefix is stripped from generated symbol names.
     assert _suggested_import(entry) == (
         "from ldraw.library.parts.minifig.hats import HairMale"
     )

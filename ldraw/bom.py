@@ -51,7 +51,7 @@ class BomRow:
 def _description(part: str, parts: Parts | None) -> str | None:
     if parts is None:
         return None
-    return parts.by_code.get(part) or parts.by_code.get(part.lower())
+    return parts.description_for(part)
 
 
 def _colour_name(colour: Colour, parts: Parts | None) -> str | None:
@@ -75,6 +75,12 @@ def bill_of_materials(
     A submodel placed twice contributes its pieces twice. Submodel
     reference pieces themselves are expanded, never counted. Descriptions
     and colour names are resolved when a parts catalog is given.
+
+    References only resolve against the given model's own submodel table.
+    To count one submodel of a larger model, pass
+    ``root.submodel_view(name)`` rather than a model taken straight from
+    ``Model.submodels`` — the latter treats nested submodel references as
+    leaf parts.
     """
     counts = Counter((piece.part, piece.colour) for piece in model.iter_pieces())
     rows = [

@@ -11,6 +11,7 @@ from ldraw.errors import (
     PartError,
     SubmodelCycleError,
     SubmodelNameRequiredError,
+    UnknownSubmodelError,
 )
 from ldraw.geometry import Identity, Vector
 from ldraw.lines import Comment, MetaCommand
@@ -261,12 +262,49 @@ class Model:
         self.objects.append(piece)
         return piece
 
+    def submodel_view(self, name: str) -> Model:
+        """Return a submodel that resolves references against this root.
+
+        Models taken straight from ``Model.submodels`` have an empty
+        submodel table, so iterating them treats references to sibling
+        submodels as leaf pieces. The returned model shares this root's
+        submodel table instead, making ``iter_pieces``,
+        ``bill_of_materials``, and ``find_pieces(recursive=True)`` expand
+        nested references correctly. It is a live view — its objects and
+        submodel table are shared with this model, not copied.
+
+        Raises ``UnknownSubmodelError`` for a name that is neither this
+        model's nor one of its submodels'.
+        """
+        key = normalize_ref(name)
+        if key == normalize_ref(self.name):
+            return self
+        if (submodel := self.submodels.get(key)) is None:
+            raise UnknownSubmodelError(name)
+        return Model(
+            name=submodel.name,
+            objects=submodel.objects,
+            submodels=self.submodels,
+        )
+
     def iter_pieces(self) -> Iterator[Piece]:
-        """Recursively yield leaf pieces, expanding submodel references."""
+        """Recursively yield leaf pieces, expanding submodel references.
+
+        References are resolved against *this* model's submodel table. A
+        model taken straight from ``Model.submodels`` has an empty table,
+        so references to sibling submodels are silently yielded as if they
+        were leaf pieces — inspect a submodel through
+        ``root.submodel_view(name)`` instead.
+        """
         return _iter_model_pieces(root=self, model=self, visiting=frozenset())
 
     def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
-        """Count leaf pieces by part and colour, expanding submodel references."""
+        """Count leaf pieces by part and colour, expanding submodel references.
+
+        As with ``iter_pieces``, submodel references only resolve against
+        this model's own submodel table; to count a single submodel of a
+        larger model, call this on ``root.submodel_view(name)``.
+        """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
         return bill_of_materials(self, parts=parts)

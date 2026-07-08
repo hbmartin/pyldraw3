@@ -24,9 +24,10 @@ def test_colour_hash() -> None:
     assert len({c1, c2}) == 1
 
 
-def test_codeless_colour_accepts_valid_rgb() -> None:
+def test_rgb_is_canonicalized_to_hash_rrggbb() -> None:
     assert Colour(rgb="#00FF00").rgb == "#00FF00"
-    assert Colour(rgb="#0f0").rgb == "#0f0"
+    assert Colour(rgb="#0f0").rgb == "#00FF00"
+    assert Colour(rgb="00ff00").rgb == "#00FF00"
 
 
 def test_codeless_colour_rejects_malformed_rgb() -> None:
@@ -41,9 +42,12 @@ def test_codeless_colour_rejects_rgb_with_alpha_channel() -> None:
         Colour(rgb="#0f08")
 
 
-def test_coded_colour_skips_rgb_validation() -> None:
-    # Parsed library colours carry a code; their rgb is not revalidated.
-    assert Colour(code=15, rgb="#FFFFFF").code == 15
+def test_coded_colour_rgb_is_also_canonicalized() -> None:
+    coded = Colour(code=15, rgb="#ffffff")
+    assert coded.code == 15
+    assert coded.rgb == "#FFFFFF"
+    with pytest.raises(ValueError, match="Invalid rgb value"):
+        Colour(code=15, rgb="not-a-colour")
 
 
 def test_direct_colour_equality() -> None:

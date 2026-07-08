@@ -73,6 +73,13 @@ class SubmodelNameRequiredError(PartError):
         )
 
 
+class UnknownSubmodelError(PartError):
+    """The requested submodel name is not in this model's submodel table."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"No submodel named {name!r} in this model")
+
+
 class LibraryNotGeneratedError(Exception):
     """The ldraw.library modules have not been generated yet."""
 
@@ -110,10 +117,3 @@ class CouldNotFindModuleError(ModuleImportError):
         super().__init__(
             f"Could not find module {fullname} at {init_path} or {py_path}.",
         )
-
-
-class InvalidConfigFileError(AssertionError):
-    """The config file is invalid."""
-
-    def __init__(self, config_file: str) -> None:
-        super().__init__(f"The config file {config_file} is invalid.")

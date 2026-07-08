@@ -9,6 +9,7 @@ from ldraw.errors import (
     DuplicateSubmodelError,
     SubmodelCycleError,
     SubmodelNameRequiredError,
+    UnknownSubmodelError,
 )
 from ldraw.figure import Person
 from ldraw.geometry import Identity, Vector
@@ -242,6 +243,64 @@ def test_iter_pieces_raises_on_mutual_cycle() -> None:
 
     with pytest.raises(SubmodelCycleError):
         list(root.iter_pieces())
+
+
+def nested_mpd_root() -> Model:
+    inner = Model(name="inner.ldr", objects=[brick(part="3005", colour=0)])
+    outer = Model(
+        name="outer.ldr",
+        objects=[brick(part="3001", colour=4), Piece.place("inner", suffix=".LDR")],
+    )
+    return Model(
+        name="main.ldr",
+        objects=[Piece.place("outer", suffix=".LDR")],
+        submodels={"outer.ldr": outer, "inner.ldr": inner},
+    )
+
+
+def test_bare_submodel_iteration_treats_nested_references_as_leaves() -> None:
+    root = nested_mpd_root()
+    bare = root.submodels["outer.ldr"]
+
+    leaves = sorted(piece.reference for piece in bare.iter_pieces())
+
+    assert leaves == ["3001.DAT", "INNER.LDR"]
+
+
+def test_submodel_view_expands_nested_references_against_the_root() -> None:
+    root = nested_mpd_root()
+
+    view = root.submodel_view("outer.ldr")
+    leaves = sorted(piece.reference for piece in view.iter_pieces())
+
+    assert leaves == ["3001.DAT", "3005.DAT"]
+
+
+def test_submodel_view_bill_of_materials_counts_nested_leaves() -> None:
+    root = nested_mpd_root()
+
+    rows = root.submodel_view("outer.ldr").bill_of_materials()
+
+    assert [(row.part, row.quantity) for row in rows] == [("3001", 1), ("3005", 1)]
+
+
+def test_submodel_view_resolves_names_case_insensitively() -> None:
+    root = nested_mpd_root()
+
+    assert root.submodel_view("OUTER.LDR").name == "outer.ldr"
+
+
+def test_submodel_view_of_the_root_name_is_the_root() -> None:
+    root = nested_mpd_root()
+
+    assert root.submodel_view("Main.ldr") is root
+
+
+def test_submodel_view_unknown_name_raises() -> None:
+    root = nested_mpd_root()
+
+    with pytest.raises(UnknownSubmodelError):
+        root.submodel_view("ghost.ldr")
 
 
 def test_iter_pieces_allows_diamond_references() -> None:

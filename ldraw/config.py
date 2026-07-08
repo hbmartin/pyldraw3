@@ -2,41 +2,22 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import yaml
 
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
-from ldraw.errors import InvalidConfigFileError
 
 CONFIG_FILE = Path(get_config_dir()) / "config.yml"
 
 
-def is_valid_config_file(
-    parser: argparse.ArgumentParser,  # noqa: ARG001
-    arg: str,
-) -> Path:
-    """Validate that the given config file exists and is valid YAML."""
-    path = Path(arg)
-    if not path.exists():
-        raise FileNotFoundError(arg)
-    with path.open() as file:
-        if yaml.load(file, Loader=yaml.SafeLoader) is None:
-            raise InvalidConfigFileError(arg)
-    return path
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=lambda x: is_valid_config_file(parser, x))
-
-
 def get_config(config_file: str | Path | None = None) -> Path:
-    """Get the path to the configuration file, either from arguments or default."""
-    if config_file is None:
-        args, _unknown = parser.parse_known_args()
-        return args.config if args.config is not None else CONFIG_FILE
-    return Path(config_file)
+    """Return the given configuration file path, or the default location.
+
+    This never inspects ``sys.argv``: pyldraw is a library, and embedding
+    applications own their own command lines.
+    """
+    return CONFIG_FILE if config_file is None else Path(config_file)
 
 
 class Config:

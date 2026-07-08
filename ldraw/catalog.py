@@ -28,7 +28,9 @@ from ldraw.parts import (
 
 logger = logging.getLogger(__name__)
 
-CATALOG_SCHEMA_VERSION = 2
+# Version 3: entry descriptions are stored as written in parts.lst; the
+# "Minifig " prefix is no longer stripped at catalog-build time.
+CATALOG_SCHEMA_VERSION = 3
 
 _CREATE_META = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 _CREATE_PARTS = """
