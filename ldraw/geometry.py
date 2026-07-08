@@ -65,6 +65,13 @@ class Matrix:
             raise ValueError(message)
         self._array: NDArray[np.float64] = array.copy()
 
+    @classmethod
+    def _from_array(cls, array: NDArray[np.float64]) -> Self:
+        """Wrap a freshly computed 3x3 float array; the caller yields ownership."""
+        matrix = cls.__new__(cls)
+        matrix._array = array  # noqa: SLF001
+        return matrix
+
     @property
     def rows(self) -> MatrixRows:
         """Return matrix rows as plain Python lists."""
@@ -83,8 +90,7 @@ class Matrix:
 
     def __repr__(self) -> str:
         rows = [
-            ", ".join(format_ldraw_number(value) for value in row)
-            for row in self.rows
+            ", ".join(format_ldraw_number(value) for value in row) for row in self.rows
         ]
         return f"(({rows[0]}),\n ({rows[1]}),\n ({rows[2]}))"
 
@@ -96,7 +102,7 @@ class Matrix:
 
     def __mul__(self, other: Matrix | Vector) -> Matrix | Vector:
         if isinstance(other, Matrix):
-            return Matrix((self._array @ other._array).tolist())
+            return Matrix._from_array(self._array @ other._array)
         if isinstance(other, Vector):
             x, y, z = self._array @ np.array([other.x, other.y, other.z])
             return Vector(float(x), float(y), float(z))
@@ -110,7 +116,7 @@ class Matrix:
 
     def __rmul__(self, other: Matrix | Vector) -> Matrix | Vector:
         if isinstance(other, Matrix):
-            return Matrix((other._array @ self._array).tolist())
+            return Matrix._from_array(other._array @ self._array)
         if isinstance(other, Vector):
             x, y, z = np.array([other.x, other.y, other.z]) @ self._array
             return Vector(float(x), float(y), float(z))
@@ -131,30 +137,24 @@ class Matrix:
         c = math.cos(radians)
         s = math.sin(radians)
 
-        match axis:
-            case _ if axis == XAxis:
-                rotation = Matrix([[1, 0, 0], [0, c, -s], [0, s, c]])
-            case _ if axis == YAxis:
-                rotation = Matrix([[c, 0, -s], [0, 1, 0], [s, 0, c]])
-            case _ if axis == ZAxis:
-                rotation = Matrix([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-            case _:
-                raise MatrixError
-        result = self * rotation
-        if not isinstance(result, Matrix):
+        if axis == XAxis:
+            rotation = [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
+        elif axis == YAxis:
+            rotation = [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]]
+        elif axis == ZAxis:
+            rotation = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+        else:
             raise MatrixError
-        return result
+        return Matrix._from_array(self._array @ np.asarray(rotation, dtype=float))
 
     def scale(self, sx: Number, sy: Number, sz: Number) -> Matrix:
         """Scale the matrix by a number on each axis."""
-        result = Matrix([[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) * self
-        if not isinstance(result, Matrix):
-            raise MatrixError
-        return result
+        scaling = np.asarray([[sx, 0, 0], [0, sy, 0], [0, 0, sz]], dtype=float)
+        return Matrix._from_array(scaling @ self._array)
 
     def transpose(self) -> Matrix:
         """Return the transposed matrix."""
-        return Matrix(self._array.T.tolist())
+        return Matrix._from_array(self._array.T.copy())
 
     def det(self) -> float:
         """Return the determinant of the matrix."""

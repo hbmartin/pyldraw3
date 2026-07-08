@@ -6,7 +6,7 @@ from functools import wraps
 from typing import TYPE_CHECKING, TypeVar
 
 from ldraw.colour import Colour
-from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
+from ldraw.geometry import Identity, Matrix, Number, Vector, XAxis, YAxis, ZAxis
 from ldraw.pieces import Group, Piece
 
 if TYPE_CHECKING:
@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 R = TypeVar("R")
 ColourInput = Colour | int
-Number = int | float
 
 
 def dependent_piece(
@@ -97,9 +96,8 @@ class Person:
         part: str = Airtanks,
     ) -> Piece:
         """Add a backpack."""
-        offset = (
-            self.matrix
-            * (displacement if displacement is not None else Vector(0, 0, 0))
+        offset = self.matrix * (
+            displacement if displacement is not None else Vector(0, 0, 0)
         )
         return Piece(
             colour,
@@ -202,9 +200,7 @@ class Person:
         """Add a right arm."""
         displacement = self.matrix * Vector(-15, 8, 0)
         matrix = (
-            self.matrix
-            * Identity().rotate(10, ZAxis)
-            * Identity().rotate(angle, XAxis)
+            self.matrix * Identity().rotate(10, ZAxis) * Identity().rotate(angle, XAxis)
         )
         piece = Piece(
             colour,

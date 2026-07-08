@@ -5,9 +5,18 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from ldraw import download
-from ldraw.downloads import ARCHIVE_URL, LDRAW_URL, _normalize_tree, unpack_version
+from ldraw.downloads import (
+    ARCHIVE_URL,
+    LDRAW_URL,
+    _case_safe_rename,
+    _download,
+    _normalize_tree,
+    _temporary_rename_path,
+    unpack_version,
+)
 
 
 @patch("zipfile.ZipFile", spec=zipfile.ZipFile)
@@ -89,6 +98,59 @@ def test_unpack_version_rejects_unsafe_zip_member(
 def test_unpack_version_rejects_invalid_version(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unsupported LDraw library version"):
         unpack_version(tmp_path / "missing.zip", "../bad")
+
+
+@patch("ldraw.downloads.requests.get")
+def test_download_failure_leaves_no_cached_file(
+    get_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    response = get_mock.return_value.__enter__.return_value
+    response.iter_content.side_effect = requests.ConnectionError("dropped")
+
+    with pytest.raises(requests.ConnectionError):
+        _download("https://example.test/x.zip", "x.zip")
+
+    assert not (tmp_path / "x.zip").exists()
+
+
+@patch("ldraw.downloads.requests.get")
+def test_download_success_replaces_partial_file(
+    get_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    response = get_mock.return_value.__enter__.return_value
+    response.iter_content.return_value = [b"zip-bytes"]
+
+    result = _download("https://example.test/x.zip", "x.zip")
+
+    assert result == tmp_path / "x.zip"
+    assert result.read_bytes() == b"zip-bytes"
+    assert not (tmp_path / "x.zip.part").exists()
+
+
+def test_temporary_rename_path_skips_existing(tmp_path: Path) -> None:
+    target = tmp_path / "LDRAW"
+    (tmp_path / "LDRAW__pyldraw_tmp__").mkdir()
+
+    candidate = _temporary_rename_path(target)
+
+    assert candidate.name == "LDRAW__pyldraw_tmp_1__"
+
+
+def test_case_safe_rename_changes_directory_case(tmp_path: Path) -> None:
+    source = tmp_path / "LDRAW"
+    source.mkdir()
+    (source / "marker.txt").write_text("marker")
+
+    result = _case_safe_rename(source, tmp_path / "ldraw")
+
+    assert [child.name for child in tmp_path.iterdir()] == ["ldraw"]
+    assert (result / "marker.txt").read_text() == "marker"
 
 
 def test_normalize_tree_github_snapshot(tmp_path: Path) -> None:

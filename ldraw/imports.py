@@ -28,9 +28,7 @@ def load_lib(library_path: str | Path, fullname: str) -> ModuleType:
     lib_name = dot_split[-1]
     library_root = Path(library_path)
     lib_dir = (
-        library_root.joinpath(*dot_split[:-1])
-        if len(dot_split) > 1
-        else library_root
+        library_root.joinpath(*dot_split[:-1]) if len(dot_split) > 1 else library_root
     )
 
     init_path = lib_dir / lib_name / "__init__.py"
@@ -80,7 +78,11 @@ class LibraryImporter:
         cls._default_config = config
         cls.clean()
 
-    def find_module(self, fullname: str, path: object = None) -> LibraryImporter | None:  # noqa: ARG002
+    def find_module(
+        self,
+        fullname: str,
+        path: object = None,  # noqa: ARG002
+    ) -> LibraryImporter | None:
         """Find module for the given fullname."""
         if self.valid_module(fullname):
             return self

@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 This project uses uv for dependency management and packaging.
-Before running any commands be sure sure to active the venv `source .venv/bin/activate`
+Before running any commands be sure to activate the venv `source .venv/bin/activate`
 
 
 ### Setup and Installation

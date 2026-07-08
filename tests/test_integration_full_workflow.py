@@ -34,7 +34,6 @@ def test_full_library_workflow() -> None:
     assert piece.to_ldraw().endswith("3001.DAT")
 
 
-@pytest.mark.integration
 def test_figure_creation_workflow() -> None:
     """Test creating a complete minifigure."""
     figure = Person()
@@ -50,14 +49,10 @@ def test_figure_creation_workflow() -> None:
     assert all(piece.to_ldraw().startswith("1 ") for piece in pieces)
 
 
-@pytest.mark.integration
 def test_ldraw_file_generation(tmp_path: Path) -> None:
     """Test generating complete LDraw files."""
     output_path = tmp_path / "simple_stack.ldr"
-    pieces = [
-        Piece(i + 2, Vector(0, i * -24, 0), Identity(), "3001")
-        for i in range(3)
-    ]
+    pieces = [Piece(i + 2, Vector(0, i * -24, 0), Identity(), "3001") for i in range(3)]
 
     output_path.write_text(
         "\n".join(
@@ -89,7 +84,6 @@ def test_parts_search_and_filtering() -> None:
         pytest.skip("Common brick parts not found in library")
 
 
-@pytest.mark.integration
 @pytest.mark.slow
 def test_large_model_performance() -> None:
     """Test serialization for larger models."""
@@ -105,7 +99,6 @@ def test_large_model_performance() -> None:
     assert len(pieces) == 100
 
 
-@pytest.mark.integration
 def test_color_validation() -> None:
     """Test color handling in integration context."""
     test_colors = [0, 1, 2, 4, 7, 14, 15]
@@ -116,7 +109,6 @@ def test_color_validation() -> None:
         assert piece.to_ldraw().startswith(f"1 {color} ")
 
 
-@pytest.mark.integration
 def test_matrix_transformations_integration() -> None:
     """Test matrix transformations in real usage context."""
     transformations = [

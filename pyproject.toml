@@ -71,7 +71,7 @@ docs = [
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
-exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "benchmarks", "buck-out", "build", "dist", "node_modules", "setup.py", "site-packages", "tests", "venv"]
+exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "setup.py", "site-packages", "venv"]
 
 # Same as Black.
 line-length = 88
@@ -83,7 +83,9 @@ select = ["ALL"]
 ignore = ["D105", "D107", "D203", "D212", "D213", "EM101", "PLR2004", "S324", "T201"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN002", "ANN003", "ARG001", "ARG005", "D103", "D104", "DTZ003", "ERA001", "F403", "F405", "FBT002", "G004", "N802", "PLC0415", "PLR2004", "PT011", "PT013", "PTH110", "PTH118", "PTH119", "PTH122", "PTH123", "PTH207", "S101", "S102", "S311", "SIM115"]
+"tests/**/*.py" = ["ANN001", "ANN002", "ANN003", "ANN201", "ARG001", "ARG005", "D103", "D104", "DTZ003", "ERA001", "F403", "F405", "FBT002", "G004", "N802", "PLC0415", "PLR2004", "PLW1510", "PT011", "PT013", "PTH110", "PTH118", "PTH119", "PTH122", "PTH123", "PTH207", "S101", "S102", "S311", "S603", "S607", "SIM115"]
+"benchmarks/*.py" = ["INP001"]
+"benchmarks/memory_profile.py" = ["F821"]
 "examples/*.py" = ["D103", "F403", "F405", "INP001", "S311"]
 
 [tool.ruff.format]

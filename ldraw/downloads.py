@@ -126,12 +126,15 @@ def _download(url: str, filename: str, chunk_size: int = 1_024) -> Path:
     if retrieved.exists():
         return retrieved
 
+    # Stream to a .part file so an interrupted download is never cached.
+    partial = retrieved.with_name(f"{retrieved.name}.part")
     with requests.get(url, stream=True) as response:  # noqa: S113
         response.raise_for_status()
 
-        with retrieved.open("wb") as file:
+        with partial.open("wb") as file:
             file.writelines(response.iter_content(chunk_size=chunk_size))
 
+    partial.replace(retrieved)
     return retrieved
 
 
@@ -141,17 +144,20 @@ def _download_progress(url: str, filename: str, chunk_size: int = 1_024) -> Path
         print(f"File {retrieved} already exists")
         return retrieved
 
+    # Stream to a .part file so an interrupted download is never cached.
+    partial = retrieved.with_name(f"{retrieved.name}.part")
     with requests.get(url, stream=True) as response:  # noqa: S113
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
         bar = Bar(f"Downloading {url} ...", max=total)
 
-        with retrieved.open("wb") as file:
+        with partial.open("wb") as file:
             for data in response.iter_content(chunk_size=chunk_size):
                 size = file.write(data)
                 bar.next(size)
 
         bar.finish()
+    partial.replace(retrieved)
     return retrieved
 
 
