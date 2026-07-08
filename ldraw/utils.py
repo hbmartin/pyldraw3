@@ -17,6 +17,20 @@ def camel(input_string: str) -> str:
     return "".join(x for x in input_string.title() if not x.isspace())
 
 
+def normalize_ref(ref: str) -> str:
+    """Normalize a submodel reference for case-insensitive lookup."""
+    return " ".join(ref.split()).casefold().replace("\\", "/")
+
+
+def ldraw_file_name(line: str) -> str | None:
+    """Return the section name if the line is a ``0 FILE <name>`` command."""
+    match line.split(maxsplit=2):
+        case ["0", keyword, rest] if keyword.upper() == "FILE":
+            return rest.strip()
+        case _:
+            return None
+
+
 def ensure_exists(path: str | Path) -> str:
     """Make the directory if it does not exist."""
     directory = Path(path)

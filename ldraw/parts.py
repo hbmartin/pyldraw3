@@ -161,12 +161,18 @@ class PartsCatalog:
     by_minifig_section: defaultdict[MinifigSection, list[CatalogEntry]] = field(
         default_factory=lambda: defaultdict(list),
     )
+    _entries_by_category_cache: dict[PartCategory, tuple[CatalogEntry, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def add(self, entry: CatalogEntry) -> None:
         """Add or replace an entry in every lookup index."""
         self.by_code[entry.code] = entry
         self.by_description[entry.description] = entry
         self.by_category[entry.category].append(entry)
+        self._entries_by_category_cache.pop(entry.category, None)
         if entry.minifig_section is not None:
             self.by_minifig_section[entry.minifig_section].append(entry)
 
@@ -180,7 +186,12 @@ class PartsCatalog:
 
     def entries_by_category(self, category: PartCategory) -> tuple[CatalogEntry, ...]:
         """Return catalog entries in a category."""
-        return tuple(self.by_category.get(category, ()))
+        try:
+            return self._entries_by_category_cache[category]
+        except KeyError:
+            entries = tuple(self.by_category.get(category, ()))
+            self._entries_by_category_cache[category] = entries
+            return entries
 
     def minifig_entries(
         self,

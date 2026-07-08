@@ -171,6 +171,13 @@ def test_piece_place_explicit_arguments() -> None:
     assert piece in group.pieces
 
 
+def test_piece_place_custom_suffix() -> None:
+    piece = Piece.place("body", suffix=".LDR")
+
+    assert piece.reference == "BODY.LDR"
+    assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 BODY.LDR"
+
+
 def test_piece_place_accepts_int_colour() -> None:
     piece = Piece.place(Brick1X1, colour=4)
 

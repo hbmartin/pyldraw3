@@ -14,25 +14,12 @@ from ldraw.errors import (
 from ldraw.lines import Comment, MetaCommand
 from ldraw.part import ParsedObject, parse_ldraw_line
 from ldraw.pieces import Piece
+from ldraw.utils import ldraw_file_name, normalize_ref
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 _NumberedLine = tuple[int, str]
-
-
-def _normalize_ref(ref: str) -> str:
-    """Normalize a submodel reference for case-insensitive lookup."""
-    return " ".join(ref.split()).casefold().replace("\\", "/")
-
-
-def _file_name(line: str) -> str | None:
-    """Return the section name if the line is a ``0 FILE <name>`` command."""
-    match line.split(maxsplit=2):
-        case ["0", keyword, rest] if keyword.upper() == "FILE":
-            return rest.strip()
-        case _:
-            return None
 
 
 def _is_nofile(line: str) -> bool:
@@ -60,7 +47,7 @@ def _split_sections(
     sections: list[_RawSection] = []
     current: list[_NumberedLine] | None = preamble
     for number, line in enumerate(text.splitlines(), start=1):
-        if (name := _file_name(line)) is not None:
+        if (name := ldraw_file_name(line)) is not None:
             sections.append(_RawSection(name))
             current = sections[-1].lines
         elif _is_nofile(line):
@@ -158,8 +145,8 @@ class Model:
 
     def submodel_for(self, piece: Piece) -> Model | None:
         """Resolve a piece's subfile reference to a submodel, if any."""
-        key = _normalize_ref(piece.reference)
-        if key == _normalize_ref(self.name):
+        key = normalize_ref(piece.reference)
+        if key == normalize_ref(self.name):
             return self
         return self.submodels.get(key)
 
@@ -217,8 +204,8 @@ def parse_model(
         objects=[*objects, *_parse_objects(first.lines, source=source)],
     )
     for section in rest:
-        key = _normalize_ref(section.name)
-        if key == _normalize_ref(root.name) or key in root.submodels:
+        key = normalize_ref(section.name)
+        if key == normalize_ref(root.name) or key in root.submodels:
             raise DuplicateSubmodelError(section.name)
         root.submodels[key] = Model(
             name=section.name,

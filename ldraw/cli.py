@@ -179,13 +179,21 @@ def _parts_lst_path() -> Path:
     return Path(Config.load().ldraw_library_path) / "ldraw" / "parts.lst"
 
 
-def _load_parts() -> Parts | None:
-    """Load the configured parts catalog, or None with a hint when missing."""
+def _try_load_parts() -> Parts | None:
+    """Load the configured parts catalog, or None when missing."""
     parts_lst = _parts_lst_path()
     if not parts_lst.exists():
-        print(f"parts.lst not found at {parts_lst}; run `ldraw download` first.")
         return None
     return Parts.get(parts_lst)
+
+
+def _load_parts() -> Parts | None:
+    """Load the configured parts catalog, or None with a hint when missing."""
+    if (parts := _try_load_parts()) is None:
+        print(
+            f"parts.lst not found at {_parts_lst_path()}; run `ldraw download` first.",
+        )
+    return parts
 
 
 def _suggested_import(entry: CatalogEntry) -> str | None:
@@ -248,8 +256,7 @@ def validate_command(*, file: Path) -> int:
     if not file.is_file():
         print(f"{file}: not found")
         return 1
-    parts_lst = _parts_lst_path()
-    parts = Parts.get(parts_lst) if parts_lst.exists() else None
+    parts = _try_load_parts()
     if parts is None:
         print("note: no parts library found; skipping unknown-part checks")
     issues = list(iter_ldr_issues(file, parts))
@@ -266,7 +273,10 @@ def validate_command(*, file: Path) -> int:
 def stubs_command(*, out: Path) -> int:
     """Write the ldraw-stubs package for IDE autocomplete and type checking."""
     try:
-        stubs_dir = write_stub_package(Config.load().generated_path, out)
+        stubs_dir = write_stub_package(
+            generated_path=Config.load().generated_path,
+            out_dir=out,
+        )
     except LibraryNotGeneratedError as exc:
         print(exc)
         return 1

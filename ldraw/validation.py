@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ldraw.errors import PartError
-from ldraw.model import _file_name, _normalize_ref
 from ldraw.part import parse_ldraw_line
 from ldraw.pieces import Piece
+from ldraw.utils import ldraw_file_name, normalize_ref
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -44,7 +44,9 @@ def iter_ldr_issues(
     """
     lines = path.read_text(encoding="utf-8-sig").splitlines()
     submodels = {
-        _normalize_ref(name) for line in lines if (name := _file_name(line)) is not None
+        normalize_ref(name)
+        for line in lines
+        if (name := ldraw_file_name(line)) is not None
     }
     for number, line in enumerate(lines, start=1):
         try:
@@ -56,8 +58,8 @@ def iter_ldr_issues(
         if (
             parts is not None
             and isinstance(parsed, Piece)
-            and _normalize_ref(parsed.reference) not in submodels
-            and _unknown_part(parsed, parts)
+            and normalize_ref(parsed.reference) not in submodels
+            and _unknown_part(piece=parsed, parts=parts)
         ):
             yield ValidationIssue(
                 line_number=number,
