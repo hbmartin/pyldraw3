@@ -68,8 +68,8 @@ def test_example_stairs(tmp_path: Path) -> None:
         result = run_example("stairs.py", tmp_path=tmp_path)
     except subprocess.TimeoutExpired:
         pytest.skip("Stairs example timed out")
-
-    assert_example_completed("Stairs", result)
+    else:
+        assert_example_completed("Stairs", result)
 
 
 @pytest.mark.integration
@@ -79,8 +79,8 @@ def test_example_figure(tmp_path: Path) -> None:
         result = run_example("figure.py", tmp_path=tmp_path)
     except subprocess.TimeoutExpired:
         pytest.skip("Figure example timed out")
-
-    assert_example_completed("Figure", result)
+    else:
+        assert_example_completed("Figure", result)
 
 
 @pytest.mark.integration
@@ -91,8 +91,8 @@ def test_example_buggy(tmp_path: Path) -> None:
         result = run_example("buggy.py", tmp_path=tmp_path, timeout=120)
     except subprocess.TimeoutExpired:
         pytest.skip("Buggy example timed out")
-
-    assert_example_completed("Buggy", result)
+    else:
+        assert_example_completed("Buggy", result)
 
 
 @pytest.mark.integration
@@ -102,12 +102,12 @@ def test_example_spaceman(tmp_path: Path) -> None:
         result = run_example("spaceman.py", tmp_path=tmp_path)
     except subprocess.TimeoutExpired:
         pytest.skip("Spaceman example timed out")
-
-    assert_example_completed("Spaceman", result)
+    else:
+        assert_example_completed("Spaceman", result)
 
 
 @pytest.mark.integration
-def test_all_examples_syntax():
+def test_all_examples_syntax() -> None:
     """Test that all example scripts have valid Python syntax."""
     if not EXAMPLES_DIR.exists():
         pytest.skip("Examples directory not found")
@@ -124,17 +124,16 @@ def test_all_examples_syntax():
                 text=True,
                 timeout=30,
             )
-
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"Syntax check for {script.name} timed out")
+        else:
             assert result.returncode == 0, (
                 f"Syntax error in {script.name}: {result.stderr}"
             )
 
-        except subprocess.TimeoutExpired:
-            pytest.fail(f"Syntax check for {script.name} timed out")
-
 
 @pytest.mark.integration
-def test_examples_import_ldraw():
+def test_examples_import_ldraw() -> None:
     """Test that example scripts can import ldraw modules."""
     if not EXAMPLES_DIR.exists():
         pytest.skip("Examples directory not found")
@@ -158,9 +157,8 @@ except ImportError as e:
             text=True,
             timeout=30,
         )
-
-        assert result.returncode == 0, f"Failed to import ldraw: {result.stderr}"
-        assert "SUCCESS" in result.stdout, "Should confirm successful import"
-
     except subprocess.TimeoutExpired:
         pytest.skip("Import test timed out")
+    else:
+        assert result.returncode == 0, f"Failed to import ldraw: {result.stderr}"
+        assert "SUCCESS" in result.stdout, "Should confirm successful import"

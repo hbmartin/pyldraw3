@@ -28,9 +28,9 @@ BOM_FIELDS: tuple[str, ...] = (
 class _ModelLike(Protocol):
     """Object that can yield fully expanded leaf pieces."""
 
-    def iter_pieces(self) -> Iterator[Piece]:
+    def iter_pieces(self) -> Iterator[Piece]:  # pragma: no cover
         """Yield leaf pieces, expanding submodel references."""
-        raise NotImplementedError
+        ...
 
 
 @dataclass(frozen=True, slots=True)
