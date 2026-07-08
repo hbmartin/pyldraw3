@@ -30,7 +30,7 @@ dependencies = [
     "progress>=1.6.1",
     "requests>=2.32.4",
     "inflect>=7.5.0",
-    "attridict>=0.0.9",
+    "numpy>=2.0",
     "pyyaml>=6.0.1",
 ]
 
@@ -71,7 +71,7 @@ docs = [
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
-exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "buck-out", "build", "dist", "node_modules", "setup.py", "site-packages", "venv"]
+exclude = [".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox", ".pants.d", ".pyenv", ".pytest_cache", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__", "_build", "benchmarks", "buck-out", "build", "dist", "node_modules", "setup.py", "site-packages", "tests", "venv"]
 
 # Same as Black.
 line-length = 88
@@ -80,7 +80,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN206", "D105", "D107", "EM101", "PLR2004", "PTH110", "PTH112", "PTH118", "PTH123", "PTH206", "PTH208", "S324", "T201", "UP031"]
+ignore = ["D105", "D107", "D203", "D212", "D213", "EM101", "PLR2004", "S324", "T201"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN002", "ANN003", "ARG001", "ARG005", "D103", "D104", "DTZ003", "ERA001", "F403", "F405", "FBT002", "G004", "N802", "PLC0415", "PLR2004", "PT011", "PT013", "PTH110", "PTH118", "PTH119", "PTH122", "PTH123", "PTH207", "S101", "S102", "S311", "SIM115"]
@@ -127,7 +127,11 @@ package = true
 [tool.pydoclint]
 exclude = '\.git|\.nox|noxfile.py'
 
+[tool.deptry]
+extend_exclude = ["benchmarks"]
+
 [tool.pytest.ini_options]
 markers = [
     "integration: marks tests as integration tests (run with '--integration')",
+    "slow: marks tests as slow-running",
 ]

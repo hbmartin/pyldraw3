@@ -1,34 +1,26 @@
-"""geometry.py - Geometry classes for the ldraw Python package.
+"""Geometry classes for the ldraw Python package."""
 
-Copyright (C) 2008 David Boddie <david@boddie.org.uk>
+from __future__ import annotations
 
-This file is part of the ldraw Python package.
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
-
-# pylint: disable=invalid-name, too-few-public-methods, missing-docstring
-import copy
 import math
-from functools import reduce
-from numbers import Number
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Self, overload
+
+import numpy as np
+
+from ldraw.serialization import format_ldraw_number
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+Number = int | float
+MatrixRows = list[list[Number]]
 
 
 class MatrixError(Exception):
     """Exception raised for matrix operation errors."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("Invalid axis specified.")
 
 
@@ -60,307 +52,292 @@ class Degrees(AngleUnits):
     """Degree angle units."""
 
 
-def _rows_multiplication(r1, r2):
-    return [
-        [
-            r1[0][0] * r2[0][0] + r1[0][1] * r2[1][0] + r1[0][2] * r2[2][0],
-            r1[0][0] * r2[0][1] + r1[0][1] * r2[1][1] + r1[0][2] * r2[2][1],
-            r1[0][0] * r2[0][2] + r1[0][1] * r2[1][2] + r1[0][2] * r2[2][2],
-        ],
-        [
-            r1[1][0] * r2[0][0] + r1[1][1] * r2[1][0] + r1[1][2] * r2[2][0],
-            r1[1][0] * r2[0][1] + r1[1][1] * r2[1][1] + r1[1][2] * r2[2][1],
-            r1[1][0] * r2[0][2] + r1[1][1] * r2[1][2] + r1[1][2] * r2[2][2],
-        ],
-        [
-            r1[2][0] * r2[0][0] + r1[2][1] * r2[1][0] + r1[2][2] * r2[2][0],
-            r1[2][0] * r2[0][1] + r1[2][1] * r2[1][1] + r1[2][2] * r2[2][1],
-            r1[2][0] * r2[0][2] + r1[2][1] * r2[1][2] + r1[2][2] * r2[2][2],
-        ],
-    ]
-
-
+@dataclass(slots=True, init=False)
 class Matrix:
-    """a transformation matrix."""
+    """A 3x3 transformation matrix."""
 
-    def __init__(self, rows):
-        self.rows = rows
+    _array: NDArray[np.float64]
 
-    def __hash__(self):
-        # Flatten the matrix rows into a tuple of tuples for hashing
+    def __init__(self, rows: MatrixRows) -> None:
+        array = np.asarray(rows, dtype=float)
+        if array.shape != (3, 3):
+            message = f"Matrix rows must be 3x3, got {array.shape}"
+            raise ValueError(message)
+        self._array: NDArray[np.float64] = array.copy()
+
+    @property
+    def rows(self) -> MatrixRows:
+        """Return matrix rows as plain Python lists."""
+        return self._array.tolist()
+
+    @rows.setter
+    def rows(self, value: MatrixRows) -> None:
+        array = np.asarray(value, dtype=float)
+        if array.shape != (3, 3):
+            message = f"Matrix rows must be 3x3, got {array.shape}"
+            raise ValueError(message)
+        self._array = array.copy()
+
+    def __hash__(self) -> int:
         return hash(tuple(tuple(row) for row in self.rows))
 
-    def __repr__(self):
-        values = reduce(lambda x, y: x + y, self.rows)
-        format_string = "((%f, %f, %f),\n (%f, %f, %f),\n (%f, %f, %f))"
-        return format_string % tuple(values)
-
-    def __mul__(self, other):
-        if isinstance(other, Matrix):
-            r1 = self.rows
-            r2 = other.rows
-            return Matrix(_rows_multiplication(r1, r2))
-        if isinstance(other, Vector):
-            r = self.rows
-            x, y, z = other.x, other.y, other.z
-            return Vector(
-                r[0][0] * x + r[0][1] * y + r[0][2] * z,
-                r[1][0] * x + r[1][1] * y + r[1][2] * z,
-                r[2][0] * x + r[2][1] * y + r[2][2] * z,
-            )
-        raise MatrixError
-
-    def __rmul__(self, other):
-        if isinstance(other, Matrix):
-            r1 = other.rows
-            r2 = self.rows
-            return Matrix(_rows_multiplication(r1, r2))
-        if isinstance(other, Vector):
-            r = self.rows
-            x, y, z = other.x, other.y, other.z
-            return Vector(
-                x * r[0][0] + y * r[1][0] + z * r[2][0],
-                x * r[0][1] + y * r[1][1] + z * r[2][1],
-                x * r[0][2] + y * r[1][2] + z * r[2][2],
-            )
-        raise MatrixError
-
-    def copy(self):
-        """Make a copy of this matrix."""
-        return Matrix(copy.deepcopy(self.rows))
-
-    def rotate(self, angle, axis, units=Degrees):
-        """Rotate the matrix by an angle around an axis."""
-        if units == Degrees:
-            c = math.cos(angle / 180.0 * math.pi)
-            s = math.sin(angle / 180.0 * math.pi)
-        else:
-            c = math.cos(angle)
-            s = math.sin(angle)
-        if axis == XAxis:
-            rotation = Matrix([[1, 0, 0], [0, c, -s], [0, s, c]])
-        elif axis == YAxis:
-            rotation = Matrix([[c, 0, -s], [0, 1, 0], [s, 0, c]])
-        elif axis == ZAxis:
-            rotation = Matrix([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-        else:
-            raise MatrixError
-        return self * rotation
-
-    def scale(self, sx, sy, sz):
-        """Scale the matrix by a number."""
-        return Matrix([[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) * self
-
-    def transpose(self):
-        """Transpose."""
-        r = self.rows
-        return Matrix(
-            [
-                [r[0][0], r[1][0], r[2][0]],
-                [r[0][1], r[1][1], r[2][1]],
-                [r[0][2], r[1][2], r[2][2]],
-            ],
-        )
-
-    def det(self):
-        """Return determinant of the matrix."""
-        r = self.rows
-        terms = [
-            r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]),
-            r[0][1] * (r[1][2] * r[2][0] - r[1][0] * r[2][2]),
-            r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]),
+    def __repr__(self) -> str:
+        rows = [
+            ", ".join(format_ldraw_number(value) for value in row)
+            for row in self.rows
         ]
-        return sum(terms)
+        return f"(({rows[0]}),\n ({rows[1]}),\n ({rows[2]}))"
 
-    def flatten(self):
-        """Flatten the matrix."""
-        return tuple(reduce(lambda x, y: x + y, self.rows))
+    @overload
+    def __mul__(self, other: Matrix) -> Matrix: ...
 
-    def fix_diagonal(self):
+    @overload
+    def __mul__(self, other: Vector) -> Vector: ...
+
+    def __mul__(self, other: Matrix | Vector) -> Matrix | Vector:
+        if isinstance(other, Matrix):
+            return Matrix((self._array @ other._array).tolist())
+        if isinstance(other, Vector):
+            x, y, z = self._array @ np.array([other.x, other.y, other.z])
+            return Vector(float(x), float(y), float(z))
+        raise MatrixError
+
+    @overload
+    def __rmul__(self, other: Matrix) -> Matrix: ...
+
+    @overload
+    def __rmul__(self, other: Vector) -> Vector: ...
+
+    def __rmul__(self, other: Matrix | Vector) -> Matrix | Vector:
+        if isinstance(other, Matrix):
+            return Matrix((other._array @ self._array).tolist())
+        if isinstance(other, Vector):
+            x, y, z = np.array([other.x, other.y, other.z]) @ self._array
+            return Vector(float(x), float(y), float(z))
+        raise MatrixError
+
+    def copy(self) -> Self:
+        """Make a copy of this matrix."""
+        return type(self)(self.rows)
+
+    def rotate(
+        self,
+        angle: Number,
+        axis: type[Axis],
+        units: type[AngleUnits] = Degrees,
+    ) -> Matrix:
+        """Rotate the matrix by an angle around an axis."""
+        radians = math.radians(float(angle)) if units == Degrees else float(angle)
+        c = math.cos(radians)
+        s = math.sin(radians)
+
+        match axis:
+            case _ if axis == XAxis:
+                rotation = Matrix([[1, 0, 0], [0, c, -s], [0, s, c]])
+            case _ if axis == YAxis:
+                rotation = Matrix([[c, 0, -s], [0, 1, 0], [s, 0, c]])
+            case _ if axis == ZAxis:
+                rotation = Matrix([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+            case _:
+                raise MatrixError
+        result = self * rotation
+        if not isinstance(result, Matrix):
+            raise MatrixError
+        return result
+
+    def scale(self, sx: Number, sy: Number, sz: Number) -> Matrix:
+        """Scale the matrix by a number on each axis."""
+        result = Matrix([[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) * self
+        if not isinstance(result, Matrix):
+            raise MatrixError
+        return result
+
+    def transpose(self) -> Matrix:
+        """Return the transposed matrix."""
+        return Matrix(self._array.T.tolist())
+
+    def det(self) -> float:
+        """Return the determinant of the matrix."""
+        return float(np.linalg.det(self._array))
+
+    def flatten(self) -> tuple[float, ...]:
+        """Flatten the matrix in row-major order."""
+        return tuple(float(value) for value in self._array.reshape(9))
+
+    def fix_diagonal(self) -> bool:
         """POV-Ray does not like matrices with zero diagonal elements."""
         corrected = False
-        for i in range(3):
-            if self.rows[i][i] == 0.0:
-                self.rows[i][i] = 0.001
+        for index in range(3):
+            if self._array[index, index] == 0.0:
+                self._array[index, index] = 0.001
                 corrected = True
         return corrected
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Matrix):
             return False
         return self.rows == other.rows
 
 
-def Identity():  # noqa: N802
+def Identity() -> Matrix:  # noqa: N802
     """Return a transformation matrix representing Identity."""
     return Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
+@dataclass(slots=True)
 class Vector:
-    """a Vector in 3D."""
+    """A vector in 3D."""
 
-    def __init__(self, x, y, z):
-        self.x, self.y, self.z = x, y, z
+    x: Number
+    y: Number
+    z: Number
 
     @property
-    def repr(self):
+    def repr(self) -> str:
         """Return string representation of vector coordinates."""
-        return "%f, %f, %f" % (self.x, self.y, self.z)
-
-    def __repr__(self):
-        return "<Vector: (%s)>" % (self.repr)
-
-    def __hash__(self):
-        return hash((self.x, self.y, self.z))
-
-    def __add__(self, other):
-        x = self.x + other.x
-        y = self.y + other.y
-        z = self.z + other.z
-        # Return a new object.
-        return Vector(x, y, z)
-
-    __radd__ = __add__
-
-    def __sub__(self, other):
-        x = self.x - other.x
-        y = self.y - other.y
-        z = self.z - other.z
-        # Return a new object.
-        return Vector(x, y, z)
-
-    def __rsub__(self, other):
-        x = other.x - self.x
-        y = other.y - self.y
-        z = other.z - self.z
-        # Return a new object.
-        return Vector(x, y, z)
-
-    def __cmp__(self, other):
-        # This next expression will only return zero (equals) if all
-        # expressions are false.
-        return self.x != other.x or self.y != other.y or self.z != other.z
-
-    def __eq__(self, other):
-        if not isinstance(other, Vector):
-            return False
-        return self.x == other.x and self.y == other.y and self.z == other.z
-
-    def __abs__(self):
-        return (self.x**2 + self.y**2 + self.z**2) ** 0.5
-
-    def __rmul__(self, other):
-        if isinstance(other, Number):
-            return Vector(self.x * other, self.y * other, self.z * other)
-        raise ValueError("Cannot multiply %s with %s" % (self.__class__, type(other)))
-
-    def __div__(self, other):
-        if isinstance(other, Number):
-            return Vector(self.x / other, self.y / other, self.z / other)
-        raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
-
-    def copy(self):
-        """Copy the vector to a new vectors containing the same values.
-
-        This prevents references to the same object.
-        """
-        return Vector(self.x, self.y, self.z)
-
-    def cross(self, other):
-        """Cross product."""
-        return Vector(
-            self.y * other.z - self.z * other.y,
-            self.z * other.x - self.x * other.z,
-            self.x * other.y - self.y * other.x,
+        return (
+            f"{format_ldraw_number(self.x)}, "
+            f"{format_ldraw_number(self.y)}, "
+            f"{format_ldraw_number(self.z)}"
         )
 
-    def dot(self, other):
-        """Dot product."""
-        return self.x * other.x + self.y * other.y + self.z * other.z
+    def __repr__(self) -> str:
+        return f"<Vector: ({self.repr})>"
 
-    def norm(self):
-        """Normalize the vector."""
-        _length = abs(self)
-        self.x = self.x / _length
-        self.y = self.y / _length
-        self.z = self.z / _length
+    def __hash__(self) -> int:
+        return hash((self.x, self.y, self.z))
 
-
-class Vector2D:
-    """a Vector in 2D."""
-
-    def __init__(self, x, y):
-        self.x, self.y = x, y
-
-    def __repr__(self):
-        return "<Vector2D: (%f, %f) >" % (self.x, self.y)
-
-    def __hash__(self):
-        return hash((self.x, self.y))
-
-    def __add__(self, other):
-        x = self.x + other.x
-        y = self.y + other.y
-        # Return a new object.
-        return Vector2D(x, y)
+    def __add__(self, other: Vector) -> Vector:
+        return Vector(self.x + other.x, self.y + other.y, self.z + other.z)
 
     __radd__ = __add__
 
-    def __sub__(self, other):
-        x = self.x - other.x
-        y = self.y - other.y
-        # Return a new object.
-        return Vector2D(x, y)
+    def __sub__(self, other: Vector) -> Vector:
+        return Vector(self.x - other.x, self.y - other.y, self.z - other.z)
 
-    def __rsub__(self, other):
-        x = other.x - self.x
-        y = other.y - self.y
-        # Return a new object.
-        return Vector2D(x, y)
+    def __rsub__(self, other: Vector) -> Vector:
+        return Vector(other.x - self.x, other.y - self.y, other.z - self.z)
 
-    def __cmp__(self, other):
-        # This next expression will only return zero (equals) if all
-        # expressions are false.
+    def __cmp__(self, other: Vector) -> bool:
+        return self.x != other.x or self.y != other.y or self.z != other.z
+
+    def __abs__(self) -> float:
+        return float(np.linalg.norm([self.x, self.y, self.z]))
+
+    def __rmul__(self, other: Number) -> Vector:
+        if isinstance(other, int | float):
+            return Vector(self.x * other, self.y * other, self.z * other)
+        message = f"Cannot multiply {self.__class__} with {type(other)}"
+        raise ValueError(message)
+
+    def __truediv__(self, other: Number) -> Vector:
+        if isinstance(other, int | float):
+            return Vector(self.x / other, self.y / other, self.z / other)
+        message = f"Cannot divide {self.__class__} with {type(other)}"
+        raise ValueError(message)
+
+    __div__ = __truediv__
+
+    def copy(self) -> Self:
+        """Copy the vector to a new vector containing the same values."""
+        return type(self)(self.x, self.y, self.z)
+
+    def cross(self, other: Vector) -> Vector:
+        """Cross product."""
+        x, y, z = np.cross(
+            np.array([self.x, self.y, self.z]),
+            np.array([other.x, other.y, other.z]),
+        )
+        return Vector(float(x), float(y), float(z))
+
+    def dot(self, other: Vector) -> float:
+        """Dot product."""
+        return float(
+            np.dot(
+                np.array([self.x, self.y, self.z]),
+                np.array([other.x, other.y, other.z]),
+            ),
+        )
+
+    def norm(self) -> None:
+        """Normalize the vector in place."""
+        length = abs(self)
+        self.x /= length
+        self.y /= length
+        self.z /= length
+
+
+@dataclass(slots=True)
+class Vector2D:
+    """A vector in 2D."""
+
+    x: Number
+    y: Number
+
+    def __repr__(self) -> str:
+        return (
+            f"<Vector2D: ({format_ldraw_number(self.x)}, "
+            f"{format_ldraw_number(self.y)}) >"
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.x, self.y))
+
+    def __add__(self, other: Vector2D) -> Vector2D:
+        return Vector2D(self.x + other.x, self.y + other.y)
+
+    __radd__ = __add__
+
+    def __sub__(self, other: Vector2D) -> Vector2D:
+        return Vector2D(self.x - other.x, self.y - other.y)
+
+    def __rsub__(self, other: Vector2D) -> Vector2D:
+        return Vector2D(other.x - self.x, other.y - self.y)
+
+    def __cmp__(self, other: Vector2D) -> bool:
         return self.x != other.x or self.y != other.y
 
-    def __abs__(self):
-        return (self.x**2 + self.y**2) ** 0.5
+    def __abs__(self) -> float:
+        return float(np.linalg.norm([self.x, self.y]))
 
-    def __rmul__(self, other):
-        if isinstance(other, Number):
+    def __rmul__(self, other: Number) -> Vector2D:
+        if isinstance(other, int | float):
             return Vector2D(self.x * other, self.y * other)
-        raise ValueError("Cannot multiply %s with %s" % (self.__class__, type(other)))
+        message = f"Cannot multiply {self.__class__} with {type(other)}"
+        raise ValueError(message)
 
-    def __div__(self, other):
-        if isinstance(other, Number):
+    def __truediv__(self, other: Number) -> Vector2D:
+        if isinstance(other, int | float):
             return Vector2D(self.x / other, self.y / other)
-        raise ValueError("Cannot divide %s with %s" % (self.__class__, type(other)))
+        message = f"Cannot divide {self.__class__} with {type(other)}"
+        raise ValueError(message)
 
-    def copy(self):
-        """Copy the vector to a new vectors containing the same values.
+    __div__ = __truediv__
 
-        This prevents references to the same object.
-        """
-        return Vector2D(self.x, self.y)
+    def copy(self) -> Self:
+        """Copy the vector to a new vector containing the same values."""
+        return type(self)(self.x, self.y)
 
-    def dot(self, other):
+    def dot(self, other: Vector2D) -> float:
         """Dot product."""
-        return self.x * other.x + self.y * other.y
+        return float(np.dot(np.array([self.x, self.y]), np.array([other.x, other.y])))
 
 
+@dataclass(slots=True)
 class CoordinateSystem:
     """3D coordinate system representation."""
 
-    def __init__(
-        self,
-        x: Vector | None = None,
-        y: Vector | None = None,
-        z: Vector | None = None,
-    ):
-        self.x = x if x is not None else Vector(1.0, 0.0, 0.0)
-        self.y = y if y is not None else Vector(0.0, 1.0, 0.0)
-        self.z = z if z is not None else Vector(0.0, 0.0, 1.0)
+    x: Vector | None = None
+    y: Vector | None = None
+    z: Vector | None = None
 
-    def project(self, p):
+    def __post_init__(self) -> None:
+        self.x = self.x if self.x is not None else Vector(1.0, 0.0, 0.0)
+        self.y = self.y if self.y is not None else Vector(0.0, 1.0, 0.0)
+        self.z = self.z if self.z is not None else Vector(0.0, 0.0, 1.0)
+
+    def project(self, p: Vector) -> Vector:
         """Project a point onto this coordinate system."""
+        if self.x is None or self.y is None or self.z is None:
+            raise MatrixError
         return Vector(p.dot(self.x), p.dot(self.y), p.dot(self.z))

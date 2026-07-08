@@ -1,46 +1,24 @@
-"""colours.py - Colour definitions for the Python ldraw package.
+"""Colour definitions for the Python ldraw package."""
 
-Copyright (C) 2008 David Boddie <david@boddie.org.uk>
+from __future__ import annotations
 
-This file is part of the ldraw Python package.
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
+from dataclasses import dataclass
 
 
+@dataclass(frozen=True, slots=True)
 class Colour:
-    # pylint: disable=too-many-arguments, too-few-public-methods
-    """a Colour, uniquely identified by a code."""
+    """A colour, uniquely identified by a code."""
 
-    def __init__(
-        self,
-        code=None,
-        name=None,
-        rgb=None,
-        alpha=None,
-        colour_attributes=None,
-    ):
-        self.code = code
-        self.name = name
-        self.rgb = rgb
-        self.alpha = alpha
-        self.colour_attributes = colour_attributes
+    code: int | None = None
+    name: str | None = None
+    rgb: str | None = None
+    alpha: int | None = None
+    colour_attributes: list[str] | None = None
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Colour):
             return self.code == other.code
         return self.code == other
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.code)

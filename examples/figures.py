@@ -19,7 +19,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.figure import *
 from ldraw.library.colours import *
 from ldraw.library.parts import Baseplate16X16, Rock1X1Crystal5Point
 from ldraw.library.parts.minifig.accessories import (
@@ -30,6 +29,8 @@ from ldraw.library.parts.minifig.accessories import (
     Torch,
 )
 from ldraw.library.parts.minifig.torsos import TorsoWithClassicSpacePattern
+
+from ldraw.figure import *
 from ldraw.pieces import Piece
 
 figure = Person(Vector(0, 0, -10))

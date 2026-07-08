@@ -8,31 +8,31 @@ alphanum = re.compile(r"[\W_]+", re.UNICODE)
 num = re.compile(r"\D", re.UNICODE)
 
 
-def _line_format(**kwargs):
+def _line_format(**kwargs: str) -> str:
     return FORMAT_STRING.format(**kwargs)
 
 
-def _do_sort(li, mode):
-    def cmpkey1(row):
+def _do_sort(rows: list[dict[str, str]], mode: str) -> None:
+    def cmpkey1(row: dict[str, str]) -> str:
         return alphanum.sub("", row[mode]).lower()
 
-    def cmpkey2(row):
+    def cmpkey2(row: dict[str, str]) -> str:
         return _line_format(**row)
 
-    li.sort(key=cmpkey2)
-    li.sort(key=cmpkey1)
+    rows.sort(key=cmpkey2)
+    rows.sort(key=cmpkey1)
 
 
-def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
+def get_parts_lst(parts_dir: Path, mode: str) -> list[dict[str, str]]:
     """Generate a list of parts from the parts directory with metadata."""
     parts = parts_dir.glob("*.dat")
 
-    parts_dict = {"_": [], "~": []}
-    parts_lst = []
+    parts_dict: dict[str, list[dict[str, str]]] = {"_": [], "~": []}
+    parts_lst: list[dict[str, str]] = []
 
     for part in parts:
         try:
-            with open(part, encoding="utf-8") as part_file:
+            with part.open(encoding="utf-8") as part_file:
                 header = part_file.readline()
                 header_description = header[2:].strip()
                 if "~Moved" in header:
@@ -63,7 +63,7 @@ def get_parts_lst(parts_dir: Path, mode: str) -> list[dict]:
     return parts_lst
 
 
-def generate_parts_lst(mode: str, version_dir: Path):
+def generate_parts_lst(mode: str, version_dir: Path) -> None:
     """Generate a parts.lst file from the parts directory in an LDraw version."""
     parts_lst_path = version_dir / "ldraw" / "parts.lst"
     parts_folder_path = version_dir / "ldraw" / "parts"

@@ -10,12 +10,12 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         fetch-depth: 0  # Need full history for performance comparison
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
       with:
         python-version: '3.12'
 
@@ -35,7 +35,7 @@ jobs:
       continue-on-error: true
 
     - name: Store benchmark result
-      uses: benchmark-action/github-action-benchmark@v1
+      uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
       if: github.ref == 'refs/heads/main'
       with:
         tool: 'pytest'
@@ -47,7 +47,7 @@ jobs:
         fail-on-alert: false
 
     - name: Store benchmark result (PR)
-      uses: benchmark-action/github-action-benchmark@v1
+      uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
       if: github.event_name == 'pull_request'
       with:
         tool: 'pytest'
@@ -60,7 +60,7 @@ jobs:
 
     - name: Upload benchmark results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: benchmark-results
         path: benchmark-results.json
@@ -69,10 +69,10 @@ jobs:
   memory-profile:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
       with:
         python-version: '3.12'
 
@@ -94,7 +94,7 @@ jobs:
 
     - name: Upload memory profile
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: memory-profile
         path: memory-profile.txt

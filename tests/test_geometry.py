@@ -27,8 +27,10 @@ def test_matrix_rmul() -> None:
 
 def test_mulothers() -> None:
     m = Identity()
-    pytest.raises(MatrixError, lambda: m * 2)
-    pytest.raises(MatrixError, lambda: 2 * m)
+    with pytest.raises(MatrixError):
+        m * 2
+    with pytest.raises(MatrixError):
+        2 * m
 
 
 random.seed(12345)
@@ -53,11 +55,12 @@ def test_rotate_radians(random_matrix, axis) -> None:
     rotated = original.rotate(90, axis=axis)
 
     rotated = rotated.rotate(3 * math.pi / 2, axis=axis, units=Radians)
-    assert str(original) == str(rotated)
+    assert rotated.flatten() == pytest.approx(original.flatten())
 
 
 def test_rotate_wrong_axis(random_matrix) -> None:
-    pytest.raises(MatrixError, lambda: random_matrix.rotate(444, axis=None))
+    with pytest.raises(MatrixError):
+        random_matrix.rotate(444, axis=None)
 
 
 def test_mul_matrix() -> None:

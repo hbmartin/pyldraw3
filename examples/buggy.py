@@ -19,8 +19,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from ldraw.figure import *
-from ldraw.geometry import YAxis
 from ldraw.library.colours import *
 from ldraw.library.parts import (
     Antenna4HWithRoundedTop,
@@ -33,6 +31,9 @@ from ldraw.library.parts import (
     Tyre6_50X8OffsetTread,
 )
 from ldraw.library.parts.minifig.accessories import Seat2X2
+
+from ldraw.figure import *
+from ldraw.geometry import YAxis
 from ldraw.pieces import Group, Piece
 
 figure = Person(Vector(0, 0, -10))

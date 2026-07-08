@@ -1,41 +1,47 @@
 """Benchmark tests for parts loading performance."""
 
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 import pytest
-from ldraw import config
-from ldraw.parts import Parts
+
+from ldraw.parts import PartCategory, Parts
+
+PARTS_LST = Path("tests/test_ldraw/ldraw/parts.lst")
 
 
 @pytest.fixture
-def parts():
+def parts() -> Parts:
     """Create Parts instance for benchmarks."""
-    return Parts(config.get_ldraw_path())
+    return Parts(PARTS_LST)
 
 
-def test_parts_initialization(benchmark, parts):
+def test_parts_initialization(benchmark: Callable[..., Any]) -> None:
     """Benchmark Parts class initialization."""
-    benchmark(Parts, config.get_ldraw_path())
+    benchmark(Parts, PARTS_LST)
 
 
-def test_parts_loading_single(benchmark, parts):
+def test_parts_loading_single(benchmark: Callable[..., Any], parts: Parts) -> None:
     """Benchmark loading a single part."""
-    benchmark(parts.part, "3001")
+    benchmark(parts.part, code="3001")
 
 
-def test_parts_loading_multiple(benchmark, parts):
+def test_parts_loading_multiple(benchmark: Callable[..., Any], parts: Parts) -> None:
     """Benchmark loading multiple parts."""
-    part_numbers = ["3001", "3002", "3004", "3005", "3022"]
-    
-    def load_multiple():
-        return [parts.part(num) for num in part_numbers]
-    
+    part_numbers = ["3001", "box5", "stud", "stud4"]
+
+    def load_multiple() -> list[object]:
+        return [parts.part(code=part_number) for part_number in part_numbers]
+
     benchmark(load_multiple)
 
 
-def test_parts_search(benchmark, parts):
-    """Benchmark part search functionality."""
-    benchmark(parts.parts_by_name, "brick")
+def test_parts_search(benchmark: Callable[..., Any], parts: Parts) -> None:
+    """Benchmark part category access."""
+    benchmark(parts.entries_by_category, PartCategory.BRICK)
 
 
-def test_parts_catalog_access(benchmark, parts):
+def test_parts_catalog_access(benchmark: Callable[..., Any], parts: Parts) -> None:
     """Benchmark accessing parts catalog."""
-    benchmark(lambda: list(parts.parts.keys())[:100])
+    benchmark(lambda: list(parts.catalog.by_code)[:100])

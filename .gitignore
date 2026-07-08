@@ -14,3 +14,5 @@ poetry.lock
 build/
 pyldraw3/*.egg-info/
 *.ldr
+triage_decisions.db
+reviews_triage/
