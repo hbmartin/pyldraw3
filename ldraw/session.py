@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -125,10 +125,7 @@ class LDrawState:
 class LDrawSession:
     """Manage one configured LDraw catalog and generated library."""
 
-    config: Config
-
-    def __init__(self, config: Config | None = None) -> None:
-        self.config = config if config is not None else Config.load()
+    config: Config = field(default_factory=Config.load)
 
     @property
     def paths(self) -> LDrawPaths:
@@ -169,6 +166,9 @@ class LDrawSession:
         """Rebuild the persistent catalog index and return the loaded parts."""
         paths = self.paths
         paths.generated_path.mkdir(parents=True, exist_ok=True)
+        index_reason = _catalog_index_reason(paths)
+        if not force and index_reason is None:
+            return load_parts(paths.parts_lst, paths.generated_path)
         emit_progress(
             on_progress,
             ProgressEvent(
@@ -177,12 +177,7 @@ class LDrawSession:
                 path=paths.catalog_db,
             ),
         )
-        index_reason = _catalog_index_reason(paths)
-        if not force and index_reason is None:
-            return load_parts(paths.parts_lst, paths.generated_path)
-        if paths.catalog_db.exists() and (
-            force or index_reason is LDrawStateReason.INDEX_UNREADABLE
-        ):
+        if paths.catalog_db.exists():
             paths.catalog_db.unlink()
         parts = Parts.get(paths.parts_lst)
         save_catalog(
@@ -202,7 +197,10 @@ def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
     if not paths.catalog_db.is_file():
         return LDrawStateReason.INDEX_MISSING
     try:
-        connection = sqlite3.connect(f"file:{paths.catalog_db}?mode=ro", uri=True)
+        connection = sqlite3.connect(
+            f"{paths.catalog_db.resolve().as_uri()}?mode=ro",
+            uri=True,
+        )
     except sqlite3.Error:
         return LDrawStateReason.INDEX_UNREADABLE
     try:

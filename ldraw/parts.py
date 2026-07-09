@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -16,6 +16,7 @@ from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
 from ldraw.part import Part
 from ldraw.pieces import Piece
+from ldraw.utils import camel, clean
 
 if TYPE_CHECKING:
     from ldraw.geometry import Matrix, Vector
@@ -33,12 +34,9 @@ def _reference_key(code: str) -> str:
     return _normalized_reference_code(code).casefold()
 
 
-def _casefold_lookup(mapping: dict[str, str], key: str) -> str | None:
-    wanted = _reference_key(key)
-    for candidate, value in mapping.items():
-        if _reference_key(candidate) == wanted:
-            return value
-    return None
+def _normalized_index(mapping: dict[str, str]) -> dict[str, str]:
+    """Index ``mapping`` by normalized reference key for O(1) casefold lookups."""
+    return {_reference_key(code): value for code, value in mapping.items()}
 
 
 class PartCategory(StrEnum):
@@ -317,6 +315,29 @@ def symbol_description(description: str) -> str:
     return description if split is None else split[0]
 
 
+def symbol_name_for_description(description: str) -> str:
+    """Return the generated Python symbol for an LDraw description."""
+    return clean(camel(symbol_description(description)))
+
+
+def _catalog_entry_symbol_name(entry: CatalogEntry) -> str:
+    return symbol_name_for_description(entry.description)
+
+
+def _catalog_entry_module_path(entry: CatalogEntry) -> str | None:
+    if entry.minifig_section is not None:
+        return f"ldraw.library.parts.minifig.{entry.minifig_section.value}"
+    if entry.category is PartCategory.OTHER:
+        return None
+    return f"ldraw.library.parts.{entry.category.module_name}"
+
+
+def _catalog_entry_import_statement(entry: CatalogEntry) -> str | None:
+    if (module := _catalog_entry_module_path(entry)) is None:
+        return None
+    return f"from {module} import {_catalog_entry_symbol_name(entry)}"
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogEntry:
     """Typed catalog entry for one part or primitive."""
@@ -331,22 +352,16 @@ class CatalogEntry:
     @property
     def symbol_name(self) -> str:
         """Generated Python symbol name for this entry."""
-        from ldraw.snippets import symbol_name  # noqa: PLC0415
-
-        return symbol_name(self)
+        return _catalog_entry_symbol_name(self)
 
     @property
     def module_path(self) -> str | None:
         """Generated module path for this entry, if it is importable."""
-        from ldraw.snippets import module_path  # noqa: PLC0415
-
-        return module_path(self)
+        return _catalog_entry_module_path(self)
 
     def import_statement(self) -> str | None:
         """Generated-library import statement for this entry, if available."""
-        from ldraw.snippets import suggested_import  # noqa: PLC0415
-
-        return suggested_import(self)
+        return _catalog_entry_import_statement(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -809,19 +824,30 @@ class Parts:
             depth=depth,
         )
 
+    @cached_property
+    def _by_code_normalized(self) -> dict[str, str]:
+        return _normalized_index(self.by_code)
+
+    @cached_property
+    def _primitives_by_code_normalized(self) -> dict[str, str]:
+        return _normalized_index(self.primitives_by_code)
+
+    def _primitive_description(self, key: str) -> str | None:
+        primitives = self._primitives_by_code_normalized
+        if (description := primitives.get(key)) is not None:
+            return description
+        return primitives.get(key.rpartition("/")[2])
+
     def _reference_kind(
         self,
         code: str,
         part: Part | None,
     ) -> PartReferenceKind:
         key = _reference_key(code)
-        if _casefold_lookup(self.by_code, key) is not None:
+        if key in self._by_code_normalized:
             return PartReferenceKind.PART
-        if (
-            _casefold_lookup(self.primitives_by_code, key) is not None
-            or _casefold_lookup(self.primitives_by_code, key.rpartition("/")[2])
-            is not None
-        ):
+        primitives = self._primitives_by_code_normalized
+        if key in primitives or key.rpartition("/")[2] in primitives:
             return PartReferenceKind.PRIMITIVE
         if part is None:
             return PartReferenceKind.UNKNOWN
@@ -839,13 +865,7 @@ class Parts:
             case PartReferenceKind.PART:
                 return self.description_for(code)
             case PartReferenceKind.PRIMITIVE:
-                description = _casefold_lookup(self.primitives_by_code, code)
-                if description is not None:
-                    return description
-                return _casefold_lookup(
-                    self.primitives_by_code,
-                    code.rpartition("/")[2],
-                )
+                return self._primitive_description(_reference_key(code))
             case PartReferenceKind.SUBPART if part is not None:
                 return part.description
             case _:

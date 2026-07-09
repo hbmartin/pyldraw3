@@ -21,6 +21,9 @@ ARCHIVE_URL = "https://github.com/rienafairefr/ldraw-parts/archive/refs/tags"
 VERSION_RE = re.compile(r"^\d{4}-\d{2}$")
 cache_ldraw = Path(get_cache_dir())
 
+# Minimum byte delta between throttled download progress events.
+_PROGRESS_BYTE_STEP = 1_048_576
+
 
 def _validate_version(version: str) -> None:
     if version != COMPLETE_VERSION and not VERSION_RE.fullmatch(version):
@@ -167,49 +170,43 @@ def _download(
     with requests.get(url, stream=True) as response:  # noqa: S113
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
-        emit_progress(
-            on_progress,
-            ProgressEvent(
-                stage=ProgressStage.DOWNLOAD,
-                message=f"Downloading {filename}",
-                current=0,
-                total=total or None,
-                path=retrieved,
-            ),
-        )
+        message = f"Downloading {filename}"
+
+        # Only build events when a callback is registered, and throttle so a
+        # multi-megabyte stream does not flood the consumer with one event per
+        # 1 KiB chunk. The start and final byte counts are always emitted.
+        last_emitted = -1
+
+        def emit_download(current: int, *, force: bool = False) -> None:
+            nonlocal last_emitted
+            if on_progress is None:
+                return
+            if not force and current - last_emitted < _PROGRESS_BYTE_STEP:
+                return
+            last_emitted = current
+            on_progress(
+                ProgressEvent(
+                    stage=ProgressStage.DOWNLOAD,
+                    message=message,
+                    current=current,
+                    total=total or None,
+                    path=retrieved,
+                ),
+            )
+
+        emit_download(0, force=True)
         with partial.open("wb") as file:
-            if not show_progress:
-                current = 0
-                for data in response.iter_content(chunk_size=chunk_size):
-                    current += file.write(data)
-                    emit_progress(
-                        on_progress,
-                        ProgressEvent(
-                            stage=ProgressStage.DOWNLOAD,
-                            message=f"Downloading {filename}",
-                            current=current,
-                            total=total or None,
-                            path=retrieved,
-                        ),
-                    )
-            else:
-                bar = Bar(f"Downloading {url} ...", max=total)
-                current = 0
-                for data in response.iter_content(chunk_size=chunk_size):
-                    written = file.write(data)
-                    current += written
+            bar = Bar(f"Downloading {url} ...", max=total) if show_progress else None
+            current = 0
+            for data in response.iter_content(chunk_size=chunk_size):
+                written = file.write(data)
+                current += written
+                if bar is not None:
                     bar.next(written)
-                    emit_progress(
-                        on_progress,
-                        ProgressEvent(
-                            stage=ProgressStage.DOWNLOAD,
-                            message=f"Downloading {filename}",
-                            current=current,
-                            total=total or None,
-                            path=retrieved,
-                        ),
-                    )
+                emit_download(current)
+            if bar is not None:
                 bar.finish()
+            emit_download(current, force=True)
     partial.replace(retrieved)
     return retrieved
 
