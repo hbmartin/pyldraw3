@@ -1,7 +1,21 @@
 """Tests for the curated top-level public API."""
 
+import subprocess
+import sys
+
 import ldraw
-from ldraw import bom, colour, figure, geometry, model, parts, pieces, validation
+from ldraw import (
+    bom,
+    colour,
+    figure,
+    geometry,
+    model,
+    part_geometry,
+    part_geometry_types,
+    parts,
+    pieces,
+    validation,
+)
 
 EXPECTED_ALL = [
     "BomRow",
@@ -57,3 +71,20 @@ def test_top_level_names_are_the_submodule_objects() -> None:
     assert ldraw.ValidationIssue is validation.ValidationIssue
     assert ldraw.Severity is validation.Severity
     assert ldraw.iter_ldr_issues is validation.iter_ldr_issues
+    assert ldraw.BoundingBox is part_geometry_types.BoundingBox
+    assert ldraw.StudReference is part_geometry_types.StudReference
+    assert part_geometry.BoundingBox is part_geometry_types.BoundingBox
+    assert part_geometry.StudReference is part_geometry_types.StudReference
+
+
+def test_part_geometry_modules_import_in_either_order() -> None:
+    for command in (
+        "import ldraw.parts; import ldraw.part_geometry",
+        "import ldraw.part_geometry; import ldraw.parts",
+    ):
+        subprocess.run(
+            [sys.executable, "-c", command],
+            capture_output=True,
+            check=True,
+            text=True,
+        )

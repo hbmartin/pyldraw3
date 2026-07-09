@@ -28,7 +28,7 @@ from ldraw.generation import generate
 from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
 from ldraw.model import Model, parse_model, read_model
-from ldraw.part_geometry import BoundingBox, StudReference
+from ldraw.part_geometry_types import BoundingBox, StudReference
 from ldraw.parts import CatalogEntry, MinifigSection, PartCategory, Parts
 from ldraw.pieces import Group, Piece
 from ldraw.validation import Severity, ValidationIssue, iter_ldr_issues
