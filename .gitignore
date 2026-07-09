@@ -12,6 +12,7 @@ dist/
 poetry.lock
 /.cached-generated/
 build/
+site/
 pyldraw3/*.egg-info/
 *.ldr
 !tests/models/*.ldr

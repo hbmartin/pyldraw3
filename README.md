@@ -13,7 +13,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - 🧱 **Complete LDraw Support**: Full compatibility with the LDraw standard format
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
-- 📜 **Comprehensive Guide**: Jump into example or the quick start below, or read a [detailed usage guide](GUIDE.md)
+- 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/) and [local guide source](docs/guide.md)
 
 ## Table of Contents
 
@@ -32,6 +32,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - [Development](#development)
   - [Setup Development Environment](#setup-development-environment)
   - [Development Commands](#development-commands)
+  - [Documentation Site](#documentation-site)
 - [Architecture](#architecture)
   - [Core Components](#core-components)
   - [Key Classes](#key-classes)
@@ -245,6 +246,8 @@ ldraw_library_path: /Users/you/Library/Caches/pyldraw3/2018-02
 
 ## CLI Reference
 
+The published docs include a standalone [CLI reference](https://hbmartin.github.io/pyldraw3/cli/).
+
 ```
 usage: ldraw [-h] command ...
 
@@ -316,6 +319,16 @@ uv run ruff check --fix      # Fix linting issues
 
 # Build package
 uv build
+```
+
+### Documentation Site
+
+The documentation site is built with [Zensical](https://zensical.org/) from
+the Markdown sources in `docs/`.
+
+```bash
+uv run zensical serve
+uv run zensical build --clean --strict
 ```
 
 ## Architecture
