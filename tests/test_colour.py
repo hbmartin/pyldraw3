@@ -3,6 +3,7 @@
 import pytest
 
 from ldraw.colour import Colour
+from ldraw.parts import Parts
 
 
 def test_colour_equality() -> None:
@@ -90,3 +91,34 @@ def test_is_solid_reflects_alpha_and_attributes() -> None:
     assert not Colour(code=36, rgb="#C91A09", alpha=128).is_solid
     assert not Colour(code=383, colour_attributes=["CHROME"]).is_solid
     assert not Colour(code=114, alpha=128, colour_attributes=["GLITTER"]).is_solid
+
+
+def test_colour_display_helpers() -> None:
+    named = Colour(code=189, name="Reddish_Gold", rgb="#ac8247", alpha=255)
+    direct = Colour(rgb="#00ff00", alpha=128)
+    unknown = Colour()
+
+    assert named.display_label == "Reddish Gold"
+    assert named.swatch_rgb == "#AC8247"
+    assert named.swatch_alpha == 255
+    assert not named.is_transparent
+    assert direct.display_label == "#00FF00"
+    assert direct.swatch_rgb == "#00FF00"
+    assert direct.swatch_alpha == 128
+    assert direct.is_transparent
+    assert unknown.display_label == "Unknown colour"
+
+
+def test_parts_resolve_colour_enriches_catalogued_codes() -> None:
+    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+
+    red = parts.resolve_colour(4)
+    direct = Colour(rgb="#123456")
+    unknown = Colour(code=999)
+
+    assert red.name == "Red"
+    assert red.display_label == "Red"
+    assert red.swatch_rgb == "#C91A09"
+    assert parts.resolve_colour(direct) is direct
+    assert parts.resolve_colour(unknown) is unknown
+    assert unknown.display_label == "Colour 999"

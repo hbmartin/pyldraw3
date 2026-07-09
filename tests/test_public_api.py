@@ -12,10 +12,13 @@ from ldraw import (
     figure,
     geometry,
     model,
+    model_summary,
     part_geometry,
     part_geometry_types,
     parts,
     pieces,
+    progress,
+    session,
     validation,
 )
 
@@ -26,14 +29,25 @@ EXPECTED_ALL = [
     "Colour",
     "Group",
     "Identity",
+    "LDrawPaths",
+    "LDrawSession",
+    "LDrawState",
+    "LDrawStateReason",
     "Matrix",
     "MinifigSection",
     "Model",
+    "ModelOccurrence",
+    "ModelSummary",
     "PartCategory",
+    "PartReference",
+    "PartReferenceKind",
     "Parts",
     "Person",
     "Piece",
+    "ProgressEvent",
+    "ProgressStage",
     "Severity",
+    "SkippedGeometry",
     "StudReference",
     "ValidationIssue",
     "Vector",
@@ -42,8 +56,10 @@ EXPECTED_ALL = [
     "ZAxis",
     "bill_of_materials",
     "download",
+    "ensure_library",
     "generate",
     "iter_ldr_issues",
+    "model_bounds",
     "parse_model",
     "read_model",
 ]
@@ -68,8 +84,21 @@ def test_top_level_names_are_the_submodule_objects() -> None:
     assert ldraw.Vector is geometry.Vector
     assert ldraw.Matrix is geometry.Matrix
     assert ldraw.Parts is parts.Parts
+    assert ldraw.PartReference is parts.PartReference
+    assert ldraw.PartReferenceKind is parts.PartReferenceKind
     assert ldraw.BomRow is bom.BomRow
     assert ldraw.bill_of_materials is bom.bill_of_materials
+    assert ldraw.LDrawSession is session.LDrawSession
+    assert ldraw.LDrawPaths is session.LDrawPaths
+    assert ldraw.LDrawState is session.LDrawState
+    assert ldraw.LDrawStateReason is session.LDrawStateReason
+    assert ldraw.ensure_library is session.ensure_library
+    assert ldraw.ProgressEvent is progress.ProgressEvent
+    assert ldraw.ProgressStage is progress.ProgressStage
+    assert ldraw.ModelOccurrence is model.ModelOccurrence
+    assert ldraw.ModelSummary is model_summary.ModelSummary
+    assert ldraw.SkippedGeometry is model_summary.SkippedGeometry
+    assert ldraw.model_bounds is model_summary.model_bounds
     assert ldraw.ValidationIssue is validation.ValidationIssue
     assert ldraw.Severity is validation.Severity
     assert ldraw.iter_ldr_issues is validation.iter_ldr_issues

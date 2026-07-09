@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pyldraw3.svg)](https://pypi.org/project/pyldraw3/)
 [![Lint and Test](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml/badge.svg)](https://github.com/hbmartin/pyldraw3/actions/workflows/lint-test.yml)
-[![Coverage Status](https://coveralls.io/repos/github/hbmartin/pyldraw3/badge.svg?branch=main)](https://coveralls.io/github/hbmartin/pyldraw3?branch=main)
+[![Codecov](https://codecov.io/gh/hbmartin/pyldraw3/branch/main/graph/badge.svg)](https://codecov.io/gh/hbmartin/pyldraw3)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Formatter: Ruff](https://img.shields.io/badge/formatter-ruff-46a0d9.svg)](https://github.com/astral-sh/ruff)
 

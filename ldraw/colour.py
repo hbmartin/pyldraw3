@@ -66,6 +66,32 @@ class Colour:
         opaque = self.alpha is None or self.alpha == OPAQUE_ALPHA
         return opaque and not self.colour_attributes
 
+    @property
+    def display_label(self) -> str:
+        """Human-readable label for UI lists and inspectors."""
+        if self.name is not None:
+            return self.name.replace("_", " ")
+        if self.code is not None:
+            return f"Colour {self.code}"
+        if self.rgb is not None:
+            return self.rgb
+        return "Unknown colour"
+
+    @property
+    def swatch_rgb(self) -> str | None:
+        """RGB hex value suitable for colour swatches, when known."""
+        return self.rgb
+
+    @property
+    def swatch_alpha(self) -> int:
+        """Alpha channel suitable for colour swatches."""
+        return OPAQUE_ALPHA if self.alpha is None else self.alpha
+
+    @property
+    def is_transparent(self) -> bool:
+        """Whether this colour has a non-opaque alpha value."""
+        return self.swatch_alpha < OPAQUE_ALPHA
+
     def _direct_key(self) -> tuple[str | None, int]:
         return self.rgb, OPAQUE_ALPHA if self.alpha is None else self.alpha
 

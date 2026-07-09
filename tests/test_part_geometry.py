@@ -7,7 +7,10 @@ import pytest
 
 from ldraw.errors import NoGeometryError, PartNotFoundError
 from ldraw.geometry import Vector
-from ldraw.parts import Parts
+from ldraw.model import Model
+from ldraw.model_summary import ModelSummary, model_bounds
+from ldraw.parts import PartReferenceKind, Parts
+from ldraw.pieces import Piece
 
 PARTS_LST = """\
 9001.dat                       Test Brick
@@ -59,6 +62,11 @@ def geometry_parts(tmp_path: Path) -> Parts:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
     (ldraw_dir / "parts.lst").write_text(PARTS_LST)
+    (ldraw_dir / "p.lst").write_text(
+        "stud.dat                       Stud\n"
+        "stud4.dat                      Stud Tube Open\n"
+        "stug2.dat                      Stud Group 2 x 1\n",
+    )
     return Parts(ldraw_dir / "parts.lst")
 
 
@@ -155,3 +163,73 @@ def test_local_geometry_is_memoized_per_parts_instance(
     from ldraw.part_geometry import _caches
 
     assert "stud" in _caches[geometry_parts]
+
+
+def test_references_for_reports_typed_direct_references(
+    geometry_parts: Parts,
+) -> None:
+    refs = geometry_parts.references_for("9001")
+    by_code = {ref.code: ref for ref in refs}
+
+    assert by_code["stud"].kind is PartReferenceKind.PRIMITIVE
+    assert by_code["stud"].description == "Stud"
+    assert by_code["stud"].parent_code == "9001"
+    assert by_code["stud"].depth == 1
+    assert by_code["s/9001s01"].kind is PartReferenceKind.SUBPART
+    assert by_code["s/9001s01"].description == "Test Brick Side"
+    assert by_code["missing"].kind is PartReferenceKind.UNKNOWN
+    assert by_code["missing"].description is None
+    assert by_code["missing"].reference == "missing.dat"
+
+
+def test_references_for_recurses_and_stops_at_cycles(
+    geometry_parts: Parts,
+) -> None:
+    refs = geometry_parts.references_for("9005", recursive=True)
+
+    assert [(ref.parent_code, ref.code, ref.depth) for ref in refs] == [
+        ("9005", "stug2", 1),
+        ("stug2", "stud", 2),
+        ("stug2", "stud", 2),
+    ]
+    assert len(geometry_parts.references_for("9003", recursive=True)) == 1
+
+
+def test_model_summary_and_model_bounds_report_geometry_and_skips(
+    geometry_parts: Parts,
+) -> None:
+    model = Model(
+        objects=[
+            Piece.place("9001", colour=4, position=Vector(10, 0, 0)),
+            Piece.place("9002", colour=16),
+        ],
+    )
+
+    summary = ModelSummary.from_model(model, geometry_parts)
+
+    assert summary.bounds is not None
+    assert summary.bounds.min == Vector(-10, -4, -10)
+    assert summary.bounds.max == Vector(30, 24, 10)
+    assert summary.origin_bounds is not None
+    assert summary.origin_bounds.min == Vector(0, 0, 0)
+    assert summary.origin_bounds.max == Vector(10, 0, 0)
+    assert summary.part_counts == {"9001": 1, "9002": 1}
+    assert summary.colour_usage == {4: 1, 16: 1}
+    assert summary.occurrence_count == 2
+    assert summary.skipped_geometry[0].part == "9002"
+    assert "no drawable geometry" in summary.skipped_geometry[0].reason
+    assert summary.size_ldu == Vector(40, 28, 20)
+    assert summary.size_mm is not None
+    assert summary.size_mm.x == pytest.approx(16)
+    assert summary.size_mm.y == pytest.approx(11.2)
+    assert summary.size_mm.z == pytest.approx(8)
+    assert model_bounds(model, geometry_parts) == summary.bounds
+
+
+def test_empty_model_summary_has_no_bounds(geometry_parts: Parts) -> None:
+    summary = ModelSummary.from_model(Model(), geometry_parts)
+
+    assert summary.bounds is None
+    assert summary.origin_bounds is None
+    assert summary.size_ldu is None
+    assert summary.size_mm is None

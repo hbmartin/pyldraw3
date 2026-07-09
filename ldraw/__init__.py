@@ -27,10 +27,26 @@ from ldraw.figure import Person
 from ldraw.generation import generate
 from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
-from ldraw.model import Model, parse_model, read_model
+from ldraw.model import Model, ModelOccurrence, parse_model, read_model
+from ldraw.model_summary import ModelSummary, SkippedGeometry, model_bounds
 from ldraw.part_geometry_types import BoundingBox, StudReference
-from ldraw.parts import CatalogEntry, MinifigSection, PartCategory, Parts
+from ldraw.parts import (
+    CatalogEntry,
+    MinifigSection,
+    PartCategory,
+    PartReference,
+    PartReferenceKind,
+    Parts,
+)
 from ldraw.pieces import Group, Piece
+from ldraw.progress import ProgressEvent, ProgressStage
+from ldraw.session import (
+    LDrawPaths,
+    LDrawSession,
+    LDrawState,
+    LDrawStateReason,
+    ensure_library,
+)
 from ldraw.validation import Severity, ValidationIssue, iter_ldr_issues
 
 __all__ = [
@@ -40,14 +56,25 @@ __all__ = [
     "Colour",
     "Group",
     "Identity",
+    "LDrawPaths",
+    "LDrawSession",
+    "LDrawState",
+    "LDrawStateReason",
     "Matrix",
     "MinifigSection",
     "Model",
+    "ModelOccurrence",
+    "ModelSummary",
     "PartCategory",
+    "PartReference",
+    "PartReferenceKind",
     "Parts",
     "Person",
     "Piece",
+    "ProgressEvent",
+    "ProgressStage",
     "Severity",
+    "SkippedGeometry",
     "StudReference",
     "ValidationIssue",
     "Vector",
@@ -56,8 +83,10 @@ __all__ = [
     "ZAxis",
     "bill_of_materials",
     "download",
+    "ensure_library",
     "generate",
     "iter_ldr_issues",
+    "model_bounds",
     "parse_model",
     "read_model",
 ]

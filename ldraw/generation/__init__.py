@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ldraw.catalog import load_parts
 from ldraw.generation.colours import gen_colours
 from ldraw.generation.parts import gen_parts
+from ldraw.progress import ProgressCallback, ProgressEvent, ProgressStage, emit_progress
 from ldraw.resources import _get_resource, _get_resource_content
 from ldraw.utils import ensure_exists
 
@@ -29,7 +30,17 @@ def _file_md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
 
-def _library_fingerprint(parts_lst: Path) -> str:
+def generated_library_path(generated_path: str | Path) -> Path:
+    """Return the generated ``ldraw.library`` package directory."""
+    return Path(generated_path) / "library"
+
+
+def generation_hash_path(generated_path: str | Path) -> Path:
+    """Return the generated-library fingerprint file path."""
+    return generated_library_path(generated_path) / "__hash__"
+
+
+def library_fingerprint(parts_lst: Path) -> str:
     """Fingerprint everything the generated library is derived from.
 
     Covers the generator schema version, ``parts.lst``, and
@@ -44,39 +55,52 @@ def _library_fingerprint(parts_lst: Path) -> str:
     return f"{GENERATION_SCHEMA_VERSION}\n{_file_md5(parts_lst)}\n{ldconfig_md5}\n"
 
 
-def generate(config: Config, *, force: bool = False) -> None:
+def generate(
+    config: Config,
+    *,
+    force: bool = False,
+    on_progress: ProgressCallback | None = None,
+) -> None:
     """Generate the library from configuration."""
-    generated_library_path = Path(config.generated_path) / "library"
-    ensure_exists(generated_library_path)
+    library_path_out = generated_library_path(config.generated_path)
+    ensure_exists(library_path_out)
 
-    hash_path = generated_library_path / "__hash__"
+    hash_path = generation_hash_path(config.generated_path)
     library_path = Path(config.ldraw_library_path)
     parts_lst = library_path / "ldraw" / "parts.lst"
-    fingerprint = _library_fingerprint(parts_lst)
+    fingerprint = library_fingerprint(parts_lst)
 
     if hash_path.exists() and hash_path.read_text() == fingerprint and not force:
         logger.error(
             "Path %s already generated (checksums match)",
-            generated_library_path,
+            library_path_out,
         )
         return
 
-    shutil.rmtree(generated_library_path)
-    ensure_exists(generated_library_path)
+    emit_progress(
+        on_progress,
+        ProgressEvent(
+            stage=ProgressStage.LIBRARY_GENERATION,
+            message="Generating ldraw.library",
+            path=library_path_out,
+        ),
+    )
+    shutil.rmtree(library_path_out)
+    ensure_exists(library_path_out)
 
     parts = load_parts(parts_lst, config.generated_path, build_index=True)
 
-    library__init__ = generated_library_path / "__init__.py"
+    library__init__ = library_path_out / "__init__.py"
     library__init__.write_text(LIBRARY_INIT)
-    (generated_library_path / "py.typed").write_text("")
+    (library_path_out / "py.typed").write_text("")
 
     shutil.copy(
         _get_resource("ldraw-license.txt"),
-        generated_library_path / "license.txt",
+        library_path_out / "license.txt",
     )
 
-    gen_colours(parts, generated_library_path)
-    gen_parts(parts, generated_library_path)
+    gen_colours(parts, library_path_out)
+    gen_parts(parts, library_path_out)
 
     hash_path.write_text(fingerprint)
 

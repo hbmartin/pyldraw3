@@ -15,6 +15,7 @@ from ldraw.parts import (
     PartsCatalog,
     symbol_description,
 )
+from ldraw.snippets import module_path, suggested_import, symbol_name
 
 
 def test_load_parts() -> None:
@@ -193,6 +194,34 @@ def test_module_sections_cover_categories_and_minifig_sections() -> None:
     assert sections[("minifig", "torsos")] == {"Torso": "973"}
     assert sections[("minifigs",)] == {"Torso": "973"}
     assert ("other",) not in sections
+
+
+def test_catalog_entry_import_snippets() -> None:
+    entry = CatalogEntry(
+        code="3001",
+        description="Brick  2 x  4",
+        category=PartCategory.BRICK,
+    )
+
+    assert entry.symbol_name == "Brick2X4"
+    assert entry.module_path == "ldraw.library.parts.bricks"
+    assert entry.import_statement() == (
+        "from ldraw.library.parts.bricks import Brick2X4"
+    )
+    assert symbol_name(entry) == entry.symbol_name
+    assert module_path(entry) == entry.module_path
+    assert suggested_import(entry) == entry.import_statement()
+
+
+def test_catalog_entry_import_snippets_for_other_category() -> None:
+    entry = CatalogEntry(
+        code="9999",
+        description="Weird Part",
+        category=PartCategory.OTHER,
+    )
+
+    assert entry.module_path is None
+    assert entry.import_statement() is None
 
 
 def test_unknown_category_warns_and_falls_back_to_other(

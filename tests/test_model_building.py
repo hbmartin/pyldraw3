@@ -224,12 +224,81 @@ def test_iter_pieces_counts_repeated_references_twice() -> None:
     assert len(list(root.iter_pieces())) == 2
 
 
+def test_iter_occurrences_reports_steps_source_lines_and_transforms() -> None:
+    model = parse_model(
+        "0 Model\n"
+        "1 4 10 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "0 STEP\n"
+        "1 2 20 0 0 1 0 0 0 1 0 0 0 1 3005.dat\n",
+        name="model.ldr",
+    )
+
+    first, second = list(model.iter_occurrences())
+
+    assert (first.part_code, first.reference, first.colour.code) == (
+        "3001",
+        "3001.dat",
+        4,
+    )
+    assert first.position == Vector(10, 0, 0)
+    assert first.source_model is model
+    assert first.source_line == 2
+    assert first.step == first.source_step == 1
+    assert (second.part_code, second.source_line, second.step) == ("3005", 4, 2)
+
+
+def test_iter_occurrences_expands_submodels_with_composed_context() -> None:
+    inner = Model(
+        name="inner.ldr",
+        objects=[Piece.place("3005", colour=16, position=Vector(5, 0, 0))],
+    )
+    outer = Model(
+        name="outer.ldr",
+        objects=[
+            Piece.place("inner", colour=16, position=Vector(10, 0, 0), suffix=".LDR")
+        ],
+    )
+    root = Model(
+        name="main.ldr",
+        objects=[
+            Piece.place("outer", colour=4, position=Vector(100, 0, 0), suffix=".LDR")
+        ],
+        submodels={"outer.ldr": outer, "inner.ldr": inner},
+    )
+
+    (occurrence,) = list(root.iter_occurrences())
+
+    assert occurrence.part_code == "3005"
+    assert occurrence.colour.code == 4
+    assert occurrence.position == Vector(115, 0, 0)
+    assert occurrence.source_model is inner
+    assert occurrence.source_line is None
+    assert occurrence.step == 1
+    assert occurrence.source_step == 1
+
+
+def test_iter_occurrences_can_leave_submodels_unexpanded() -> None:
+    root = nested_mpd_root()
+
+    (occurrence,) = list(
+        root.iter_occurrences(expand_submodels=False, include_steps=False),
+    )
+
+    assert occurrence.part_code == "outer"
+    assert occurrence.reference == "outer.LDR"
+    assert occurrence.step is None
+    assert occurrence.source_step is None
+
+
 def test_iter_pieces_raises_on_self_reference() -> None:
     piece = Piece(16, Vector(0, 0, 0), Identity(), "main", suffix=".LDR")
     model = Model(name="main.ldr", objects=[piece])
 
     with pytest.raises(SubmodelCycleError):
         list(model.iter_pieces())
+
+    with pytest.raises(SubmodelCycleError):
+        list(model.iter_occurrences())
 
 
 def test_iter_pieces_raises_on_mutual_cycle() -> None:
