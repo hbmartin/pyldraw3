@@ -33,8 +33,7 @@ class _PartGeometryLibrary(Protocol):
         self,
         description: str | None = None,
         code: str | None = None,
-    ) -> Part:
-        raise NotImplementedError
+    ) -> Part: ...
 
 
 @dataclass(frozen=True, slots=True)

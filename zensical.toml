@@ -13,14 +13,7 @@ nav = [
     { "Home" = "index.md" },
     { "Guide" = "guide.md" },
     { "CLI Reference" = "cli.md" },
-    { "API Reference" = [
-        "api/index.md",
-        { "Public API" = "api/public.md" },
-        { "Models and Pieces" = "api/models.md" },
-        { "Parts and Geometry" = "api/parts.md" },
-        { "LDraw Lines" = "api/lines.md" },
-        { "Utilities" = "api/utilities.md" },
-    ] },
+    { "API Reference" = "api/index.md" },
     { "GitHub" = "https://github.com/hbmartin/pyldraw3" },
     { "Contributing" = "https://github.com/hbmartin/pyldraw3/blob/main/CONTRIBUTING.md" },
 ]
@@ -40,6 +33,10 @@ features = [
 
 [project.theme.icon]
 repo = "fontawesome/brands/github"
+
+[project.plugins.macros]
+module_name = "docs_api_reference"
+on_error_fail = true
 
 [project.plugins.mkdocstrings.handlers.python]
 inventories = ["https://docs.python.org/3/objects.inv"]
