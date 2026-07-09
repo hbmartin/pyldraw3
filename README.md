@@ -324,8 +324,9 @@ uv build
 ### Documentation Site
 
 The documentation site is built with [Zensical](https://zensical.org/) from
-the Markdown sources in `docs/`, including generated API reference pages via
-`mkdocstrings-python`.
+the Markdown sources in `docs/`. The API reference is expanded from
+`ldraw.__all__` at build time and rendered from type annotations and docstrings
+via `mkdocstrings-python`.
 
 ```bash
 uv run zensical serve
