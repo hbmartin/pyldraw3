@@ -2,8 +2,10 @@
 
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
-from ldraw.catalog import catalog_db_path, parts_lst_md5, save_catalog
+from ldraw.catalog import CATALOG_SCHEMA_VERSION, catalog_db_path, parts_lst_md5
+from ldraw.catalog import save_catalog as catalog_save_catalog
 from ldraw.config import Config
 from ldraw.generation import library_fingerprint
 from ldraw.parts import Parts
@@ -33,7 +35,7 @@ def write_minimal_library(root: Path) -> Path:
 
 def write_fresh_index(parts_lst: Path, generated_path: Path) -> None:
     parts = Parts(parts_lst)
-    save_catalog(
+    catalog_save_catalog(
         catalog_db_path(generated_path),
         md5=parts_lst_md5(parts_lst),
         catalog=parts.catalog,
@@ -154,6 +156,83 @@ def test_session_load_rebuild_index_and_open_model(tmp_path: Path) -> None:
     session.paths.catalog_db.write_bytes(b"not sqlite")
     assert session.rebuild_index(force=False).get_entry_by_code("3001") is not None
     assert session.open_model(model_path).description == "Model"
+
+
+def test_rebuild_index_unlinks_stale_catalog_before_saving(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    write_fresh_index(parts_lst, generated_path)
+    catalog_db = catalog_db_path(generated_path)
+    with sqlite3.connect(catalog_db) as connection:
+        connection.execute("PRAGMA user_version = 999")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+    observed_existing_files: list[bool] = []
+
+    def fake_save_catalog(db_path, **_kwargs) -> None:
+        observed_existing_files.append(db_path.exists())
+        db_path.write_text("new catalog")
+
+    monkeypatch.setattr("ldraw.session.save_catalog", fake_save_catalog)
+
+    assert session.rebuild_index(force=False).get_entry_by_code("3001") is not None
+
+    assert observed_existing_files == [False]
+    assert catalog_db.read_text() == "new catalog"
+
+
+def test_session_state_reads_catalog_with_file_uri(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated path"
+    catalog_db = catalog_db_path(generated_path)
+    catalog_db.parent.mkdir(parents=True)
+    catalog_db.write_text("placeholder")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_connect(database: str, *, uri: bool) -> SimpleNamespace:
+        captured["database"] = database
+        captured["uri"] = uri
+
+        def execute(statement: str) -> SimpleNamespace:
+            if statement == "PRAGMA user_version":
+                return SimpleNamespace(fetchone=lambda: (CATALOG_SCHEMA_VERSION,))
+            if statement == "SELECT value FROM meta WHERE key = 'parts_lst_md5'":
+                return SimpleNamespace(fetchone=lambda: (parts_lst_md5(parts_lst),))
+            raise AssertionError(statement)
+
+        return SimpleNamespace(
+            execute=execute,
+            close=lambda: captured.setdefault("closed", True),
+        )
+
+    monkeypatch.setattr("ldraw.session.sqlite3.connect", fake_connect)
+
+    state = session.state()
+
+    assert LDrawStateReason.INDEX_UNREADABLE not in state.reasons
+    assert captured["uri"] is True
+    assert captured["closed"] is True
+    database = captured["database"]
+    assert isinstance(database, str)
+    assert database.startswith("file://")
+    assert "%20" in database
+    assert database.endswith("?mode=ro")
 
 
 def test_ensure_library_downloads_generates_rebuilds_and_writes_config(

@@ -177,9 +177,7 @@ class LDrawSession:
                 path=paths.catalog_db,
             ),
         )
-        if paths.catalog_db.exists() and (
-            force or index_reason is LDrawStateReason.INDEX_UNREADABLE
-        ):
+        if paths.catalog_db.exists():
             paths.catalog_db.unlink()
         parts = Parts.get(paths.parts_lst)
         save_catalog(
@@ -199,7 +197,10 @@ def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
     if not paths.catalog_db.is_file():
         return LDrawStateReason.INDEX_MISSING
     try:
-        connection = sqlite3.connect(f"file:{paths.catalog_db}?mode=ro", uri=True)
+        connection = sqlite3.connect(
+            f"{paths.catalog_db.resolve().as_uri()}?mode=ro",
+            uri=True,
+        )
     except sqlite3.Error:
         return LDrawStateReason.INDEX_UNREADABLE
     try:

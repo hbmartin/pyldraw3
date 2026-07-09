@@ -16,6 +16,7 @@ from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
 from ldraw.part import Part
 from ldraw.pieces import Piece
+from ldraw.utils import camel, clean
 
 if TYPE_CHECKING:
     from ldraw.geometry import Matrix, Vector
@@ -314,6 +315,29 @@ def symbol_description(description: str) -> str:
     return description if split is None else split[0]
 
 
+def symbol_name_for_description(description: str) -> str:
+    """Return the generated Python symbol for an LDraw description."""
+    return clean(camel(symbol_description(description)))
+
+
+def _catalog_entry_symbol_name(entry: CatalogEntry) -> str:
+    return symbol_name_for_description(entry.description)
+
+
+def _catalog_entry_module_path(entry: CatalogEntry) -> str | None:
+    if entry.minifig_section is not None:
+        return f"ldraw.library.parts.minifig.{entry.minifig_section.value}"
+    if entry.category is PartCategory.OTHER:
+        return None
+    return f"ldraw.library.parts.{entry.category.module_name}"
+
+
+def _catalog_entry_import_statement(entry: CatalogEntry) -> str | None:
+    if (module := _catalog_entry_module_path(entry)) is None:
+        return None
+    return f"from {module} import {_catalog_entry_symbol_name(entry)}"
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogEntry:
     """Typed catalog entry for one part or primitive."""
@@ -328,22 +352,16 @@ class CatalogEntry:
     @property
     def symbol_name(self) -> str:
         """Generated Python symbol name for this entry."""
-        from ldraw.snippets import symbol_name  # noqa: PLC0415
-
-        return symbol_name(self)
+        return _catalog_entry_symbol_name(self)
 
     @property
     def module_path(self) -> str | None:
         """Generated module path for this entry, if it is importable."""
-        from ldraw.snippets import module_path  # noqa: PLC0415
-
-        return module_path(self)
+        return _catalog_entry_module_path(self)
 
     def import_statement(self) -> str | None:
         """Generated-library import statement for this entry, if available."""
-        from ldraw.snippets import suggested_import  # noqa: PLC0415
-
-        return suggested_import(self)
+        return _catalog_entry_import_statement(self)
 
 
 @dataclass(frozen=True, slots=True)

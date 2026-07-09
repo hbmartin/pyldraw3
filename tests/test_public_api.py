@@ -1,7 +1,9 @@
 """Tests for the curated top-level public API."""
 
+import ast
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -128,3 +130,15 @@ def test_part_geometry_modules_import_in_either_order() -> None:
                 f"STDERR:\n{error.stderr}"
             )
             pytest.fail(message)
+
+
+def test_parts_module_does_not_import_snippets() -> None:
+    tree = ast.parse(Path(parts.__file__).read_text())
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "ldraw.snippets":
+            pytest.fail("ldraw.parts must not import ldraw.snippets")
+        if isinstance(node, ast.Import) and any(
+            alias.name == "ldraw.snippets" for alias in node.names
+        ):
+            pytest.fail("ldraw.parts must not import ldraw.snippets")
