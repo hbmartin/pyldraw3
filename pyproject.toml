@@ -63,6 +63,7 @@ dev = [
     "pyroma>=5.0.1",
 ]
 docs = [
+    "mkdocstrings-python>=2.0.5",
     "zensical>=0.0.47",
 ]
 

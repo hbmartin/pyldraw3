@@ -385,4 +385,6 @@ uv run ldraw generate --yes
 1. Explore the `examples/` directory for more complex model ideas.
 2. Open generated `.ldr` files in an LDraw viewer such as LDView, LeoCAD, or Stud.io.
 3. Try building custom minifigures and vehicles.
-4. Create reusable model components.
+4. Browse the [API reference](api/index.md) for details on the public classes
+   and helper functions.
+5. Create reusable model components.
