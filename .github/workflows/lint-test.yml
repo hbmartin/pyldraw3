@@ -18,7 +18,7 @@ jobs:
     - name: Create uv environment
       run: uv venv
     - name: Install dependencies
-      run: uv sync --all-groups
+      run: uv sync --all-groups --locked
     - name: Compute pre-commit cache key
       id: pre-commit-cache
       shell: python
@@ -85,7 +85,7 @@ jobs:
     - name: Create uv environment
       run: uv venv
     - name: Install dependencies
-      run: uv sync --group dev
+      run: uv sync --group dev --locked
     - name: Finish parallel build
       run: uv run coveralls --finish
       env:

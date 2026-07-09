@@ -21,7 +21,7 @@ jobs:
     - name: Create uv environment
       run: uv venv
     - name: Install dependencies
-      run: uv sync --all-groups
+      run: uv sync --all-groups --locked
     - name: Install build and create dist
       run: uv build
     - name: Publish package distributions to PyPI

@@ -60,6 +60,8 @@ dev = [
     "asv>=0.6.4",
     "hypothesis>=6.130",
     "lizard>=1.23.0",
+    "memory-profiler>=0.61.0",
+    "psutil>=7.0.0",
     "pyroma>=5.0.1",
 ]
 docs = [
