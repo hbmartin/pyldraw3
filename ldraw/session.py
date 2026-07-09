@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -125,7 +125,10 @@ class LDrawState:
 class LDrawSession:
     """Manage one configured LDraw catalog and generated library."""
 
-    config: Config = field(default_factory=Config.load)
+    config: Config
+
+    def __init__(self, config: Config | None = None) -> None:
+        self.config = config if config is not None else Config.load()
 
     @property
     def paths(self) -> LDrawPaths:
