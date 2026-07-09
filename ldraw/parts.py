@@ -18,7 +18,7 @@ from ldraw.part import Part
 
 if TYPE_CHECKING:
     from ldraw.geometry import Vector
-    from ldraw.part_geometry import BoundingBox, StudReference
+    from ldraw.part_geometry_types import BoundingBox, StudReference
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)

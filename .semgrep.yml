@@ -49,6 +49,21 @@ rules:
           if TYPE_CHECKING:
               ...
 
+  - id: pyldraw-no-parts-part-geometry-module-import-cycle
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/parts.py
+        - /ldraw/part_geometry.py
+    message: Keep ldraw.parts and ldraw.part_geometry decoupled at module import time; use ldraw.part_geometry_types for shared value objects.
+    patterns:
+      - pattern-regex: '^\s*(from\s+ldraw\.(parts|part_geometry)\s+import|import\s+ldraw\.(parts|part_geometry)\b)'
+      - pattern-not-inside: |
+          def $FUNC(...):
+              ...
+
   - id: pyldraw-default-suffix-comparison-must-normalize-case
     languages:
       - python
