@@ -27,7 +27,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-groups
+        uv sync --all-groups --locked
 
     - name: Run benchmarks
       run: |
@@ -84,8 +84,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-groups
-        uv add --dev memory-profiler psutil
+        uv sync --all-groups --locked
 
     - name: Run memory profiling
       run: |
