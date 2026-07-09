@@ -76,3 +76,8 @@ Build and preview documentation:
 uv run zensical serve
 uv run zensical build --clean --strict
 ```
+
+GitHub Pages must use the "GitHub Actions" publishing source. If the
+repository remains configured to publish from a branch such as `gh-pages`, the
+live site will continue to serve that branch instead of this workflow's
+Zensical artifact.

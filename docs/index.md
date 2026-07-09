@@ -142,5 +142,6 @@ back to LDraw text. Parse errors report the file and 1-based line number.
 
 - Read the [full guide](guide.md).
 - Review the [CLI reference](cli.md).
+- Browse the [API reference](api/index.md).
 - Explore the `examples/` directory in the repository.
 - Open generated `.ldr` files in an LDraw viewer such as LDView, LeoCAD, or Stud.io.

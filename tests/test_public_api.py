@@ -3,6 +3,8 @@
 import subprocess
 import sys
 
+import pytest
+
 import ldraw
 from ldraw import (
     bom,
@@ -82,9 +84,18 @@ def test_part_geometry_modules_import_in_either_order() -> None:
         "import ldraw.parts; import ldraw.part_geometry",
         "import ldraw.part_geometry; import ldraw.parts",
     ):
-        subprocess.run(
-            [sys.executable, "-c", command],
-            capture_output=True,
-            check=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                [sys.executable, "-c", command],
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.CalledProcessError as error:
+            message = (
+                f"Import check failed for command: {command}\n"
+                f"STDOUT:\n{error.stdout}\n"
+                f"STDERR:\n{error.stderr}"
+            )
+            pytest.fail(message)

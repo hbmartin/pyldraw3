@@ -63,6 +63,9 @@ rules:
       - pattern-not-inside: |
           def $FUNC(...):
               ...
+      - pattern-not-inside: |
+          if TYPE_CHECKING:
+              ...
 
   - id: pyldraw-default-suffix-comparison-must-normalize-case
     languages:

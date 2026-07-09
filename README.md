@@ -324,12 +324,17 @@ uv build
 ### Documentation Site
 
 The documentation site is built with [Zensical](https://zensical.org/) from
-the Markdown sources in `docs/`.
+the Markdown sources in `docs/`, including generated API reference pages via
+`mkdocstrings-python`.
 
 ```bash
 uv run zensical serve
 uv run zensical build --clean --strict
 ```
+
+GitHub Pages must be configured to publish from GitHub Actions. If Pages is
+still configured to publish from a branch, GitHub will keep serving that branch
+instead of the Zensical workflow artifact.
 
 ## Architecture
 
