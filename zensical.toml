@@ -1,0 +1,28 @@
+[project]
+site_name = "pyldraw3"
+site_url = "https://hbmartin.github.io/pyldraw3/"
+site_description = "Python package for creating and manipulating LDraw format files."
+site_author = "Harold Martin"
+copyright = "Copyright &copy; 2008 David Boddie, 2021 Matthieu Berthome, 2025 Harold Martin"
+docs_dir = "docs"
+site_dir = "site"
+repo_url = "https://github.com/hbmartin/pyldraw3"
+repo_name = "hbmartin/pyldraw3"
+edit_uri = "edit/main/docs/"
+nav = [
+    { "Home" = "index.md" },
+    { "Guide" = "guide.md" },
+    { "CLI Reference" = "cli.md" },
+    { "GitHub" = "https://github.com/hbmartin/pyldraw3" },
+    { "Contributing" = "https://github.com/hbmartin/pyldraw3/blob/main/CONTRIBUTING.md" },
+]
+
+[project.theme]
+features = [
+    "content.action.edit",
+    "content.action.view",
+    "navigation.top",
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"

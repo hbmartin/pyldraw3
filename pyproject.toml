@@ -36,7 +36,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/hbmartin/pyldraw3"
 Repository = "https://github.com/hbmartin/pyldraw3"
-Documentation = "https://github.com/hbmartin/pyldraw3/blob/main/GUIDE.md"
+Documentation = "https://hbmartin.github.io/pyldraw3/"
 Changelog = "https://github.com/hbmartin/pyldraw3/releases"
 
 [project.scripts]
@@ -63,11 +63,7 @@ dev = [
     "pyroma>=5.0.1",
 ]
 docs = [
-  "furo >=2021.11.12",
-  "myst-parser == 3.0.1",
-  "sphinx >= 4.3.2",
-  "sphinx-autobuild >=2021.3.14",
-  "sphinx-click >=3.0.2",
+    "zensical>=0.0.47",
 ]
 
 [tool.ruff]
