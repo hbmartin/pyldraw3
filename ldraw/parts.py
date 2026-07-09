@@ -15,13 +15,30 @@ from ldraw.colour import Colour
 from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
 from ldraw.part import Part
+from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
-    from ldraw.geometry import Vector
+    from ldraw.geometry import Matrix, Vector
     from ldraw.part_geometry_types import BoundingBox, StudReference
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
+
+
+def _normalized_reference_code(code: str) -> str:
+    return code.replace("\\", "/")
+
+
+def _reference_key(code: str) -> str:
+    return _normalized_reference_code(code).casefold()
+
+
+def _casefold_lookup(mapping: dict[str, str], key: str) -> str | None:
+    wanted = _reference_key(key)
+    for candidate, value in mapping.items():
+        if _reference_key(candidate) == wanted:
+            return value
+    return None
 
 
 class PartCategory(StrEnum):
@@ -258,6 +275,15 @@ _MINIFIG_MARKERS: dict[MinifigSection, str] = {
 _MINIFIG_PREFIX = "Minifig "
 
 
+class PartReferenceKind(StrEnum):
+    """Kind of type-1 reference found inside a part file."""
+
+    PART = "part"
+    SUBPART = "subpart"
+    PRIMITIVE = "primitive"
+    UNKNOWN = "unknown"
+
+
 def _split_minifig_description(
     description: str,
 ) -> tuple[str, MinifigSection] | None:
@@ -301,6 +327,41 @@ class CatalogEntry:
     part: Part | None = None
     minifig_section: MinifigSection | None = None
     keywords: tuple[str, ...] = ()
+
+    @property
+    def symbol_name(self) -> str:
+        """Generated Python symbol name for this entry."""
+        from ldraw.snippets import symbol_name  # noqa: PLC0415
+
+        return symbol_name(self)
+
+    @property
+    def module_path(self) -> str | None:
+        """Generated module path for this entry, if it is importable."""
+        from ldraw.snippets import module_path  # noqa: PLC0415
+
+        return module_path(self)
+
+    def import_statement(self) -> str | None:
+        """Generated-library import statement for this entry, if available."""
+        from ldraw.snippets import suggested_import  # noqa: PLC0415
+
+        return suggested_import(self)
+
+
+@dataclass(frozen=True, slots=True)
+class PartReference:
+    """A type-1 subfile reference found inside a part file."""
+
+    parent_code: str
+    code: str
+    reference: str
+    kind: PartReferenceKind
+    description: str | None
+    colour: Colour
+    position: Vector
+    matrix: Matrix
+    depth: int
 
 
 @dataclass(slots=True)
@@ -668,6 +729,127 @@ class Parts:
     def stud_positions(self, code: str) -> tuple[Vector, ...]:
         """Positions of a part's top studs (upward connectors), in LDU."""
         return tuple(stud.position for stud in self.studs(code) if stud.is_top_stud)
+
+    def resolve_colour(self, colour: Colour | int) -> Colour:
+        """Return catalog metadata for ``colour`` when it is known."""
+        candidate = colour if isinstance(colour, Colour) else Colour(code=colour)
+        if candidate.code is None:
+            return candidate
+        return self.colours_by_code.get(candidate.code, candidate)
+
+    def references_for(
+        self,
+        code: str,
+        *,
+        recursive: bool = False,
+    ) -> tuple[PartReference, ...]:
+        """Return type-1 references placed by a part file."""
+        return tuple(
+            self._references_for(
+                code=code,
+                recursive=recursive,
+                visiting=frozenset(),
+                depth=0,
+            ),
+        )
+
+    def _references_for(
+        self,
+        *,
+        code: str,
+        recursive: bool,
+        visiting: frozenset[str],
+        depth: int,
+    ) -> list[PartReference]:
+        key = _reference_key(code)
+        if key in visiting:
+            return []
+        part = self.part(code=code)
+        visiting = visiting | {key}
+        references: list[PartReference] = []
+        for obj in part.objects:
+            if not isinstance(obj, Piece):
+                continue
+            reference = self._part_reference(
+                parent_code=code,
+                piece=obj,
+                depth=depth + 1,
+            )
+            references.append(reference)
+            if recursive and reference.kind is not PartReferenceKind.UNKNOWN:
+                references.extend(
+                    self._references_for(
+                        code=reference.code,
+                        recursive=True,
+                        visiting=visiting,
+                        depth=depth + 1,
+                    ),
+                )
+        return references
+
+    def _part_reference(
+        self,
+        *,
+        parent_code: str,
+        piece: Piece,
+        depth: int,
+    ) -> PartReference:
+        code = _normalized_reference_code(piece.part)
+        part = self.find_part(code=code)
+        kind = self._reference_kind(code, part)
+        return PartReference(
+            parent_code=parent_code,
+            code=code,
+            reference=_normalized_reference_code(piece.reference),
+            kind=kind,
+            description=self._reference_description(code, kind, part),
+            colour=self.resolve_colour(piece.colour),
+            position=piece.position.copy(),
+            matrix=piece.matrix.copy(),
+            depth=depth,
+        )
+
+    def _reference_kind(
+        self,
+        code: str,
+        part: Part | None,
+    ) -> PartReferenceKind:
+        key = _reference_key(code)
+        if _casefold_lookup(self.by_code, key) is not None:
+            return PartReferenceKind.PART
+        if (
+            _casefold_lookup(self.primitives_by_code, key) is not None
+            or _casefold_lookup(self.primitives_by_code, key.rpartition("/")[2])
+            is not None
+        ):
+            return PartReferenceKind.PRIMITIVE
+        if part is None:
+            return PartReferenceKind.UNKNOWN
+        if key.split("/", maxsplit=1)[0] in {"8", "48", "p"}:
+            return PartReferenceKind.PRIMITIVE
+        return PartReferenceKind.SUBPART
+
+    def _reference_description(
+        self,
+        code: str,
+        kind: PartReferenceKind,
+        part: Part | None,
+    ) -> str | None:
+        match kind:
+            case PartReferenceKind.PART:
+                return self.description_for(code)
+            case PartReferenceKind.PRIMITIVE:
+                description = _casefold_lookup(self.primitives_by_code, code)
+                if description is not None:
+                    return description
+                return _casefold_lookup(
+                    self.primitives_by_code,
+                    code.rpartition("/")[2],
+                )
+            case PartReferenceKind.SUBPART if part is not None:
+                return part.description
+            case _:
+                return None
 
     def _find_parts_subdirs(self, directory: Path) -> None:
         for item in directory.iterdir():

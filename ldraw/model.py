@@ -51,6 +51,22 @@ class _RawSection:
     lines: list[_NumberedLine] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelOccurrence:
+    """One placed leaf part occurrence in a model."""
+
+    piece: Piece
+    part_code: str
+    reference: str
+    colour: Colour
+    position: Vector
+    matrix: Matrix
+    source_model: Model
+    source_line: int | None
+    step: int | None
+    source_step: int | None
+
+
 def _split_sections(
     text: str,
 ) -> tuple[list[_NumberedLine], list[_RawSection]]:
@@ -74,9 +90,10 @@ def _parse_objects(
     numbered_lines: Iterable[_NumberedLine],
     *,
     source: Path | str | None,
-) -> list[ParsedObject]:
+) -> tuple[list[ParsedObject], dict[int, int]]:
     """Parse numbered lines, adding file and line context to errors."""
     objects: list[ParsedObject] = []
+    source_lines: dict[int, int] = {}
     for number, line in numbered_lines:
         try:
             parsed = parse_ldraw_line(line)
@@ -87,7 +104,8 @@ def _parse_objects(
             raise PartError(message) from parse_error
         if parsed is not None:
             objects.append(parsed)
-    return objects
+            source_lines[id(parsed)] = number
+    return objects, source_lines
 
 
 @dataclass(slots=True)
@@ -97,6 +115,7 @@ class Model:
     name: str = ""
     objects: list[ParsedObject] = field(default_factory=list)
     submodels: dict[str, Model] = field(default_factory=dict)
+    _source_lines: dict[int, int] = field(default_factory=dict, repr=False)
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
         for obj in self.objects:
@@ -161,6 +180,10 @@ class Model:
         if key == normalize_ref(self.name):
             return self
         return self.submodels.get(key)
+
+    def source_line_for(self, piece: Piece) -> int | None:
+        """Return the parsed source line for ``piece``, if known."""
+        return self._source_lines.get(id(piece))
 
     def add(self, *objects: ParsedObject) -> None:
         """Append parsed objects (pieces, comments, geometry) to the model."""
@@ -322,6 +345,7 @@ class Model:
             name=submodel.name,
             objects=submodel.objects,
             submodels=self.submodels,
+            _source_lines=submodel._source_lines,  # noqa: SLF001 - same class
         )
 
     def add_step(self) -> None:
@@ -356,6 +380,25 @@ class Model:
         ``root.submodel_view(name)`` instead.
         """
         return _iter_model_pieces(root=self, model=self, visiting=frozenset())
+
+    def iter_occurrences(
+        self,
+        *,
+        expand_submodels: bool = True,
+        include_steps: bool = True,
+    ) -> Iterator[ModelOccurrence]:
+        """Yield placed part occurrences with transform and source context."""
+        return _iter_model_occurrences(
+            root=self,
+            model=self,
+            position=Vector(0, 0, 0),
+            matrix=Identity(),
+            inherited_colour=None,
+            visiting=frozenset(),
+            inherited_step=None,
+            expand_submodels=expand_submodels,
+            include_steps=include_steps,
+        )
 
     def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
         """Count leaf pieces by part and colour, expanding submodel references.
@@ -438,6 +481,80 @@ def _iter_model_pieces(
             yield from _iter_model_pieces(root=root, model=target, visiting=visiting)
 
 
+def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
+    *,
+    root: Model,
+    model: Model,
+    position: Vector,
+    matrix: Matrix,
+    inherited_colour: Colour | None,
+    visiting: frozenset[str],
+    inherited_step: int | None,
+    expand_submodels: bool,
+    include_steps: bool,
+) -> Iterator[ModelOccurrence]:
+    """Yield leaf occurrences of ``model``, resolving references against ``root``."""
+    key = normalize_ref(model.name)
+    if key in visiting:
+        raise SubmodelCycleError(model.name)
+    visiting = visiting | {key}
+    for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
+        piece_position, piece_matrix = piece._transformed()  # noqa: SLF001
+        world_position = position + matrix * piece_position
+        world_matrix = matrix * piece_matrix
+        occurrence_step = inherited_step if inherited_step is not None else source_step
+        colour = _effective_colour(piece.colour, inherited_colour)
+        target = root.submodel_for(piece) if expand_submodels else None
+        if target is not None:
+            yield from _iter_model_occurrences(
+                root=root,
+                model=target,
+                position=world_position,
+                matrix=world_matrix,
+                inherited_colour=colour,
+                visiting=visiting,
+                inherited_step=occurrence_step,
+                expand_submodels=expand_submodels,
+                include_steps=include_steps,
+            )
+            continue
+        yield ModelOccurrence(
+            piece=piece,
+            part_code=piece.part,
+            reference=piece.reference,
+            colour=colour,
+            position=world_position,
+            matrix=world_matrix,
+            source_model=model,
+            source_line=model.source_line_for(piece),
+            step=occurrence_step,
+            source_step=source_step,
+        )
+
+
+def _iter_piece_steps(
+    model: Model,
+    *,
+    include_steps: bool,
+) -> Iterator[tuple[Piece, int | None]]:
+    step = 1
+    for obj in model.objects:
+        if (
+            include_steps
+            and isinstance(obj, Comment)
+            and obj.text.strip().upper() == "STEP"
+        ):
+            step += 1
+        elif isinstance(obj, Piece):
+            yield obj, step if include_steps else None
+
+
+def _effective_colour(colour: Colour, inherited: Colour | None) -> Colour:
+    if colour.code == MAIN_COLOUR_CODE and inherited is not None:
+        return inherited
+    return colour
+
+
 def parse_model(
     text: str,
     *,
@@ -451,21 +568,28 @@ def parse_model(
     sections become its submodels, resolvable via ``Model.submodel_for``.
     """
     preamble, sections = _split_sections(text)
-    objects = _parse_objects(preamble, source=source)
+    objects, source_lines = _parse_objects(preamble, source=source)
     if not sections:
-        return Model(name=name, objects=objects)
+        return Model(name=name, objects=objects, _source_lines=source_lines)
     first, *rest = sections
+    first_objects, first_source_lines = _parse_objects(first.lines, source=source)
     root = Model(
         name=first.name,
-        objects=[*objects, *_parse_objects(first.lines, source=source)],
+        objects=[*objects, *first_objects],
+        _source_lines={**source_lines, **first_source_lines},
     )
     for section in rest:
         key = normalize_ref(section.name)
         if key == normalize_ref(root.name) or key in root.submodels:
             raise DuplicateSubmodelError(section.name)
+        section_objects, section_source_lines = _parse_objects(
+            section.lines,
+            source=source,
+        )
         root.submodels[key] = Model(
             name=section.name,
-            objects=_parse_objects(section.lines, source=source),
+            objects=section_objects,
+            _source_lines=section_source_lines,
         )
     return root
 

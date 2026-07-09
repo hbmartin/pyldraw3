@@ -12,7 +12,8 @@ from progress.bar import Bar
 from ldraw.generation.exceptions import DuplicateSymbolError
 from ldraw.parts import PartError, Parts
 from ldraw.resources import _get_resource_content
-from ldraw.utils import camel, clean
+from ldraw.snippets import symbol_name_for_description
+from ldraw.utils import clean
 
 SECTION_SEP = "#|#"
 
@@ -149,7 +150,7 @@ def get_part_dict(parts_parts: dict[str, str], description: str) -> dict[str, st
         code = parts_parts[description]
         return {
             "description": description,
-            "class_name": clean(camel(description)),
+            "class_name": symbol_name_for_description(description),
             "code": code,
         }
     except (PartError, KeyError):

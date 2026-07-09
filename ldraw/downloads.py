@@ -11,6 +11,7 @@ from progress.bar import Bar
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
 from ldraw.generate import generate_parts_lst
+from ldraw.progress import ProgressCallback, ProgressEvent, ProgressStage, emit_progress
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +107,24 @@ def _normalize_tree(destination: Path) -> None:
                 _case_safe_rename(dirpath / name, dirpath / lower_name)
 
 
-def unpack_version(version_zip: Path, version: str) -> Path:
+def unpack_version(
+    version_zip: Path,
+    version: str,
+    *,
+    on_progress: ProgressCallback | None = None,
+) -> Path:
     """Unpack a downloaded LDraw library ZIP file to the cache directory."""
     _validate_version(version)
     print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
+    emit_progress(
+        on_progress,
+        ProgressEvent(
+            stage=ProgressStage.UNPACK,
+            message=f"Unpacking {version_zip.name}",
+            path=destination,
+        ),
+    )
     with zipfile.ZipFile(version_zip, "r") as zip_ref:
         destination.mkdir(parents=True, exist_ok=True)
         _validate_zip_members(zip_ref, destination)
@@ -127,6 +141,7 @@ def _download(
     chunk_size: int = 1_024,
     *,
     show_progress: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> Path:
     """Download ``url`` to ``filename`` in the cache, streaming via a ``.part`` file.
 
@@ -138,25 +153,73 @@ def _download(
     if retrieved.exists():
         if show_progress:
             print(f"File {retrieved} already exists")
+        emit_progress(
+            on_progress,
+            ProgressEvent(
+                stage=ProgressStage.DOWNLOAD,
+                message=f"Using cached {filename}",
+                path=retrieved,
+            ),
+        )
         return retrieved
 
     partial = retrieved.with_name(f"{retrieved.name}.part")
     with requests.get(url, stream=True) as response:  # noqa: S113
         response.raise_for_status()
+        total = int(response.headers.get("content-length", 0))
+        emit_progress(
+            on_progress,
+            ProgressEvent(
+                stage=ProgressStage.DOWNLOAD,
+                message=f"Downloading {filename}",
+                current=0,
+                total=total or None,
+                path=retrieved,
+            ),
+        )
         with partial.open("wb") as file:
             if not show_progress:
-                file.writelines(response.iter_content(chunk_size=chunk_size))
-            else:
-                total = int(response.headers.get("content-length", 0))
-                bar = Bar(f"Downloading {url} ...", max=total)
+                current = 0
                 for data in response.iter_content(chunk_size=chunk_size):
-                    bar.next(file.write(data))
+                    current += file.write(data)
+                    emit_progress(
+                        on_progress,
+                        ProgressEvent(
+                            stage=ProgressStage.DOWNLOAD,
+                            message=f"Downloading {filename}",
+                            current=current,
+                            total=total or None,
+                            path=retrieved,
+                        ),
+                    )
+            else:
+                bar = Bar(f"Downloading {url} ...", max=total)
+                current = 0
+                for data in response.iter_content(chunk_size=chunk_size):
+                    written = file.write(data)
+                    current += written
+                    bar.next(written)
+                    emit_progress(
+                        on_progress,
+                        ProgressEvent(
+                            stage=ProgressStage.DOWNLOAD,
+                            message=f"Downloading {filename}",
+                            current=current,
+                            total=total or None,
+                            path=retrieved,
+                        ),
+                    )
                 bar.finish()
     partial.replace(retrieved)
     return retrieved
 
 
-def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> str:
+def download(
+    *,
+    show_progress: bool = True,
+    version: str = COMPLETE_VERSION,
+    on_progress: ProgressCallback | None = None,
+) -> str:
     """Download and unpack an LDraw library version, generating parts.lst file.
 
     The complete library comes from ldraw.org; versioned releases come from
@@ -169,11 +232,24 @@ def download(*, show_progress: bool = True, version: str = COMPLETE_VERSION) -> 
         if version == COMPLETE_VERSION
         else f"{ARCHIVE_URL}/{filename}"
     )
-    retrieved = _download(url, filename, show_progress=show_progress)
+    retrieved = _download(
+        url,
+        filename,
+        show_progress=show_progress,
+        on_progress=on_progress,
+    )
 
-    version_dir = unpack_version(retrieved, version)
+    version_dir = unpack_version(retrieved, version, on_progress=on_progress)
 
     print("Running mklist to generate parts.lst ...")
+    emit_progress(
+        on_progress,
+        ProgressEvent(
+            stage=ProgressStage.PARTS_LIST,
+            message="Generating parts.lst",
+            path=version_dir / "ldraw" / "parts.lst",
+        ),
+    )
     generate_parts_lst(
         mode="description",
         version_dir=version_dir,

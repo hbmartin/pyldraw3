@@ -24,9 +24,9 @@ from ldraw.downloads import download as do_download
 from ldraw.errors import LibraryNotGeneratedError, PartError
 from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.model import read_model
-from ldraw.parts import CatalogEntry, PartCategory, Parts, symbol_description
+from ldraw.parts import CatalogEntry, Parts
+from ldraw.snippets import suggested_import
 from ldraw.stubs import write_stub_package
-from ldraw.utils import camel, clean
 from ldraw.validation import Severity, iter_ldr_issues
 
 PACKAGE_NAME = "pyldraw3"
@@ -240,14 +240,7 @@ def _load_parts() -> Parts | None:
 
 def _suggested_import(entry: CatalogEntry) -> str | None:
     """Return the generated-library import statement for a catalog entry."""
-    class_name = clean(camel(symbol_description(entry.description)))
-    if entry.minifig_section is not None:
-        module = f"ldraw.library.parts.minifig.{entry.minifig_section.value}"
-    elif entry.category is not PartCategory.OTHER:
-        module = f"ldraw.library.parts.{entry.category.module_name}"
-    else:
-        return None
-    return f"from {module} import {class_name}"
+    return suggested_import(entry)
 
 
 def parts_search_command(*, term: str, limit: int) -> int:
