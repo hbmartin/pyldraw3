@@ -31,7 +31,14 @@ def _public_names(package: ModuleType) -> list[str]:
 
 def _object_identifier(package: ModuleType, name: str) -> str:
     """Return the canonical mkdocstrings identifier for an exported object."""
-    exported = getattr(package, name)
+    try:
+        exported = getattr(package, name)
+    except AttributeError as exc:
+        msg = (
+            f"{package.__name__}.__all__ includes {name!r}, but "
+            f"{package.__name__} has no export named {name!r}"
+        )
+        raise AttributeError(msg) from exc
     module = getattr(exported, "__module__", package.__name__)
     qualname = getattr(exported, "__qualname__", name)
 
@@ -58,10 +65,15 @@ def _mkdocstrings_directive(identifier: str) -> str:
 def _reference_markdown(package_name: str) -> str:
     """Return mkdocstrings directives for a package public API."""
     package = importlib.import_module(package_name)
-    return "\n".join(
-        _mkdocstrings_directive(_object_identifier(package, name))
-        for name in _public_names(package)
-    )
+    identifiers: list[str] = []
+    seen: set[str] = set()
+    for name in _public_names(package):
+        if (identifier := _object_identifier(package=package, name=name)) in seen:
+            continue
+        seen.add(identifier)
+        identifiers.append(identifier)
+
+    return "\n".join(_mkdocstrings_directive(identifier) for identifier in identifiers)
 
 
 def define_env(env: MacroEnvironment) -> None:
