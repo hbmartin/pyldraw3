@@ -31,7 +31,15 @@ def test_full_library_workflow() -> None:
     piece = Piece(4, Vector(0, 0, 0), Identity(), "3001")
     assert piece.colour == 4
     assert piece.part == "3001"
-    assert piece.to_ldraw().endswith("3001.DAT")
+    assert piece.to_ldraw().endswith("3001.dat")
+
+
+@pytest.mark.integration
+def test_piece_reference_can_be_checked_case_insensitively() -> None:
+    """Test default references match legacy uppercase checks case-insensitively."""
+    piece = Piece(4, Vector(0, 0, 0), Identity(), "3001")
+
+    assert piece.to_ldraw().casefold().endswith("3001.DAT".casefold())
 
 
 def test_figure_creation_workflow() -> None:
