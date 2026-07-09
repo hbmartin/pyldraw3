@@ -4,6 +4,8 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
+from pytest import MonkeyPatch
+
 from ldraw.catalog import CATALOG_SCHEMA_VERSION, catalog_db_path, parts_lst_md5
 from ldraw.catalog import save_catalog as catalog_save_catalog
 from ldraw.config import Config
@@ -47,6 +49,17 @@ def write_fresh_generation(parts_lst: Path, generated_path: Path) -> None:
     library = generated_path / "library"
     library.mkdir(parents=True)
     (library / "__hash__").write_text(library_fingerprint(parts_lst))
+
+
+def test_session_none_config_loads_default(monkeypatch: MonkeyPatch) -> None:
+    config = Config(ldraw_library_path="/library", generated_path="/generated")
+
+    def fake_load() -> Config:
+        return config
+
+    monkeypatch.setattr("ldraw.session.Config.load", staticmethod(fake_load))
+
+    assert LDrawSession(None).config is config
 
 
 def test_session_state_reports_missing_library(tmp_path: Path) -> None:
