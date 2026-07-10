@@ -8,12 +8,16 @@
 
 A modern Python package for creating and manipulating LDraw format files - the standard for CAD applications that create LEGO models. It is a drop-in replacement for the unmaintained `pyldraw` library.
 
+> ### 🖥️ [pyldraw3-tui](https://github.com/hbmartin/pyldraw3-tui)
+>
+> Prefer an interactive interface? **[pyldraw3-tui](https://github.com/hbmartin/pyldraw3-tui)** is a companion terminal UI — built on [Textual](https://textual.textualize.io/) and pyldraw3 — for browsing the LDraw parts catalog and inspecting `.ldr`/`.mpd` model files without writing code: look up part codes, explore categories and minifig sections, inspect part metadata with colour swatches and sub-part trees, and open models to view pieces, statistics, and bill-of-materials data (read-only, it never modifies your files).
+
 ## Features
 
 - 🧱 **Complete LDraw Support**: Full compatibility with the LDraw standard format
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
-- 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/) and [local guide source](docs/guide.md)
+- 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/)
 
 ## Table of Contents
 
@@ -70,6 +74,8 @@ Check the `examples/` directory for sample scripts demonstrating various feature
 # Run an example
 python examples/figures.py > my_model.ldr
 ```
+
+Each example writes LDraw text to stdout; see the [Examples documentation](https://hbmartin.github.io/pyldraw3/examples/) for a description of what every script demonstrates.
 
 ### Basic Usage
 
