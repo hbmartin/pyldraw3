@@ -121,9 +121,10 @@ class LDrawState:
         )
 
 
-@dataclass(slots=True)
 class LDrawSession:
     """Manage one configured LDraw catalog and generated library."""
+
+    __slots__ = ("config",)
 
     config: Config
 

@@ -15,6 +15,7 @@ nav = [
     { "CLI Reference" = "cli.md" },
     { "API Reference" = "api/index.md" },
     { "Upgrading to 1.1" = "upgrading-1.1.md" },
+    { "Upgrading to 1.2" = "upgrading-1.2.md" },
     { "GitHub" = "https://github.com/hbmartin/pyldraw3" },
     { "Contributing" = "https://github.com/hbmartin/pyldraw3/blob/main/CONTRIBUTING.md" },
 ]
