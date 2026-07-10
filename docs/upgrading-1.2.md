@@ -1,4 +1,4 @@
-# I upgraded pyldraw3 from 1.1.0 to 1.2.0 - take advantage of thew new API's to simplify this code
+# Upgrading pyldraw3 from 1.1.0 to 1.2.0
 
 pyldraw3 1.2.0 is a **purely additive** release. Unlike 1.1.0, it changes
 no existing behavior and removes no public API — every code path that

@@ -48,6 +48,113 @@ options:
 
 Run `ldraw <command> --help` for a command's full option list.
 
+## Validating files
+
+`ldraw validate FILE` lints a single `.ldr`, `.mpd`, or `.dat` file line by
+line and reports every problem it finds with the file name and 1-based line
+number. It parses each line, checks part references and colours against the
+catalog, and inspects transformation matrices and meta-commands.
+
+If no parts library has been downloaded and generated yet, validation still
+runs but skips the checks that need the catalog (unknown parts and unknown
+colour codes). It prints a note when it does so:
+
+```text
+note: no parts library found; skipping unknown-part and colour checks
+```
+
+### Severity levels
+
+Issues come in two severities:
+
+- **`error`** — the line is malformed or references something that does not
+  exist. Errors always make `ldraw validate` exit non-zero.
+- **`warning`** — the line is legal LDraw but suspicious. Warnings are
+  reported but do not fail the command by default. Pass `--strict` to make
+  warnings fail as well.
+
+### What is checked
+
+**Errors**
+
+| Issue | Meaning |
+| --- | --- |
+| malformed / unparseable line | The line does not parse as valid LDraw (bad token count, non-numeric coordinates, etc.). |
+| `invalid colour value` | A colour that resolves to neither a code nor an RGB value. |
+| `unknown colour code N` | A colour code with no definition in the loaded catalog. |
+| `unknown part CODE` | A type-1 reference to a part that is not in the catalog and is not a submodel defined inside the file. |
+
+**Warnings**
+
+| Issue | Meaning |
+| --- | --- |
+| `legacy dithered colour code N` | A colour in the legacy dithered range 256–511. |
+| `singular transformation matrix (flattens geometry)` | The part's matrix collapses it to zero volume. |
+| `transformation matrix is not orthonormal (scaled or sheared part)` | The matrix scales or shears rather than only rotating. |
+| `unknown meta-command !NAME` | A `0 !NAME ...` bang meta-command that is not one of the recognised LDraw/editor commands. Plain `0 STEP`-style comments are not checked. |
+
+MPD submodels are resolved from their `0 FILE` sections, so references to
+sections defined inside the same file are not flagged as unknown parts.
+
+### Example output
+
+A file with one bad part reference and one suspect matrix:
+
+```console
+$ ldraw validate castle.ldr
+castle.ldr:12: error: unknown part 9999
+castle.ldr:47: warning: singular transformation matrix (flattens geometry)
+castle.ldr: 1 error(s), 1 warning(s)
+```
+
+A clean file prints a single OK line and exits `0`:
+
+```console
+$ ldraw validate castle.ldr
+castle.ldr: OK
+```
+
+Making warnings fail with `--strict`:
+
+```console
+$ ldraw validate castle.ldr --strict
+castle.ldr:47: warning: singular transformation matrix (flattens geometry)
+castle.ldr: 0 error(s), 1 warning(s)
+$ echo $?
+1
+```
+
+### Exit codes
+
+- `0` — no issues, or only warnings without `--strict`.
+- `1` — one or more errors, any warning when `--strict` is set, or the file
+  does not exist.
+
+### Programmatic API
+
+The same checks are available in Python through `iter_ldr_issues`, which
+yields `ValidationIssue` records (`line_number`, `message`, `severity`) so
+you can build your own tooling, editor integrations, or CI gates:
+
+```python
+from pathlib import Path
+
+from ldraw import iter_ldr_issues
+from ldraw.validation import Severity
+from ldraw.parts import Parts
+
+parts = Parts.get("~/ldraw/parts.lst")  # optional; enables catalog checks
+issues = list(iter_ldr_issues(Path("castle.ldr"), parts))
+
+errors = [i for i in issues if i.severity is Severity.ERROR]
+for issue in issues:
+    print(f"{issue.line_number}: {issue.severity}: {issue.message}")
+```
+
+Passing `parts=None` (or omitting it) runs the parse, matrix, and
+meta-command checks but skips the unknown-part and unknown-colour checks,
+mirroring the CLI's behaviour when no library is available.
+
 ## Development Commands
 
 This project uses `uv` for dependency management and packaging.
