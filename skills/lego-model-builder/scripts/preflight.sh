@@ -17,8 +17,17 @@ note() { printf '  - %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 py() {
-  # Prefer an activated venv's python, else python3, else python.
-  if have python; then python "$@"; else python3 "$@"; fi
+  # Prefer an activated venv, then python3, then a verified Python 3 executable.
+  if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python" ]; then
+    "${VIRTUAL_ENV}/bin/python" "$@"
+  elif have python3; then
+    python3 "$@"
+  elif have python && python -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then
+    python "$@"
+  else
+    note "Python 3.12+ is required"
+    return 127
+  fi
 }
 
 import_ok() { py -c "import ${1}" >/dev/null 2>&1; }

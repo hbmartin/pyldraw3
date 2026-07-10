@@ -33,6 +33,38 @@ jobs:
         run: uv sync --group docs --locked
       - name: Build documentation
         run: uv run zensical build --clean --strict
+      - name: Package LEGO model builder skill
+        shell: python
+        run: |
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          source = Path("skills/lego-model-builder")
+          destination = Path("site/downloads/lego-model-builder.zip")
+          destination.parent.mkdir(parents=True, exist_ok=True)
+
+          with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+              for path in sorted(source.rglob("*")):
+                  if not path.is_file():
+                      continue
+                  if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
+                      continue
+                  archive.write(path, Path(source.name) / path.relative_to(source))
+      - name: Verify LEGO model builder skill archive
+        shell: python
+        run: |
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          archive_path = Path("site/downloads/lego-model-builder.zip")
+          with ZipFile(archive_path) as archive:
+              names = archive.namelist()
+              assert archive.testzip() is None, "skill ZIP contains a corrupt file"
+
+          assert "lego-model-builder/SKILL.md" in names
+          assert all(name.startswith("lego-model-builder/") for name in names)
+          assert not any("__pycache__" in name for name in names)
+          assert not any(name.endswith((".pyc", ".pyo")) for name in names)
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site

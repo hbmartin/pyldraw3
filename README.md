@@ -31,6 +31,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
   - [Part Geometry Queries](#part-geometry-queries)
   - [IDE Autocompletion and Type Checking](#ide-autocompletion-and-type-checking)
 - [Requirements](#requirements)
+- [Agent Skill](#agent-skill)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [Development](#development)
@@ -236,6 +237,31 @@ your checker's stub path at them always works.
 ## Requirements
 
 - Python 3.12+
+
+## Agent Skill
+
+The `lego-model-builder` skill turns natural-language model descriptions into
+reusable pyldraw3 programs and LDraw files.
+
+**[Download lego-model-builder.zip](https://hbmartin.github.io/pyldraw3/downloads/lego-model-builder.zip)**
+
+To install it without command-line tools:
+
+- **ChatGPT:** Open **Profile > Skills > New skill > Upload from your
+  computer**, then select the downloaded ZIP.
+- **Claude:** Open **Customize > Skills**, select **+ > Create skill > Upload a
+  skill**, then select the downloaded ZIP.
+
+Skill uploading must be available and enabled for your account or workspace.
+Technical users can instead install directly from GitHub with the cross-agent
+Skills CLI:
+
+```bash
+npx skills add hbmartin/pyldraw3 --skill lego-model-builder
+```
+
+The skill supports Claude Code, Codex, Cursor, and other agents that implement
+the Agent Skills specification.
 
 ## Configuration
 
