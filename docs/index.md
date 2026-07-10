@@ -142,6 +142,8 @@ back to LDraw text. Parse errors report the file and 1-based line number.
 
 - Read the [full guide](guide.md).
 - Work through the [examples](examples.md).
+- Build a model from a description with the
+  [LEGO Model Builder skill](lego-model-builder.md).
 - Review the [CLI reference](cli.md).
 - Browse the [API reference](api/index.md).
 - Learn [how `ldraw.library.*` imports work](dynamic-imports.md).

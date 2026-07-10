@@ -37,16 +37,18 @@ bash "$SKILL_DIR/scripts/preflight.sh"
 It is idempotent and prints one line
 each for `pyldraw3:`, `library:`, and `renderer:`. It will, only as needed:
 
-- Install pyldraw3 if `import ldraw` fails —
-  `curl -LsSf https://uvx.sh/pyldraw3/install.sh | sh`
-  (fallbacks: `uv add pyldraw3`, then `uvx pyldraw3`). The CLI is `ldraw`.
+- Select Python 3.12+ (an activated virtual environment is authoritative), then
+  install pyldraw3 into that exact interpreter if `import ldraw` fails. It uses
+  `uv pip --python` when available and interpreter-bound `python -m pip`
+  fallbacks, so the generated model programs and the `ldraw` CLI share one
+  environment.
 - Download + generate the parts library if missing —
   `ldraw download --yes` then `ldraw generate --yes`. This fetches the
   `complete` release (~80 MB) and is **slow on first run**; tell the user it's
   a one-time setup. To trade coverage for speed the user may instead pin a
   smaller release, e.g. `ldraw download --version 2018-02 --yes`.
-- Detect a renderer on `PATH` in order `ldview` → `leocad` → `povray`, and try
-  to install one if none is found (Linux: `leocad` + `xvfb`; macOS: `brew`).
+- Detect a renderer on `PATH` in order `ldview` → `leocad`, and try to install
+  one if neither is found (Linux: `leocad` + `xvfb`; macOS: `brew`).
 
 If the report ends with `renderer: NONE`, continue in **validate-only mode**:
 you will still generate, validate, and BOM the model, but you cannot see it —
@@ -113,7 +115,10 @@ python "$SKILL_DIR/scripts/render.py" <slug>.ldr           # front/iso/top PNGs 
 ```
 
 `render.py` writes `<slug>.front.png`, `<slug>.iso.png`, `<slug>.top.png` and
-prints the paths. **View those images** — do not assume the model is correct.
+prints the paths. Before replacing requested views, it moves the existing PNGs
+into a UTC timestamped directory under `previous/` and prints an `ARCHIVED:`
+line for each one. Render history is retained across iterations. **View the new
+images** — do not assume the model is correct.
 
 ### 7. Iterate (bounded)
 

@@ -4,7 +4,7 @@
 # Ensures three things and prints a one-line status for each:
 #   pyldraw3: <ok|installed|MISSING>
 #   library:  <ok|generated|MISSING>
-#   renderer: <ldview|leocad|povray|NONE>
+#   renderer: <ldview|leocad|NONE>
 #
 # It never exits non-zero for a missing renderer (the skill degrades to
 # validate-only). It performs network installs and downloads that touch the
@@ -16,18 +16,40 @@ say()  { printf '%s\n' "$*"; }
 note() { printf '  - %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-py() {
-  # Prefer an activated venv, then python3, then a verified Python 3 executable.
+# True when the given interpreter reports Python 3.12 or newer.
+py_version_ok() { "$1" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; }
+
+PYTHON_BIN=""
+select_python() {
+  # An activated venv is authoritative: use it only when it meets the version
+  # requirement rather than silently escaping to a system interpreter.
   if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python" ]; then
-    "${VIRTUAL_ENV}/bin/python" "$@"
-  elif have python3; then
-    python3 "$@"
-  elif have python && python -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then
-    python "$@"
-  else
-    note "Python 3.12+ is required"
+    if py_version_ok "${VIRTUAL_ENV}/bin/python"; then
+      PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
+      return 0
+    fi
+    note "The activated virtual environment requires Python 3.12+"
     return 127
   fi
+
+  # Outside a venv, use the first available interpreter that reports 3.12+.
+  local candidate
+  for candidate in python3 python; do
+    if have "$candidate" && py_version_ok "$candidate"; then
+      PYTHON_BIN="$(command -v "$candidate")"
+      return 0
+    fi
+  done
+
+  note "Python 3.12+ is required"
+  return 127
+}
+
+select_python || true
+
+py() {
+  [ -n "$PYTHON_BIN" ] || return 127
+  "$PYTHON_BIN" "$@"
 }
 
 import_ok() { py -c "import ${1}" >/dev/null 2>&1; }
@@ -39,23 +61,27 @@ pyldraw_status="ok"
 if ! import_ok ldraw; then
   note "pyldraw3 not importable; installing"
   installed=0
-  # Official installer (preferred).
-  if have curl; then
-    if curl -LsSf https://uvx.sh/pyldraw3/install.sh | sh >&2 2>&1; then
-      import_ok ldraw && installed=1
-    fi
-  fi
-  # Fallbacks.
-  if [ "$installed" -eq 0 ] && have uv; then
-    note "installer path failed; trying uv"
-    uv pip install pyldraw3 >&2 2>&1 || uv tool install pyldraw3 >&2 2>&1 || true
+
+  # Install into the exact interpreter selected above. A uv tool environment
+  # would expose the CLI but would not make `import ldraw` work for model code.
+  if [ -n "$PYTHON_BIN" ] && have uv; then
+    note "installing pyldraw3 into $PYTHON_BIN with uv"
+    uv pip install --python "$PYTHON_BIN" pyldraw3 >&2 2>&1 || true
     import_ok ldraw && installed=1
   fi
-  if [ "$installed" -eq 0 ] && have pip; then
-    note "trying pip"
-    pip install pyldraw3 >&2 2>&1 || pip install --user pyldraw3 >&2 2>&1 || true
+
+  if [ "$installed" -eq 0 ] && [ -n "$PYTHON_BIN" ] && py -m pip --version >/dev/null 2>&1; then
+    note "installing pyldraw3 with $PYTHON_BIN -m pip"
+    py -m pip install pyldraw3 >&2 2>&1 || true
     import_ok ldraw && installed=1
   fi
+
+  if [ "$installed" -eq 0 ] && [ -z "${VIRTUAL_ENV:-}" ] && [ -n "$PYTHON_BIN" ]; then
+    note "interpreter install failed; trying a user install"
+    py -m pip install --user pyldraw3 >&2 2>&1 || true
+    import_ok ldraw && installed=1
+  fi
+
   if [ "$installed" -eq 1 ]; then
     pyldraw_status="installed"
   else
@@ -68,14 +94,16 @@ say "pyldraw3: ${pyldraw_status}"
 if [ "$pyldraw_status" = "MISSING" ]; then
   say "library: MISSING"
   say "renderer: NONE"
-  note "Could not install pyldraw3. Install it manually, e.g.:"
-  note "  curl -LsSf https://uvx.sh/pyldraw3/install.sh | sh   (or: pip install pyldraw3)"
+  note "Could not install pyldraw3 into a Python 3.12+ interpreter."
+  note "Activate a compatible virtual environment, then run: python -m pip install pyldraw3"
   exit 0
 fi
 
-# The CLI is 'ldraw'; make sure it is callable (installers may add it late).
-LDRAW="ldraw"
-have ldraw || LDRAW="py -m ldraw.cli"
+# Execute the CLI through the selected interpreter so package installation,
+# generated model imports, and CLI commands always share one environment.
+run_ldraw() {
+  py -m ldraw.cli "$@"
+}
 
 # ---------------------------------------------------------------------------
 # 2. Parts library (download) + generated ldraw.library.* (generate)
@@ -98,16 +126,14 @@ PY
 
 if ! parts_lst_present; then
   note "LDraw parts library not found; downloading the 'complete' release (~80 MB, one-time, slow)"
-  # shellcheck disable=SC2086
-  $LDRAW download --yes >&2 2>&1 || note "download failed"
+  run_ldraw download --yes >&2 2>&1 || note "download failed"
   lib_status="generated"
 fi
 
 # generated ldraw.library importable? (generate step)
 if ! import_ok ldraw.library.colours; then
   note "generating ldraw.library.* modules"
-  # shellcheck disable=SC2086
-  $LDRAW generate --yes >&2 2>&1 || note "generate failed"
+  run_ldraw generate --yes >&2 2>&1 || note "generate failed"
   lib_status="generated"
 fi
 
@@ -119,10 +145,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Renderer (ldview -> leocad -> povray), install one if absent
+# 3. Renderer (ldview -> leocad), install one if absent
 # ---------------------------------------------------------------------------
 detect_renderer() {
-  for r in ldview leocad povray; do
+  for r in ldview leocad; do
     if have "$r"; then printf '%s' "$r"; return 0; fi
   done
   return 1

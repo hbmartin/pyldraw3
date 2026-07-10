@@ -241,27 +241,16 @@ your checker's stub path at them always works.
 ## Agent Skill
 
 The `lego-model-builder` skill turns natural-language model descriptions into
-reusable pyldraw3 programs and LDraw files.
+reusable pyldraw3 programs, verified LDraw files, preview images, and parts
+lists.
 
 **[Download lego-model-builder.zip](https://hbmartin.github.io/pyldraw3/downloads/lego-model-builder.zip)**
 
-To install it without command-line tools:
-
-- **ChatGPT:** Open **Profile > Skills > New skill > Upload from your
-  computer**, then select the downloaded ZIP.
-- **Claude:** Open **Customize > Skills**, select **+ > Create skill > Upload a
-  skill**, then select the downloaded ZIP.
-
-Skill uploading must be available and enabled for your account or workspace.
-Technical users can instead install directly from GitHub with the cross-agent
-Skills CLI:
-
-```bash
-npx skills add hbmartin/pyldraw3 --skill lego-model-builder
-```
-
-The skill supports Claude Code, Codex, Cursor, and other agents that implement
-the Agent Skills specification.
+See the
+**[beginner-friendly installation and usage guide](https://hbmartin.github.io/pyldraw3/lego-model-builder/)**
+for ChatGPT and Claude desktop setup, example prompts, expected files, and
+troubleshooting. The guide also includes a command-line installation option
+for technical users.
 
 ## Configuration
 
