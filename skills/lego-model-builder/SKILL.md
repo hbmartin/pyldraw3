@@ -12,8 +12,8 @@ several angles, inspects the images, fixes mistakes, and repeats — so the file
 you hand back has actually been looked at, not just written.
 
 It is self-contained: it installs `pyldraw3`, downloads/generates the parts
-library, and finds (or installs) an LDraw renderer on its own. It runs anywhere
-Claude Code can execute code (local Linux or macOS).
+library, and finds (or installs) an LDraw renderer on its own. It runs with any
+compatible coding agent that can execute code locally on Linux or macOS.
 
 Read `references/api-cheatsheet.md` before writing any program — it has the
 build API, the coordinate system, and the gotchas. Reach into

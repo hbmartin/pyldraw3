@@ -23,19 +23,20 @@ from collections import defaultdict
 from pathlib import Path
 
 # LDU tolerances (see references/api-cheatsheet.md: brick=24, plate=8, stud=20).
-XZ_TOL = 40.0        # "roughly in the same column" — 2 studs of slack
+XZ_TOL = 40.0  # "roughly in the same column" — 2 studs of slack
 VERTICAL_GAP = 28.0  # a supporter at most ~one brick (24) below, plus slack
-GROUND_TOL = 8.0     # within a plate-height of the lowest layer counts as grounded
+GROUND_TOL = 8.0  # within a plate-height of the lowest layer counts as grounded
 
 
 def _colour_key(colour: object) -> object:
-    """A hashable, comparable colour identity (code if available)."""
+    """Return a hashable, comparable colour identity."""
     code = getattr(colour, "code", None)
     return code if code is not None else colour
 
 
 def _load_pieces(model_path: Path) -> list:
-    from ldraw import read_model  # imported lazily so --help works without the lib
+    # Keep this lazy so --help works without pyldraw3 installed.
+    from ldraw import read_model  # noqa: PLC0415
 
     model = read_model(str(model_path))
     pieces = list(getattr(model, "pieces", []) or [])
@@ -49,7 +50,7 @@ def _find_duplicates(pieces: list) -> list[str]:
     for p in pieces:
         pos = p.position
         key = (
-            p.part,
+            p.part.casefold(),
             _colour_key(p.colour),
             round(pos.x, 1),
             round(pos.y, 1),
@@ -93,6 +94,7 @@ def _find_floating(pieces: list) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Check the model named in argv and return a CLI status code."""
     argv = sys.argv[1:] if argv is None else argv
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
