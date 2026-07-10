@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Render an LDraw model to PNGs from several camera angles.
 
-Auto-detects a renderer on PATH in the order ldview -> leocad -> povray and
-produces <prefix>.front.png, <prefix>.iso.png, <prefix>.top.png.
+Auto-detects a renderer on PATH in the order ldview -> leocad and produces
+<prefix>.front.png, <prefix>.iso.png, <prefix>.top.png.
 
 Usage:
     python render.py MODEL.ldr [--prefix NAME] [--size WxH] [--views front,iso,top]
 
-Prints one `RENDERED: <path>` line per image produced and a final summary.
-Exits 0 if at least one image was written, 1 if none (e.g. no renderer).
+Existing requested-view images move to previous/<UTC timestamp>/ before
+replacement. Prints `ARCHIVED: <path>` and `RENDERED: <path>` lines plus a final
+summary. Exits 0 if at least one image was written, 1 if none.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ import platform
 import shutil
 import subprocess
 import sys
-from contextlib import suppress
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 # (latitude, longitude) in degrees for each named view.
@@ -29,7 +31,18 @@ VIEWS: dict[str, tuple[int, int]] = {
 }
 
 RENDER_TIMEOUT_S = 240
-RENDERER_PRIORITY = ("ldview", "leocad", "povray")
+RENDERER_PRIORITY = ("ldview", "leocad")
+
+
+@dataclass(frozen=True)
+class RenderRequest:
+    """Validated inputs and output paths for one render invocation."""
+
+    model: Path
+    outputs: dict[str, Path]
+    renderers: list[str]
+    size: tuple[int, int]
+    views: list[str]
 
 
 def _run(cmd: list[str]) -> tuple[bool, str]:
@@ -45,7 +58,7 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
         )
     except subprocess.TimeoutExpired:
         return False, f"timed out after {RENDER_TIMEOUT_S}s: {' '.join(cmd)}"
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return False, str(exc)
     if proc.returncode != 0:
         return False, (proc.stderr or proc.stdout or "").strip()
@@ -105,57 +118,136 @@ def _render_leocad(
     return _run(cmd)
 
 
-def _render_povray(
-    model: Path,
-    out: Path,
-    angle: tuple[int, int],
-    size: tuple[int, int],
-) -> tuple[bool, str]:
-    # Convert LDraw -> POV first (needs ldview -ExportFile or l3p), then raytrace.
-    lat, lon = angle
-    width, height = size
-    pov = out.with_suffix(".pov")
-    try:
-        if shutil.which("ldview"):
-            ok, err = _run(
-                [
-                    "ldview",
-                    str(model),
-                    f"-ExportFile={pov}",
-                    f"-DefaultLatLong={lat},{lon}",
-                ]
-            )
-        elif shutil.which("l3p"):
-            ok, err = _run(["l3p", str(model), str(pov), f"-cg{lat},{lon}"])
-        else:
-            return (
-                False,
-                "povray needs 'ldview' or 'l3p' to convert LDraw to .pov first",
-            )
-        if not ok:
-            return False, f"LDraw->POV conversion failed: {err}"
-        return _run(
-            [
-                "povray",
-                f"+I{pov}",
-                f"+O{out}",
-                f"+W{width}",
-                f"+H{height}",
-                "-D",
-                "+A0.3",
-                "+UA",
-            ]
-        )
-    finally:
-        with suppress(OSError):
-            pov.unlink(missing_ok=True)
-
-
 RENDERERS = {
     "ldview": _render_ldview,
     "leocad": _render_leocad,
-    "povray": _render_povray,
 }
+
+
+def _parse_views(value: str) -> list[str]:
+    views: list[str] = []
+    for view in (item.strip() for item in value.split(",") if item.strip()):
+        if view not in VIEWS:
+            print(f"skipping unknown view {view!r}", file=sys.stderr)
+            continue
+        views.append(view)
+    return views
+
+
+def _archive_stamp() -> str:
+    """Return a sortable UTC timestamp for a render-history directory."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+
+
+def _create_archive_dir(out_dir: Path) -> Path:
+    """Create a unique directory for one prior render set."""
+    archive_root = out_dir / "previous"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    stamp = _archive_stamp()
+    suffix = 0
+    while True:
+        name = stamp if suffix == 0 else f"{stamp}-{suffix:02d}"
+        candidate = archive_root / name
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            suffix += 1
+            continue
+        return candidate
+
+
+def _archive_existing(outputs: list[Path]) -> list[Path]:
+    """Move existing requested outputs into one timestamped history directory."""
+    existing = [output for output in outputs if output.is_file()]
+    if not existing:
+        return []
+
+    archive_dir = _create_archive_dir(existing[0].parent)
+    archived: list[Path] = []
+    for output in existing:
+        destination = archive_dir / output.name
+        output.replace(destination)
+        archived.append(destination)
+    return archived
+
+
+def _remove_partial_output(output: Path) -> str | None:
+    """Remove a failed renderer's output and return any cleanup error."""
+    try:
+        output.unlink(missing_ok=True)
+    except OSError as exc:
+        return str(exc)
+    return None
+
+
+def _prepare_request(args: argparse.Namespace) -> RenderRequest | None:
+    """Validate CLI arguments without changing existing render files."""
+    model: Path = args.model
+    if not model.is_file():
+        print(f"error: model not found: {model}", file=sys.stderr)
+        return None
+
+    try:
+        width_s, height_s = args.size.lower().split("x", 1)
+        size = (int(width_s), int(height_s))
+    except ValueError:
+        print(
+            f"error: bad --size {args.size!r}; expected WxH like 1024x768",
+            file=sys.stderr,
+        )
+        return None
+
+    views = _parse_views(args.views)
+    if not views:
+        print("error: no valid views specified", file=sys.stderr)
+        return None
+
+    renderers = _detect()
+    if not renderers:
+        print(
+            "renderer: NONE — no ldview/leocad on PATH; cannot render. "
+            "Run preflight.sh or install LDView.",
+            file=sys.stderr,
+        )
+        return None
+
+    prefix = args.prefix or model.stem
+    out_dir = model.resolve().parent
+    outputs = {view: out_dir / f"{prefix}.{view}.png" for view in views}
+    return RenderRequest(
+        model=model,
+        outputs=outputs,
+        renderers=renderers,
+        size=size,
+        views=views,
+    )
+
+
+def _render_with_backend(request: RenderRequest, renderer: str) -> list[Path]:
+    """Render all requested views with one backend."""
+    print(f"renderer: {renderer}", file=sys.stderr)
+    render_fn = RENDERERS[renderer]
+    produced: list[Path] = []
+    for view in request.views:
+        out = request.outputs[view]
+        if cleanup_error := _remove_partial_output(out):
+            message = f"could not remove stale output: {cleanup_error}"
+            print(f"failed {view} view: {message}", file=sys.stderr)
+            continue
+
+        ok, err = render_fn(request.model, out, VIEWS[view], request.size)
+        if ok and out.is_file():
+            produced.append(out)
+            print(f"RENDERED: {out}")
+            continue
+
+        cleanup_error = _remove_partial_output(out)
+        if not err:
+            err = "renderer exited without producing an image"
+        if cleanup_error:
+            err = f"{err}; could not remove partial output: {cleanup_error}"
+        print(f"failed {view} view: {err}", file=sys.stderr)
+    return produced
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,53 +270,20 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated subset of: " + ",".join(VIEWS),
     )
     args = parser.parse_args(argv)
-
-    model: Path = args.model
-    if not model.is_file():
-        print(f"error: model not found: {model}", file=sys.stderr)
+    request = _prepare_request(args)
+    if request is None:
         return 1
 
     try:
-        width_s, height_s = args.size.lower().split("x", 1)
-        width, height = int(width_s), int(height_s)
-    except ValueError:
-        print(
-            f"error: bad --size {args.size!r}; expected WxH like 1024x768",
-            file=sys.stderr,
-        )
+        archived = _archive_existing(list(request.outputs.values()))
+    except OSError as exc:
+        print(f"error: could not archive previous renders: {exc}", file=sys.stderr)
         return 1
+    for path in archived:
+        print(f"ARCHIVED: {path}")
 
-    renderers = _detect()
-    if not renderers:
-        print(
-            "renderer: NONE — no ldview/leocad/povray on PATH; cannot render. "
-            "Run preflight.sh or install LDView.",
-            file=sys.stderr,
-        )
-        return 1
-
-    prefix = args.prefix or model.stem
-    out_dir = model.resolve().parent
-    views: list[str] = []
-    for view in (value.strip() for value in args.views.split(",") if value.strip()):
-        if view not in VIEWS:
-            print(f"skipping unknown view {view!r}", file=sys.stderr)
-            continue
-        views.append(view)
-
-    for renderer in renderers:
-        print(f"renderer: {renderer}", file=sys.stderr)
-        render_fn = RENDERERS[renderer]
-        produced: list[Path] = []
-        for view in views:
-            out = out_dir / f"{prefix}.{view}.png"
-            ok, err = render_fn(model, out, VIEWS[view], (width, height))
-            if ok and out.is_file():
-                produced.append(out)
-                print(f"RENDERED: {out}")
-            else:
-                print(f"failed {view} view: {err}", file=sys.stderr)
-
+    for renderer in request.renderers:
+        produced = _render_with_backend(request, renderer)
         if produced:
             print(
                 f"Rendered {len(produced)} view(s) with {renderer}.",
