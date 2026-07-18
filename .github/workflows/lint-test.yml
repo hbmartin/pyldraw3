@@ -1,5 +1,12 @@
 name: Lint and Test
-on: push
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-test:
@@ -14,33 +21,17 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install uv
-      uses: astral-sh/setup-uv@v5
+      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
     - name: Create uv environment
       run: uv venv
     - name: Install dependencies
       run: uv sync --all-groups --locked
-    - name: Compute pre-commit cache key
-      id: pre-commit-cache
-      shell: python
-      run: |
-        import hashlib
-        import sys
-
-        python = "py{}.{}".format(*sys.version_info[:2])
-        payload = sys.version.encode() + sys.executable.encode()
-        digest = hashlib.sha256(payload).hexdigest()
-        result = "${{ runner.os }}-{}-{}-pre-commit".format(python, digest[:8])
-
-        print(f"result={result}")
-    - name: Restore pre-commit cache
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-          path: ~/.cache/pre-commit
-          key: ${{ steps.pre-commit-cache.outputs.result }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            ${{ steps.pre-commit-cache.outputs.result }}-
     - run: uv run ruff check .
+    - run: uv run ruff format --check .
     - name: Run type checks
+      # tests/ is excluded: dynamic ldraw.library.* imports and test-double
+      # attribute assignments are unresolvable statically (ty: 16, pyrefly: 4
+      # pre-existing diagnostics as of 2026-07).
       run: |
         uv run ty check ldraw
         uv run pyrefly check ldraw

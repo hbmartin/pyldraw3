@@ -106,8 +106,8 @@ from ldraw.parts import Parts
 
 config = Config.load()
 parts = Parts(Path(config.ldraw_library_path) / "ldraw" / "parts.lst")
-cowboy_hat = parts.get_entry_by_description("Hat Cowboy").code  # -> "3629"
-head = parts.get_entry_by_description("Head with Solid Stud").code  # -> "3626a"
+cowboy_hat = parts.get_entry_by_description("Minifig Hat Cowboy").code  # -> "3629"
+head = parts.get_entry_by_description("Minifig Head with Solid Stud").code  # -> "3626a"
 brick1x1 = parts.get_entry_by_description("Brick  1 x  1").code  # -> "3005"
 ```
 
@@ -350,6 +350,7 @@ the Markdown sources in `docs/`. The API reference is expanded from
 via `mkdocstrings-python`.
 
 ```bash
+uv sync --group docs
 uv run zensical serve
 uv run zensical build --clean --strict
 ```
@@ -362,7 +363,7 @@ instead of the Zensical workflow artifact.
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `parts`, `validate`, `stubs`, `config`, and `version` subcommands
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `parts`, `validate`, `bom`, `stubs`, `config`, and `version` subcommands
 - **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules (with `.pyi` stubs)
 - **Import System** (`ldraw/imports.py`): Custom meta path hook for dynamic imports
 
@@ -371,7 +372,7 @@ instead of the Zensical workflow artifact.
 - `Model` (`ldraw/model.py`) - Reads and writes whole `.ldr`/`.mpd` model files
 - `Parts` - Manages parts catalog and loading
 - `Piece` - Represents individual LEGO pieces in models  
-- `Figure` - High-level minifigure construction
+- `Person` (`ldraw/figure.py`) - High-level minifigure construction
 - Geometry classes - Matrix operations and 3D mathematics
 
 ## Contributing

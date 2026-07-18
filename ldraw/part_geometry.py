@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING, Protocol
 from weakref import WeakKeyDictionary
 
 from ldraw.errors import NoGeometryError, PartError
+from ldraw.geometry import Vector
 from ldraw.lines import Line, OptionalLine, Quadrilateral, Triangle
 from ldraw.part_geometry_types import BoundingBox, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
-    from ldraw.geometry import Vector
     from ldraw.part import Part
 
 logger = logging.getLogger("ldraw")
@@ -166,6 +166,7 @@ def _fold_child(
                 name=stem,
                 description=local.description,
                 position=piece.position.copy(),
+                up=piece.matrix * Vector(0, -1, 0),
             ),
         )
         return
@@ -174,6 +175,7 @@ def _fold_child(
             name=stud.name,
             description=stud.description,
             position=piece.position + piece.matrix * stud.position,
+            up=piece.matrix * stud.up,
         )
         for stud in local.studs
     )

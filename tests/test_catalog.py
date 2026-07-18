@@ -11,12 +11,14 @@ from ldraw.catalog import (
     load_catalog,
     load_parts,
     parts_lst_md5,
+    parts_tree_fingerprint,
     save_catalog,
 )
 from ldraw.parts import CatalogEntry, PartCategory, Parts, PartsCatalog
 
-PARTS_LST = Path("tests/test_ldraw2/ldraw/parts.lst")
+PARTS_LST = Path(__file__).resolve().parent / "test_ldraw2" / "ldraw" / "parts.lst"
 LIBRARY_ROOT = PARTS_LST.parent
+TREE = parts_tree_fingerprint(LIBRARY_ROOT)
 
 
 @pytest.fixture
@@ -39,8 +41,19 @@ def test_save_load_round_trip_matches_slow_path(tmp_path, slow_catalog) -> None:
     db_path = tmp_path / "catalog.sqlite"
     md5 = parts_lst_md5(PARTS_LST)
 
-    save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
-    loaded = load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
+    loaded = load_catalog(
+        db_path,
+        md5=md5,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
 
     assert loaded is not None
     assert list(loaded.by_code) == list(slow_catalog.by_code)
@@ -54,16 +67,35 @@ def test_save_load_round_trip_matches_slow_path(tmp_path, slow_catalog) -> None:
 
 def test_load_catalog_missing_file_returns_none(tmp_path) -> None:
     assert (
-        load_catalog(tmp_path / "nope.sqlite", md5="x", library_root=LIBRARY_ROOT)
+        load_catalog(
+            tmp_path / "nope.sqlite",
+            md5="x",
+            library_root=LIBRARY_ROOT,
+            tree_fingerprint="t",
+        )
         is None
     )
 
 
 def test_load_catalog_stale_md5_returns_none(tmp_path, slow_catalog) -> None:
     db_path = tmp_path / "catalog.sqlite"
-    save_catalog(db_path, md5="old", catalog=slow_catalog, library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5="old",
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="t",
+    )
 
-    assert load_catalog(db_path, md5="new", library_root=LIBRARY_ROOT) is None
+    assert (
+        load_catalog(
+            db_path,
+            md5="new",
+            library_root=LIBRARY_ROOT,
+            tree_fingerprint="t",
+        )
+        is None
+    )
 
 
 def test_load_catalog_wrong_schema_version_returns_none(
@@ -72,11 +104,20 @@ def test_load_catalog_wrong_schema_version_returns_none(
 ) -> None:
     db_path = tmp_path / "catalog.sqlite"
     md5 = parts_lst_md5(PARTS_LST)
-    save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
     with sqlite3.connect(db_path) as connection:
         connection.execute(f"PRAGMA user_version = {CATALOG_SCHEMA_VERSION + 1}")
 
-    assert load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT) is None
+    assert (
+        load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT, tree_fingerprint=TREE)
+        is None
+    )
 
 
 def test_fresh_catalog_entries_carry_keywords(slow_catalog) -> None:
@@ -89,8 +130,19 @@ def test_keywords_round_trip_through_index(tmp_path, slow_catalog) -> None:
     db_path = tmp_path / "catalog.sqlite"
     md5 = parts_lst_md5(PARTS_LST)
 
-    save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
-    loaded = load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
+    loaded = load_catalog(
+        db_path,
+        md5=md5,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
 
     assert loaded is not None
     assert loaded.by_code["3959"].keywords == slow_catalog.by_code["3959"].keywords
@@ -113,24 +165,39 @@ def test_load_catalog_v1_schema_returns_none(tmp_path) -> None:
             "INSERT INTO meta (key, value) VALUES ('parts_lst_md5', 'x')",
         )
 
-    assert load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT) is None
+    assert (
+        load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT, tree_fingerprint="t")
+        is None
+    )
 
 
 def test_load_catalog_corrupt_file_returns_none(tmp_path) -> None:
     db_path = tmp_path / "catalog.sqlite"
     db_path.write_bytes(b"this is not a sqlite database at all")
 
-    assert load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT) is None
+    assert (
+        load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT, tree_fingerprint="t")
+        is None
+    )
 
 
 def test_load_catalog_unknown_category_returns_none(tmp_path, slow_catalog) -> None:
     db_path = tmp_path / "catalog.sqlite"
     md5 = parts_lst_md5(PARTS_LST)
-    save_catalog(db_path, md5=md5, catalog=slow_catalog, library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
     with sqlite3.connect(db_path) as connection:
         connection.execute("UPDATE parts SET category = 'not-a-category'")
 
-    assert load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT) is None
+    assert (
+        load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT, tree_fingerprint=TREE)
+        is None
+    )
 
 
 def test_paths_outside_library_root_stay_absolute(tmp_path) -> None:
@@ -150,8 +217,19 @@ def test_paths_outside_library_root_stay_absolute(tmp_path) -> None:
     )
     db_path = tmp_path / "catalog.sqlite"
 
-    save_catalog(db_path, md5="x", catalog=catalog, library_root=LIBRARY_ROOT)
-    loaded = load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5="x",
+        catalog=catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="t",
+    )
+    loaded = load_catalog(
+        db_path,
+        md5="x",
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="t",
+    )
 
     assert loaded is not None
     assert loaded.by_code["3001"].part.path == outside
@@ -164,8 +242,19 @@ def test_save_catalog_handles_entries_without_part(tmp_path) -> None:
     )
     db_path = tmp_path / "catalog.sqlite"
 
-    save_catalog(db_path, md5="x", catalog=catalog, library_root=LIBRARY_ROOT)
-    loaded = load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT)
+    save_catalog(
+        db_path,
+        md5="x",
+        catalog=catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="t",
+    )
+    loaded = load_catalog(
+        db_path,
+        md5="x",
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="t",
+    )
 
     assert loaded is not None
     assert loaded.by_code["3001"].part is None
@@ -233,3 +322,69 @@ def test_lazy_categorization_only_runs_on_catalog_access(monkeypatch) -> None:
     assert parts.get_entry_by_code("3005") is not None
     assert parts.entries_by_category(PartCategory.BRICK)
     assert calls["count"] == 1  # first catalog access, exactly once
+
+
+def test_stale_tree_fingerprint_returns_none(tmp_path, slow_catalog) -> None:
+    db_path = tmp_path / "catalog.sqlite"
+    md5 = parts_lst_md5(PARTS_LST)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint="old",
+    )
+
+    assert (
+        load_catalog(
+            db_path,
+            md5=md5,
+            library_root=LIBRARY_ROOT,
+            tree_fingerprint="new",
+        )
+        is None
+    )
+
+
+def test_dat_header_edit_invalidates_index(tmp_path, monkeypatch) -> None:
+    import shutil
+
+    library = tmp_path / "ldraw"
+    shutil.copytree(LIBRARY_ROOT, library)
+    parts_lst = library / "parts.lst"
+    generated = tmp_path / "generated"
+    Parts.clear_cache()
+    load_parts(parts_lst, generated, build_index=True)
+
+    target = library / "parts" / "3005.dat"
+    target.write_text(target.read_text() + "0 !KEYWORDS edited\n")
+
+    calls = {"count": 0}
+    original = Parts._categorize_parts  # noqa: SLF001
+
+    def counting(self) -> None:
+        calls["count"] += 1
+        original(self)
+
+    monkeypatch.setattr(Parts, "_categorize_parts", counting)
+    Parts.clear_cache()
+    parts = load_parts(parts_lst, generated)
+    assert parts.get_entry_by_code("3005") is not None
+    assert calls["count"] == 1
+
+
+def test_fresh_index_load_is_memoized(tmp_path, monkeypatch) -> None:
+    Parts.clear_cache()
+    load_parts(PARTS_LST, tmp_path, build_index=True)
+
+    def boom(self) -> None:
+        message = "categorization must not run on the fast path"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(Parts, "_categorize_parts", boom)
+    Parts.clear_cache()
+    second = load_parts(PARTS_LST, tmp_path)
+    third = load_parts(PARTS_LST, tmp_path)
+
+    assert second is third
+    assert second.get_entry_by_code("3005") is not None

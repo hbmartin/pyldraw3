@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Self
 
 from ldraw.errors import (
     DuplicateSubmodelError,
+    MisplacedNofileError,
     PartError,
+    StructuralCommentError,
     SubmodelCycleError,
     SubmodelNameRequiredError,
     UnknownSubmodelError,
@@ -51,9 +53,13 @@ class _RawSection:
     lines: list[_NumberedLine] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class ModelOccurrence:
-    """One placed leaf part occurrence in a model."""
+    """One placed leaf part occurrence in a model.
+
+    Occurrences are traversal events: two placements of the same submodel
+    produce distinct occurrences, so they compare and hash by identity.
+    """
 
     piece: Piece
     part_code: str
@@ -69,6 +75,8 @@ class ModelOccurrence:
 
 def _split_sections(
     text: str,
+    *,
+    source: Path | str | None = None,
 ) -> tuple[list[_NumberedLine], list[_RawSection]]:
     """Split document text into a preamble and its ``0 FILE`` sections."""
     preamble: list[_NumberedLine] = []
@@ -79,6 +87,11 @@ def _split_sections(
             sections.append(_RawSection(name))
             current = sections[-1].lines
         elif _is_nofile(line):
+            if not sections:
+                raise MisplacedNofileError(
+                    source=str(source) if source is not None else "<string>",
+                    line_number=number,
+                )
             # Lines between 0 NOFILE and the next 0 FILE are ignored.
             current = None
         elif current is not None:
@@ -90,32 +103,39 @@ def _parse_objects(
     numbered_lines: Iterable[_NumberedLine],
     *,
     source: Path | str | None,
-) -> tuple[list[ParsedObject], dict[int, int]]:
+) -> tuple[list[ParsedObject], dict[Piece, int]]:
     """Parse numbered lines, adding file and line context to errors."""
     objects: list[ParsedObject] = []
-    source_lines: dict[int, int] = {}
+    source_lines: dict[Piece, int] = {}
     for number, line in numbered_lines:
         try:
             parsed = parse_ldraw_line(line)
         except PartError as parse_error:
-            message = (
-                f"{parse_error.message} in {source or '<string>'} at line {number}"
+            parse_error.add_context(
+                source=str(source) if source is not None else "<string>",
+                line_number=number,
             )
-            raise PartError(message) from parse_error
+            raise
         if parsed is not None:
             objects.append(parsed)
-            source_lines[id(parsed)] = number
+            if isinstance(parsed, Piece):
+                source_lines[parsed] = number
     return objects, source_lines
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Model:
-    """A whole LDraw model, optionally with MPD submodels."""
+    """A whole LDraw model, optionally with MPD submodels.
+
+    Models compare and hash by identity: their objects contain
+    identity-compared pieces, so field-wise equality would be meaningless.
+    Compare model content with ``m1.to_ldraw() == m2.to_ldraw()``.
+    """
 
     name: str = ""
     objects: list[ParsedObject] = field(default_factory=list)
     submodels: dict[str, Model] = field(default_factory=dict)
-    _source_lines: dict[int, int] = field(default_factory=dict, repr=False)
+    _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
         for obj in self.objects:
@@ -137,9 +157,11 @@ class Model:
 
     @property
     def description(self) -> str | None:
-        """The description from the first line, when it is a comment."""
+        """The description from the first line, when it is an unmanaged comment."""
         match self.objects:
-            case [Comment(text=text), *_]:
+            case [Comment(text=text), *_] if not text.startswith(
+                _MANAGED_HEADER_PREFIXES,
+            ):
                 return text
             case _:
                 return None
@@ -182,8 +204,8 @@ class Model:
         return self.submodels.get(key)
 
     def source_line_for(self, piece: Piece) -> int | None:
-        """Return the parsed source line for ``piece``, if known."""
-        return self._source_lines.get(id(piece))
+        """Return the parsed source line for this exact ``piece`` object."""
+        return self._source_lines.get(piece)
 
     def add(self, *objects: ParsedObject) -> None:
         """Append parsed objects (pieces, comments, geometry) to the model."""
@@ -234,11 +256,7 @@ class Model:
             self._set_header_meta(meta_type="LICENSE", value=license)
 
     def _has_description(self) -> bool:
-        match self.objects:
-            case [Comment(text=text), *_]:
-                return not text.startswith(_MANAGED_HEADER_PREFIXES)
-            case _:
-                return False
+        return self.description is not None
 
     def _set_description(self, description: str) -> None:
         if self._has_description():
@@ -301,14 +319,20 @@ class Model:
         """Register a submodel and append a type-1 piece referencing it.
 
         The submodel's own nested submodels are hoisted into this model's
-        flat mapping, since serialization only walks one level.
+        flat mapping, since serialization only walks one level. The same
+        submodel object may be added repeatedly; each call appends another
+        placement piece. A *different* model under an already-registered
+        name still raises ``DuplicateSubmodelError``.
         """
         if not submodel.name:
             raise SubmodelNameRequiredError
         key = normalize_ref(submodel.name)
         incoming = {key: submodel, **submodel.submodels}
         for new_key, new_model in incoming.items():
-            if new_key == normalize_ref(self.name) or new_key in self.submodels:
+            if new_key == normalize_ref(self.name):
+                raise DuplicateSubmodelError(new_model.name)
+            existing = self.submodels.get(new_key)
+            if existing is not None and existing is not new_model:
                 raise DuplicateSubmodelError(new_model.name)
         self.submodels.update(incoming)
         stem, suffix = split_reference(submodel.name)
@@ -366,7 +390,7 @@ class Model:
                 groups.append([])
             elif isinstance(obj, Piece):
                 groups[-1].append(obj)
-        if len(groups) > 1 and not groups[-1]:
+        while len(groups) > 1 and not groups[-1]:
             groups.pop()
         return groups
 
@@ -403,9 +427,11 @@ class Model:
     def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
         """Count leaf pieces by part and colour, expanding submodel references.
 
-        As with ``iter_pieces``, submodel references only resolve against
-        this model's own submodel table; to count a single submodel of a
-        larger model, call this on ``root.submodel_view(name)``.
+        Colour 16 (the main colour) inside a submodel is resolved to the
+        colour the submodel was placed with. As with ``iter_pieces``,
+        submodel references only resolve against this model's own submodel
+        table; to count a single submodel of a larger model, call this on
+        ``root.submodel_view(name)``.
         """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
@@ -434,7 +460,7 @@ class Model:
     def to_ldraw(self) -> str:
         """Serialize the model (and any submodels) to LDraw text."""
         if not self.submodels:
-            return "\n".join(obj.to_ldraw() for obj in self.objects)
+            return "\n".join(_serialized(obj) for obj in self.objects)
         sections: list[str] = []
         for model in (self, *self.submodels.values()):
             if not model.name:
@@ -443,7 +469,7 @@ class Model:
                 "\n".join(
                     (
                         f"0 FILE {model.name}",
-                        *(obj.to_ldraw() for obj in model.objects),
+                        *(_serialized(obj) for obj in model.objects),
                         "0 NOFILE",
                     ),
                 ),
@@ -461,6 +487,16 @@ class Model:
             encoding="utf-8",
             newline="\n",
         )
+
+
+def _serialized(obj: ParsedObject) -> str:
+    """Serialize one object, rejecting comments that re-parse as MPD structure."""
+    line = obj.to_ldraw()
+    if isinstance(obj, Comment) and (
+        ldraw_file_name(line) is not None or _is_nofile(line)
+    ):
+        raise StructuralCommentError(obj.text)
+    return line
 
 
 def _iter_model_pieces(
@@ -567,7 +603,7 @@ def parse_model(
     document the first section becomes the returned root model and later
     sections become its submodels, resolvable via ``Model.submodel_for``.
     """
-    preamble, sections = _split_sections(text)
+    preamble, sections = _split_sections(text, source=source)
     objects, source_lines = _parse_objects(preamble, source=source)
     if not sections:
         return Model(name=name, objects=objects, _source_lines=source_lines)

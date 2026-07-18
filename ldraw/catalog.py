@@ -5,9 +5,9 @@ file in the library for its ``!CATEGORY`` header — tens of thousands of
 file reads for a full LDraw release. This module caches the result in a
 single SQLite file under the configured ``generated_path`` so later runs
 skip that pass entirely. The index is keyed to the MD5 of ``parts.lst``
-(the same freshness proxy the generated library uses) and is best-effort:
-any missing, stale, corrupt, or version-mismatched index simply falls back
-to a full build.
+plus an aggregate fingerprint of the part trees (so in-place ``.dat``
+header edits invalidate it) and is best-effort: any missing, stale,
+corrupt, or version-mismatched index simply falls back to a full build.
 """
 
 from __future__ import annotations
@@ -28,9 +28,11 @@ from ldraw.parts import (
 
 logger = logging.getLogger(__name__)
 
-# Version 3: entry descriptions are stored as written in parts.lst; the
-# "Minifig " prefix is no longer stripped at catalog-build time.
-CATALOG_SCHEMA_VERSION = 3
+# Version 4: freshness is additionally keyed to an aggregate parts-tree
+# fingerprint (meta key `tree_fingerprint`), so in-place .dat header edits
+# that leave parts.lst byte-identical still invalidate the index.
+# (Version 3: entry descriptions stored as written in parts.lst.)
+CATALOG_SCHEMA_VERSION = 4
 
 _CREATE_META = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 _CREATE_PARTS = """
@@ -55,6 +57,29 @@ def catalog_db_path(generated_path: str | Path) -> Path:
 def parts_lst_md5(parts_lst: Path) -> str:
     """Return the MD5 digest of a ``parts.lst`` file."""
     return hashlib.md5(parts_lst.read_bytes(), usedforsecurity=False).hexdigest()
+
+
+def parts_tree_fingerprint(ldraw_dir: Path) -> str:
+    """Aggregate file-count/size/mtime fingerprint of the parts and p trees.
+
+    Catches in-place ``.dat`` header edits (``!CATEGORY``/``!KEYWORDS``)
+    that leave ``parts.lst`` byte-identical. A stat-only pass — no file
+    contents are read.
+    """
+    count = 0
+    total_size = 0
+    newest_mtime_ns = 0
+    for sub in ("parts", "p"):
+        root = ldraw_dir / sub
+        if not root.is_dir():
+            continue
+        for dirpath, _dirnames, filenames in root.walk():
+            for filename in filenames:
+                stat_result = (dirpath / filename).stat()
+                count += 1
+                total_size += stat_result.st_size
+                newest_mtime_ns = max(newest_mtime_ns, stat_result.st_mtime_ns)
+    return f"{count}:{total_size}:{newest_mtime_ns}"
 
 
 def _stored_path(part: Part | None, library_root: Path) -> str | None:
@@ -93,6 +118,7 @@ def _entry_from_row(
 def _read_index_rows(
     db_path: Path,
     md5: str,
+    tree_fingerprint: str,
 ) -> list[tuple[str, str, str, str | None, str | None, str]] | None:
     """Read all part rows from a fresh index, or None when it is unusable."""
     try:
@@ -107,6 +133,11 @@ def _read_index_rows(
             "SELECT value FROM meta WHERE key = 'parts_lst_md5'",
         ).fetchone()
         if stored_md5 is None or stored_md5[0] != md5:
+            return None
+        stored_tree = connection.execute(
+            "SELECT value FROM meta WHERE key = 'tree_fingerprint'",
+        ).fetchone()
+        if stored_tree is None or stored_tree[0] != tree_fingerprint:
             return None
         return connection.execute(
             "SELECT code, description, category, minifig_section, path, keywords"
@@ -123,16 +154,18 @@ def load_catalog(
     *,
     md5: str,
     library_root: Path,
+    tree_fingerprint: str,
 ) -> PartsCatalog | None:
     """Load a catalog from the index, or None when it cannot be trusted.
 
-    A missing file, schema-version mismatch, stale ``parts.lst`` digest,
-    corrupt database, or unknown category/section value all return None
-    rather than raising, so callers can always fall back to a full build.
+    A missing file, schema-version mismatch, stale ``parts.lst`` digest or
+    tree fingerprint, corrupt database, or unknown category/section value
+    all return None rather than raising, so callers can always fall back
+    to a full build.
     """
     if not db_path.is_file():
         return None
-    rows = _read_index_rows(db_path, md5)
+    rows = _read_index_rows(db_path, md5, tree_fingerprint)
     if rows is None:
         return None
     catalog = PartsCatalog()
@@ -150,6 +183,7 @@ def save_catalog(
     md5: str,
     catalog: PartsCatalog,
     library_root: Path,
+    tree_fingerprint: str,
 ) -> None:
     """Write the catalog to the index in a single transaction.
 
@@ -168,6 +202,10 @@ def save_catalog(
             connection.execute(
                 "INSERT INTO meta (key, value) VALUES ('parts_lst_md5', ?)",
                 (md5,),
+            )
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES ('tree_fingerprint', ?)",
+                (tree_fingerprint,),
             )
             connection.executemany(
                 "INSERT INTO parts (code, description, category, minifig_section,"
@@ -210,10 +248,17 @@ def load_parts(
     md5 = parts_lst_md5(parts_lst_path)
     db_path = catalog_db_path(generated_path)
     library_root = parts_lst_path.parent
-    catalog = load_catalog(db_path, md5=md5, library_root=library_root)
-    if catalog is not None:
-        return Parts.from_catalog(parts_lst_path, catalog)
+    tree = parts_tree_fingerprint(library_root)
+    catalog = load_catalog(
+        db_path,
+        md5=md5,
+        library_root=library_root,
+        tree_fingerprint=tree,
+    )
     parts = Parts.get(parts_lst_path)
+    if catalog is not None:
+        parts.adopt_catalog(catalog)
+        return parts
     if build_index:
         try:
             save_catalog(
@@ -221,6 +266,7 @@ def load_parts(
                 md5=md5,
                 catalog=parts.catalog,
                 library_root=library_root,
+                tree_fingerprint=tree,
             )
         except (OSError, sqlite3.Error):
             logger.debug("could not persist parts index to %s", db_path)

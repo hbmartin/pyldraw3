@@ -4,9 +4,15 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from pytest import MonkeyPatch
 
-from ldraw.catalog import CATALOG_SCHEMA_VERSION, catalog_db_path, parts_lst_md5
+from ldraw.catalog import (
+    CATALOG_SCHEMA_VERSION,
+    catalog_db_path,
+    parts_lst_md5,
+    parts_tree_fingerprint,
+)
 from ldraw.catalog import save_catalog as catalog_save_catalog
 from ldraw.config import Config
 from ldraw.generation import library_fingerprint
@@ -42,6 +48,7 @@ def write_fresh_index(parts_lst: Path, generated_path: Path) -> None:
         md5=parts_lst_md5(parts_lst),
         catalog=parts.catalog,
         library_root=parts_lst.parent,
+        tree_fingerprint=parts_tree_fingerprint(parts_lst.parent),
     )
 
 
@@ -171,7 +178,7 @@ def test_session_load_rebuild_index_and_open_model(tmp_path: Path) -> None:
     assert session.open_model(model_path).description == "Model"
 
 
-def test_rebuild_index_unlinks_stale_catalog_before_saving(
+def test_rebuild_index_replaces_catalog_atomically(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -187,18 +194,19 @@ def test_rebuild_index_unlinks_stale_catalog_before_saving(
             generated_path=str(generated_path),
         ),
     )
-    observed_existing_files: list[bool] = []
+    observed_db_names: list[str] = []
 
     def fake_save_catalog(db_path, **_kwargs) -> None:
-        observed_existing_files.append(db_path.exists())
+        observed_db_names.append(db_path.name)
         db_path.write_text("new catalog")
 
     monkeypatch.setattr("ldraw.session.save_catalog", fake_save_catalog)
 
     assert session.rebuild_index(force=False).get_entry_by_code("3001") is not None
 
-    assert observed_existing_files == [False]
+    assert observed_db_names == ["catalog.sqlite.tmp"]
     assert catalog_db.read_text() == "new catalog"
+    assert not catalog_db.with_name("catalog.sqlite.tmp").exists()
 
 
 def test_session_state_reads_catalog_with_file_uri(
@@ -227,6 +235,10 @@ def test_session_state_reads_catalog_with_file_uri(
                 return SimpleNamespace(fetchone=lambda: (CATALOG_SCHEMA_VERSION,))
             if statement == "SELECT value FROM meta WHERE key = 'parts_lst_md5'":
                 return SimpleNamespace(fetchone=lambda: (parts_lst_md5(parts_lst),))
+            if statement == "SELECT value FROM meta WHERE key = 'tree_fingerprint'":
+                return SimpleNamespace(
+                    fetchone=lambda: (parts_tree_fingerprint(parts_lst.parent),),
+                )
             raise AssertionError(statement)
 
         return SimpleNamespace(
@@ -331,3 +343,39 @@ def test_ensure_library_does_not_write_config_by_default(
 
     assert written == []
     assert set_configs == [config]
+
+
+def test_ensure_library_wraps_latest_version_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from ldraw.errors import CouldNotDetermineLatestVersionError
+
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing"),
+        generated_path=str(tmp_path / "generated"),
+    )
+
+    def failing_download(**_kwargs) -> str:
+        raise CouldNotDetermineLatestVersionError
+
+    monkeypatch.setattr("ldraw.session.download_library", failing_download)
+
+    with pytest.raises(RuntimeError, match="Could not download"):
+        ensure_library(config)
+
+
+def test_ensure_library_wraps_oserror(tmp_path: Path, monkeypatch) -> None:
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing"),
+        generated_path=str(tmp_path / "generated"),
+    )
+
+    def failing_download(**_kwargs) -> str:
+        message = "disk full"
+        raise OSError(message)
+
+    monkeypatch.setattr("ldraw.session.download_library", failing_download)
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        ensure_library(config)

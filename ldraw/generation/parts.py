@@ -5,15 +5,18 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pystache
 from progress.bar import Bar
 
 from ldraw.generation.exceptions import DuplicateSymbolError
-from ldraw.parts import PartError, Parts
 from ldraw.resources import _get_resource_content
 from ldraw.snippets import symbol_name_for_description
-from ldraw.utils import clean
+from ldraw.utils import clean, safe_identifier
+
+if TYPE_CHECKING:
+    from ldraw.parts import Parts
 
 SECTION_SEP = "#|#"
 
@@ -93,16 +96,52 @@ def parts__init__content(sections: list[str]) -> str:
 
 def section_content(section_parts: dict[str, str], section_key: str) -> str:
     """Generate the content for a section of parts."""
-    parts_list = []
+    parts_list: list[dict[str, str]] = []
     progress_bar = Bar(f"section {section_key} ...", max=len(section_parts))
-    for description in section_parts:
-        parts_list.append(get_part_dict(section_parts, description))
+    for description, code in section_parts.items():
+        context = _part_context(
+            description=description,
+            code=code,
+            section_key=section_key,
+        )
+        if context is not None:
+            parts_list.append(context)
         progress_bar.next()
     progress_bar.finish()
-    parts_list = [part for part in parts_list if part != {}]
     _dedupe_class_names(parts_list, section_key)
     parts_list.sort(key=lambda part: part["description"])
     return pystache.render(PARTS_TEMPLATE, context={"parts": parts_list})
+
+
+def _part_context(
+    *,
+    description: str,
+    code: str,
+    section_key: str,
+) -> dict[str, str] | None:
+    """Build a template context for one part, or None when it cannot render."""
+    if not description.strip():
+        logger.warning(
+            "skipping part %r in module %r: empty description",
+            code,
+            section_key,
+        )
+        return None
+    class_name = safe_identifier(symbol_name_for_description(description))
+    if class_name is None:
+        logger.warning(
+            "skipping part %r in module %r: description %r yields no valid identifier",
+            code,
+            section_key,
+            description,
+        )
+        return None
+    return {
+        "description": description,
+        "class_name": class_name,
+        "code": code,
+        "code_literal": repr(code),
+    }
 
 
 def _dedupe_class_names(parts_list: list[dict[str, str]], section_key: str) -> None:
@@ -137,21 +176,8 @@ def _dedupe_class_names(parts_list: list[dict[str, str]], section_key: str) -> N
 
 
 PARTS__INIT__TEMPLATE = pystache.parse(
-    _get_resource_content(str(Path("templates") / "parts__init__.mustache")),
+    _get_resource_content("templates/parts__init__.mustache"),
 )
 PARTS_TEMPLATE = pystache.parse(
-    _get_resource_content(str(Path("templates") / "parts.mustache")),
+    _get_resource_content("templates/parts.mustache"),
 )
-
-
-def get_part_dict(parts_parts: dict[str, str], description: str) -> dict[str, str]:
-    """Get a dict context for a part."""
-    try:
-        code = parts_parts[description]
-        return {
-            "description": description,
-            "class_name": symbol_name_for_description(description),
-            "code": code,
-        }
-    except (PartError, KeyError):
-        return {}

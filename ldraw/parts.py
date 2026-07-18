@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -399,6 +400,13 @@ class PartsCatalog:
 
     def add(self, entry: CatalogEntry) -> None:
         """Add or replace an entry in every lookup index."""
+        if (existing := self.by_code.get(entry.code)) is not None:
+            if self.by_description.get(existing.description) is existing:
+                del self.by_description[existing.description]
+            self.by_category[existing.category].remove(existing)
+            self._entries_by_category_cache.pop(existing.category, None)
+            if existing.minifig_section is not None:
+                self.by_minifig_section[existing.minifig_section].remove(existing)
         self.by_code[entry.code] = entry
         self.by_description[entry.description] = entry
         self.by_category[entry.category].append(entry)
@@ -438,8 +446,10 @@ class PartsCatalog:
     def module_sections(self) -> dict[tuple[str, ...], dict[str, str]]:
         """Return generated module sections keyed by package path.
 
-        Section dicts are keyed by ``symbol_description`` (the minifig
-        prefix is stripped), not by the catalog description.
+        Section dicts are keyed by the catalog description exactly as
+        written in ``parts.lst``; symbol names (including minifig-prefix
+        stripping) are derived at generation time, where collisions are
+        deduplicated with part-code suffixes.
         """
         sections: dict[tuple[str, ...], dict[str, str]] = {}
         for category, entries in self.by_category.items():
@@ -448,13 +458,13 @@ class PartsCatalog:
             module_path = (category.module_name,)
             module_dict = sections.setdefault(module_path, {})
             for entry in entries:
-                module_dict[symbol_description(entry.description)] = entry.code
+                module_dict[entry.description] = entry.code
 
         for section, entries in self.by_minifig_section.items():
             module_path = ("minifig", section.value)
             module_dict = sections.setdefault(module_path, {})
             for entry in entries:
-                module_dict[symbol_description(entry.description)] = entry.code
+                module_dict[entry.description] = entry.code
 
         return sections
 
@@ -485,7 +495,7 @@ class Parts:
     @classmethod
     def get(cls, parts_lst: str | Path) -> Parts:
         """Get a memoized Parts instance, keyed by path, mtime, and size."""
-        path = Path(parts_lst)
+        path = Path(parts_lst).expanduser()
         stat_result = path.stat()
         return _parts_for_stat(
             str(path),
@@ -520,6 +530,7 @@ class Parts:
 
         self._catalog = PartsCatalog()
         self._categorized = False
+        self._categorize_lock = threading.Lock()
         self._minifig_sections_by_code: dict[str, MinifigSection] = {}
 
         self.load()
@@ -531,13 +542,24 @@ class Parts:
         Skips the expensive per-part categorization pass.
         """
         parts = cls(parts_lst)
-        parts._catalog = catalog
-        parts._categorized = True
-        for entry in catalog.by_code.values():
-            parts.by_code_name[(entry.code, entry.description)] = entry.part
-            parts.by_category[entry.category.value][entry.description] = entry.code
-            parts.by_category[""][entry.description] = entry.code
+        parts.adopt_catalog(catalog)
         return parts
+
+    def adopt_catalog(self, catalog: PartsCatalog) -> None:
+        """Adopt a prebuilt catalog, skipping categorization.
+
+        A no-op when this instance is already categorized, so a memoized
+        instance can safely adopt the same persisted index repeatedly.
+        """
+        with self._categorize_lock:
+            if self._categorized:
+                return
+            self._catalog = catalog
+            for entry in catalog.by_code.values():
+                self.by_code_name[(entry.code, entry.description)] = entry.part
+                self.by_category[entry.category.value][entry.description] = entry.code
+                self.by_category[""][entry.description] = entry.code
+            self._categorized = True
 
     @property
     def catalog(self) -> PartsCatalog:
@@ -546,9 +568,12 @@ class Parts:
         return self._catalog
 
     def _ensure_categorized(self) -> None:
-        if not self._categorized:
-            self._categorize_parts()
-            self._categorized = True
+        if self._categorized:
+            return
+        with self._categorize_lock:
+            if not self._categorized:
+                self._categorize_parts()
+                self._categorized = True
 
     def get_entry_by_code(self, code: str) -> CatalogEntry | None:
         """Return a typed catalog entry by part code."""
@@ -591,13 +616,21 @@ class Parts:
         self._scan_library_directories()
 
     def _load_parts_list(self) -> None:
-        """Load parts from the parts.lst file."""
+        """Load parts from the parts.lst file, skipping malformed lines."""
         duplicate_descriptions = 0
         with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
-            for line in parts_lst_file:
-                pieces = re.split(DOT_DAT, line)
+            for line_number, line in enumerate(parts_lst_file, start=1):
+                if not line.strip():
+                    continue
+                pieces = DOT_DAT.split(line, maxsplit=1)
                 if len(pieces) != 2:
-                    break
+                    logger.warning(
+                        "skipping malformed line %d in %s: %r",
+                        line_number,
+                        self.path,
+                        line.strip(),
+                    )
+                    continue
 
                 code, description = self.section_find(pieces)
                 if description in self.by_name and self.by_name[description] != code:
@@ -628,16 +661,25 @@ class Parts:
                     self._load_primitives(item)
 
     def _categorize_parts(self) -> None:
-        """Load part files and categorize them."""
+        """Load part files and categorize them, skipping unloadable ones."""
         for code, description in self.by_code_name:
-            part = self.part(code=code)
+            try:
+                part = self.part(code=code)
+                part_category = part.category
+            except PartError:
+                logger.warning(
+                    "skipping part %s (%r): part file missing or unparseable",
+                    code,
+                    description,
+                )
+                continue
             self.by_code_name[(code, description)] = part
-            category = PartCategory.from_label(part.category)
-            if category is None and part.category is not None:
+            category = PartCategory.from_label(part_category)
+            if category is None and part_category is not None:
                 logger.warning(
                     "unknown LDraw category %r for part %s;"
                     " falling back to description",
-                    part.category,
+                    part_category,
                     code,
                 )
             if category is None:
@@ -961,10 +1003,18 @@ class Parts:
 
     def _load_primitives(self, path: Path) -> None:
         with path.open(mode="r", encoding="utf-8") as part_path:
-            for line in part_path:
-                pieces = re.split(DOT_DAT, line)
+            for line_number, line in enumerate(part_path, start=1):
+                if not line.strip():
+                    continue
+                pieces = DOT_DAT.split(line, maxsplit=1)
                 if len(pieces) != 2:
-                    break
+                    logger.warning(
+                        "skipping malformed line %d in %s: %r",
+                        line_number,
+                        path,
+                        line.strip(),
+                    )
+                    continue
                 code = pieces[0]
                 description = pieces[1].strip()
                 self.primitives_by_name[description] = code

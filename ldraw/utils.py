@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import keyword
 import re
 from pathlib import Path
-from typing import Any
 
 
 def clean(input_string: str) -> str:
     """Clean a description string."""
     return re.sub(r"\W+", "_", input_string).replace("_x_", "x")
+
+
+def safe_identifier(candidate: str) -> str | None:
+    """Return a valid, non-keyword Python identifier from candidate, or None."""
+    name = candidate
+    if name and name[0].isdigit():
+        name = f"P{name}"
+    if keyword.iskeyword(name):
+        name = f"{name}_"
+    return name if name.isidentifier() else None
 
 
 def camel(input_string: str) -> str:
@@ -48,19 +58,3 @@ def ensure_exists(path: str | Path) -> str:
     directory = Path(path)
     directory.mkdir(parents=True, exist_ok=True)
     return str(directory)
-
-
-def flatten(
-    input_dict: dict[str, Any],
-    parent_key: str = "",
-    sep: str = ".",
-) -> dict[str, Any]:
-    """Flatten a dictionary."""
-    items: list[tuple[str, Any]] = []
-    for key, value in input_dict.items():
-        new_key = f"{parent_key}{sep}{key}" if parent_key else key
-        if isinstance(value, dict):
-            items.extend(flatten(value, new_key, sep=sep).items())
-        else:
-            items.append((new_key, value))
-    return dict(items)

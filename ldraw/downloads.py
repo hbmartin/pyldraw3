@@ -2,6 +2,7 @@
 
 import logging
 import re
+import shutil
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -24,6 +25,8 @@ cache_ldraw = Path(get_cache_dir())
 # Minimum byte delta between throttled download progress events.
 _PROGRESS_BYTE_STEP = 1_048_576
 
+_REQUEST_TIMEOUT_SECONDS = 30
+
 
 def _validate_version(version: str) -> None:
     if version != COMPLETE_VERSION and not VERSION_RE.fullmatch(version):
@@ -44,7 +47,11 @@ def _temporary_rename_path(path: Path) -> Path:
 def _case_safe_rename(path: Path, destination: Path) -> Path:
     temp_path = _temporary_rename_path(path)
     path.rename(temp_path)
-    return temp_path.rename(destination)
+    try:
+        return temp_path.rename(destination)
+    except OSError:
+        temp_path.rename(path)
+        raise
 
 
 def _is_unsafe_zip_member(filename: str) -> bool:
@@ -80,16 +87,7 @@ def _normalize_tree(destination: Path) -> None:
     """
     if not destination.is_dir():
         return
-    children = list(destination.iterdir())
-    if (
-        len(children) == 1
-        and children[0].is_dir()
-        and children[0].name.lower().startswith("ldraw-parts-")
-    ):
-        wrapper = children[0]
-        for entry in wrapper.iterdir():
-            entry.rename(destination / entry.name)
-        wrapper.rmdir()
+    _unwrap_archive_wrapper(destination)
 
     ldraw_dir = next(
         (
@@ -103,8 +101,51 @@ def _normalize_tree(destination: Path) -> None:
         return
     if ldraw_dir.name != "ldraw":
         ldraw_dir = _case_safe_rename(ldraw_dir, destination / "ldraw")
+    _lowercase_tree(ldraw_dir)
+
+
+def _unwrap_archive_wrapper(destination: Path) -> None:
+    """Hoist a ``ldraw-parts-<tag>`` wrapper's content into ``destination``.
+
+    A wrapper can coexist with a stale, previously normalized tree after a
+    failed run; the fresh archive content replaces stale siblings.
+    """
+    wrapper = next(
+        (
+            child
+            for child in destination.iterdir()
+            if child.is_dir() and child.name.lower().startswith("ldraw-parts-")
+        ),
+        None,
+    )
+    if wrapper is None:
+        return
+    for entry in wrapper.iterdir():
+        for existing in destination.iterdir():
+            if existing != wrapper and existing.name.lower() == entry.name.lower():
+                if existing.is_dir():
+                    shutil.rmtree(existing)
+                else:
+                    existing.unlink()
+        entry.rename(destination / entry.name)
+    wrapper.rmdir()
+
+
+def _lowercase_tree(ldraw_dir: Path) -> None:
+    """Lowercase every entry under ``ldraw_dir``, refusing case collisions."""
     for dirpath, dirnames, filenames in ldraw_dir.walk(top_down=False):
-        for name in filenames + dirnames:
+        names = filenames + dirnames
+        by_lower: dict[str, str] = {}
+        for name in names:
+            lower_name = name.lower()
+            if (clashing := by_lower.get(lower_name)) is not None:
+                message = (
+                    f"Case-colliding entries {clashing!r} and {name!r} in {dirpath};"
+                    " cannot normalize the LDraw tree"
+                )
+                raise ValueError(message)
+            by_lower[lower_name] = name
+        for name in names:
             lower_name = name.lower()
             if name != lower_name:
                 _case_safe_rename(dirpath / name, dirpath / lower_name)
@@ -114,11 +155,13 @@ def unpack_version(
     version_zip: Path,
     version: str,
     *,
+    show_progress: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> Path:
     """Unpack a downloaded LDraw library ZIP file to the cache directory."""
     _validate_version(version)
-    print(f"Unzipping {version_zip}...")
+    if show_progress:
+        print(f"Unzipping {version_zip}...")
     destination = cache_ldraw / version
     emit_progress(
         on_progress,
@@ -152,6 +195,7 @@ def _download(
     once it is fully received, so an interrupted download is never cached as a
     complete file.
     """
+    cache_ldraw.mkdir(parents=True, exist_ok=True)
     retrieved = cache_ldraw / filename
     if retrieved.exists():
         if show_progress:
@@ -167,7 +211,7 @@ def _download(
         return retrieved
 
     partial = retrieved.with_name(f"{retrieved.name}.part")
-    with requests.get(url, stream=True) as response:  # noqa: S113
+    with requests.get(url, stream=True, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
         message = f"Downloading {filename}"
@@ -195,18 +239,24 @@ def _download(
             )
 
         emit_download(0, force=True)
-        with partial.open("wb") as file:
-            bar = Bar(f"Downloading {url} ...", max=total) if show_progress else None
-            current = 0
-            for data in response.iter_content(chunk_size=chunk_size):
-                written = file.write(data)
-                current += written
+        try:
+            with partial.open("wb") as file:
+                bar = (
+                    Bar(f"Downloading {url} ...", max=total) if show_progress else None
+                )
+                current = 0
+                for data in response.iter_content(chunk_size=chunk_size):
+                    written = file.write(data)
+                    current += written
+                    if bar is not None:
+                        bar.next(written)
+                    emit_download(current)
                 if bar is not None:
-                    bar.next(written)
-                emit_download(current)
-            if bar is not None:
-                bar.finish()
-            emit_download(current, force=True)
+                    bar.finish()
+                emit_download(current, force=True)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
     partial.replace(retrieved)
     return retrieved
 
@@ -229,6 +279,17 @@ def download(
         if version == COMPLETE_VERSION
         else f"{ARCHIVE_URL}/{filename}"
     )
+    cache_ldraw.mkdir(parents=True, exist_ok=True)
+    cached = cache_ldraw / filename
+    if version == COMPLETE_VERSION and cached.exists():
+        # A leftover complete.zip only exists after a failed unpack, and the
+        # complete release is a moving target — never reuse it. Versioned
+        # archives come from immutable tags and stay cached.
+        logger.info(
+            "Discarding cached %s: the complete release is a moving target",
+            cached,
+        )
+        cached.unlink()
     retrieved = _download(
         url,
         filename,
@@ -236,9 +297,15 @@ def download(
         on_progress=on_progress,
     )
 
-    version_dir = unpack_version(retrieved, version, on_progress=on_progress)
+    version_dir = unpack_version(
+        retrieved,
+        version,
+        show_progress=show_progress,
+        on_progress=on_progress,
+    )
 
-    print("Running mklist to generate parts.lst ...")
+    if show_progress:
+        print("Running mklist to generate parts.lst ...")
     emit_progress(
         on_progress,
         ProgressEvent(

@@ -19,6 +19,8 @@ PARTS_LST = """\
 9005.dat                       Stud Group User
 9006.dat                       Optional Line Part
 9007.dat                       Uppercase Ref
+9008.dat                       Sideways Stud Part
+9009.dat                       Rotated Stud Group
 """
 
 FILES = {
@@ -51,6 +53,14 @@ FILES = {
         "0 Optional Line Part\n5 24 0 0 0 0 10 0 100 100 100 -100 -100 -100\n"
     ),
     "parts/9007.dat": "0 Uppercase Ref\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 STUD.DAT\n",
+    "parts/9008.dat": (
+        "0 Sideways Stud Part\n"
+        "1 16 0 -4 0 1 0 0 0 1 0 0 0 1 stud.dat\n"
+        "1 16 0 0 -10 1 0 0 0 0 -1 0 1 0 stud.dat\n"
+    ),
+    "parts/9009.dat": (
+        "0 Rotated Stud Group\n1 16 0 0 0 1 0 0 0 0 -1 0 1 0 stug2.dat\n"
+    ),
 }
 
 
@@ -89,12 +99,36 @@ def test_studs_reports_kind_and_local_position(geometry_parts: Parts) -> None:
     by_name = {stud.name: stud for stud in studs}
     assert set(by_name) == {"stud", "stud4"}
     assert by_name["stud"].position == Vector(-10, 0, 0)
+    assert by_name["stud"].up == Vector(0, -1, 0)
     assert by_name["stud"].is_top_stud
     assert by_name["stud"].description == "Stud"
     assert by_name["stud4"].position == Vector(10, 0, 0)
     assert not by_name["stud4"].is_top_stud
 
     assert geometry_parts.stud_positions("9001") == (Vector(-10, 0, 0),)
+
+
+def test_sideways_stud_is_not_a_top_stud(geometry_parts: Parts) -> None:
+    studs = geometry_parts.studs("9008")
+
+    by_position = {
+        (stud.position.x, stud.position.y, stud.position.z): stud for stud in studs
+    }
+    assert set(by_position) == {(0, -4, 0), (0, 0, -10)}
+    sideways = by_position[(0, 0, -10)]
+    assert sideways.up == Vector(0, 0, -1)
+    assert not sideways.is_top_stud
+    assert by_position[(0, -4, 0)].is_top_stud
+
+    assert geometry_parts.stud_positions("9008") == (Vector(0, -4, 0),)
+
+
+def test_orientation_composes_through_nested_subfiles(geometry_parts: Parts) -> None:
+    studs = geometry_parts.studs("9009")
+
+    assert len(studs) == 2
+    assert all(stud.up == Vector(0, 0, -1) for stud in studs)
+    assert geometry_parts.stud_positions("9009") == ()
 
 
 def test_stud_groups_expand_through_rotations(geometry_parts: Parts) -> None:

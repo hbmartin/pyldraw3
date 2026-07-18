@@ -17,6 +17,26 @@ class MacroEnvironment(Protocol):
         """Register a macro function."""
 
 
+#: Public API taught in the docs but not re-exported via ``ldraw.__all__``.
+#: Each entry is (module, attribute); a missing attribute fails the docs
+#: build exactly like a stale ``__all__`` name.
+SUPPLEMENTAL_API: tuple[tuple[str, str], ...] = (
+    ("ldraw.bom", "rows_to_csv"),
+    ("ldraw.bom", "rows_to_json"),
+    ("ldraw.config", "Config"),
+    ("ldraw.errors", "NoGeometryError"),
+    ("ldraw.errors", "PartNotFoundError"),
+    ("ldraw.errors", "UnknownSubmodelError"),
+    ("ldraw.part_geometry", "part_bounding_box"),
+    ("ldraw.part_geometry", "part_studs"),
+    ("ldraw.parts", "symbol_description"),
+    ("ldraw.snippets", "module_path"),
+    ("ldraw.snippets", "suggested_import"),
+    ("ldraw.snippets", "symbol_name"),
+    ("ldraw.snippets", "symbol_name_for_description"),
+)
+
+
 def _public_names(package: ModuleType) -> list[str]:
     """Return public export names from a package."""
     names = getattr(package, "__all__", None)
@@ -62,13 +82,23 @@ def _mkdocstrings_directive(identifier: str) -> str:
     )
 
 
-def _reference_markdown(package_name: str) -> str:
+def _reference_markdown(
+    package_name: str,
+    supplemental: tuple[tuple[str, str], ...] = (),
+) -> str:
     """Return mkdocstrings directives for a package public API."""
     package = importlib.import_module(package_name)
     identifiers: list[str] = []
     seen: set[str] = set()
     for name in _public_names(package):
         if (identifier := _object_identifier(package=package, name=name)) in seen:
+            continue
+        seen.add(identifier)
+        identifiers.append(identifier)
+
+    for module_name, name in supplemental:
+        module = importlib.import_module(module_name)
+        if (identifier := _object_identifier(package=module, name=name)) in seen:
             continue
         seen.add(identifier)
         identifiers.append(identifier)
@@ -82,4 +112,5 @@ def define_env(env: MacroEnvironment) -> None:
     @env.macro
     def public_api_reference(package_name: str = "ldraw") -> str:
         """Return generated public API reference directives."""
-        return _reference_markdown(package_name)
+        supplemental = SUPPLEMENTAL_API if package_name == "ldraw" else ()
+        return _reference_markdown(package_name, supplemental)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self, overload
 
 import numpy as np
@@ -53,7 +53,7 @@ class Degrees(AngleUnits):
 
 
 @dataclass(slots=True, init=False)
-class Matrix:
+class Matrix:  # noqa: PLW1641 - mutable, deliberately unhashable like list
     """A 3x3 transformation matrix."""
 
     _array: NDArray[np.float64]
@@ -85,9 +85,6 @@ class Matrix:
             raise ValueError(message)
         self._array = array.copy()
 
-    def __hash__(self) -> int:
-        return hash(tuple(tuple(row) for row in self.rows))
-
     def __repr__(self) -> str:
         rows = [
             ", ".join(format_ldraw_number(value) for value in row) for row in self.rows
@@ -100,13 +97,13 @@ class Matrix:
     @overload
     def __mul__(self, other: Vector) -> Vector: ...
 
-    def __mul__(self, other: Matrix | Vector) -> Matrix | Vector:
+    def __mul__(self, other: object) -> Matrix | Vector:
         if isinstance(other, Matrix):
             return Matrix._from_array(self._array @ other._array)
         if isinstance(other, Vector):
             x, y, z = self._array @ np.array([other.x, other.y, other.z])
             return Vector(float(x), float(y), float(z))
-        raise MatrixError
+        return NotImplemented
 
     @overload
     def __rmul__(self, other: Matrix) -> Matrix: ...
@@ -114,13 +111,13 @@ class Matrix:
     @overload
     def __rmul__(self, other: Vector) -> Vector: ...
 
-    def __rmul__(self, other: Matrix | Vector) -> Matrix | Vector:
+    def __rmul__(self, other: object) -> Matrix | Vector:
         if isinstance(other, Matrix):
             return Matrix._from_array(other._array @ self._array)
         if isinstance(other, Vector):
             x, y, z = np.array([other.x, other.y, other.z]) @ self._array
             return Vector(float(x), float(y), float(z))
-        raise MatrixError
+        return NotImplemented
 
     def copy(self) -> Self:
         """Make a copy of this matrix."""
@@ -140,7 +137,7 @@ class Matrix:
         if axis == XAxis:
             rotation = [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
         elif axis == YAxis:
-            rotation = [[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]]
+            rotation = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
         elif axis == ZAxis:
             rotation = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
         else:
@@ -148,9 +145,9 @@ class Matrix:
         return Matrix._from_array(self._array @ np.asarray(rotation, dtype=float))
 
     def scale(self, sx: Number, sy: Number, sz: Number) -> Matrix:
-        """Scale the matrix by a number on each axis."""
+        """Scale the matrix on each axis, applied in the local frame like rotate."""
         scaling = np.asarray([[sx, 0, 0], [0, sy, 0], [0, 0, sz]], dtype=float)
-        return Matrix._from_array(scaling @ self._array)
+        return Matrix._from_array(self._array @ scaling)
 
     def transpose(self) -> Matrix:
         """Return the transposed matrix."""
@@ -213,9 +210,6 @@ class Vector:
     def __repr__(self) -> str:
         return f"<Vector: ({self.repr})>"
 
-    def __hash__(self) -> int:
-        return hash((self.x, self.y, self.z))
-
     def __add__(self, other: Vector) -> Vector:
         return Vector(self.x + other.x, self.y + other.y, self.z + other.z)
 
@@ -224,20 +218,15 @@ class Vector:
     def __sub__(self, other: Vector) -> Vector:
         return Vector(self.x - other.x, self.y - other.y, self.z - other.z)
 
-    def __rsub__(self, other: Vector) -> Vector:
-        return Vector(other.x - self.x, other.y - self.y, other.z - self.z)
-
-    def __cmp__(self, other: Vector) -> bool:
-        return self.x != other.x or self.y != other.y or self.z != other.z
-
     def __abs__(self) -> float:
         return float(np.linalg.norm([self.x, self.y, self.z]))
 
-    def __rmul__(self, other: Number) -> Vector:
+    def __mul__(self, other: object) -> Vector:
         if isinstance(other, int | float):
             return Vector(self.x * other, self.y * other, self.z * other)
-        message = f"Cannot multiply {self.__class__} with {type(other)}"
-        raise ValueError(message)
+        return NotImplemented
+
+    __rmul__ = __mul__
 
     def __truediv__(self, other: Number) -> Vector:
         if isinstance(other, int | float):
@@ -268,12 +257,12 @@ class Vector:
             ),
         )
 
-    def norm(self) -> None:
-        """Normalize the vector in place."""
-        length = abs(self)
-        self.x /= length
-        self.y /= length
-        self.z /= length
+    def normalized(self) -> Vector:
+        """Return a unit-length copy of this vector."""
+        if (length := abs(self)) == 0:
+            message = "Cannot normalize a zero-length vector"
+            raise ValueError(message)
+        return self / length
 
 
 @dataclass(slots=True)
@@ -289,9 +278,6 @@ class Vector2D:
             f"{format_ldraw_number(self.y)}) >"
         )
 
-    def __hash__(self) -> int:
-        return hash((self.x, self.y))
-
     def __add__(self, other: Vector2D) -> Vector2D:
         return Vector2D(self.x + other.x, self.y + other.y)
 
@@ -300,20 +286,15 @@ class Vector2D:
     def __sub__(self, other: Vector2D) -> Vector2D:
         return Vector2D(self.x - other.x, self.y - other.y)
 
-    def __rsub__(self, other: Vector2D) -> Vector2D:
-        return Vector2D(other.x - self.x, other.y - self.y)
-
-    def __cmp__(self, other: Vector2D) -> bool:
-        return self.x != other.x or self.y != other.y
-
     def __abs__(self) -> float:
         return float(np.linalg.norm([self.x, self.y]))
 
-    def __rmul__(self, other: Number) -> Vector2D:
+    def __mul__(self, other: object) -> Vector2D:
         if isinstance(other, int | float):
             return Vector2D(self.x * other, self.y * other)
-        message = f"Cannot multiply {self.__class__} with {type(other)}"
-        raise ValueError(message)
+        return NotImplemented
+
+    __rmul__ = __mul__
 
     def __truediv__(self, other: Number) -> Vector2D:
         if isinstance(other, int | float):
@@ -336,17 +317,10 @@ class Vector2D:
 class CoordinateSystem:
     """3D coordinate system representation."""
 
-    x: Vector | None = None
-    y: Vector | None = None
-    z: Vector | None = None
-
-    def __post_init__(self) -> None:
-        self.x = self.x if self.x is not None else Vector(1.0, 0.0, 0.0)
-        self.y = self.y if self.y is not None else Vector(0.0, 1.0, 0.0)
-        self.z = self.z if self.z is not None else Vector(0.0, 0.0, 1.0)
+    x: Vector = field(default_factory=lambda: Vector(1.0, 0.0, 0.0))
+    y: Vector = field(default_factory=lambda: Vector(0.0, 1.0, 0.0))
+    z: Vector = field(default_factory=lambda: Vector(0.0, 0.0, 1.0))
 
     def project(self, p: Vector) -> Vector:
         """Project a point onto this coordinate system."""
-        if self.x is None or self.y is None or self.z is None:
-            raise MatrixError
         return Vector(p.dot(self.x), p.dot(self.y), p.dot(self.z))

@@ -17,7 +17,7 @@ from ldraw.lines import Comment, MetaCommand
 from ldraw.model import Model, parse_model, read_model
 from ldraw.pieces import Group, Piece
 
-MODELS_DIR = Path("tests/models")
+MODELS_DIR = Path(__file__).resolve().parent / "models"
 
 
 def brick(part: str = "3001", colour: Colour | int = 4) -> Piece:
@@ -205,6 +205,37 @@ def test_add_submodel_rejects_hoisted_duplicates() -> None:
     with pytest.raises(DuplicateSubmodelError):
         root.add_submodel(middle)
     assert "axle.ldr" not in root.submodels
+
+
+def test_add_submodel_same_object_twice_places_it_twice() -> None:
+    root = Model(name="main.ldr")
+    sub = Model(name="sub.ldr", objects=[brick(part="3005")])
+
+    root.add_submodel(sub)
+    root.add_submodel(sub, position=Vector(0, -24, 0))
+
+    assert len(root.pieces) == 2
+    assert len(root.submodels) == 1
+    assert root.to_ldraw().count("0 FILE") == 2
+    assert len(list(root.iter_pieces())) == 2
+    reparsed = parse_model(root.to_ldraw())
+    assert reparsed.to_ldraw() == root.to_ldraw()
+
+
+def test_add_submodel_diamond_shared_nested_submodel() -> None:
+    shared = Model(name="shared.ldr", objects=[brick(part="3005", colour=0)])
+    left = Model(name="left.ldr")
+    left.add_submodel(shared)
+    right = Model(name="right.ldr")
+    right.add_submodel(shared)
+    root = Model(name="main.ldr")
+
+    root.add_submodel(left)
+    root.add_submodel(right)
+
+    assert sorted(root.submodels) == ["left.ldr", "right.ldr", "shared.ldr"]
+    rows = root.bill_of_materials()
+    assert [(row.part, row.quantity) for row in rows] == [("3005", 2)]
 
 
 def test_iter_pieces_expands_submodel_references() -> None:
@@ -505,6 +536,17 @@ def test_steps_ignores_a_trailing_marker() -> None:
     model.add_step()
 
     assert model.steps == [[piece]]
+
+
+def test_steps_ignores_consecutive_trailing_markers() -> None:
+    model = Model()
+    piece = brick()
+    model.add(piece)
+    model.add_step()
+    model.add_step()
+
+    assert model.steps == [[piece]]
+    assert parse_model("0 STEP\n0 STEP\n").steps == [[]]
 
 
 def test_steps_parses_markers_case_insensitively() -> None:

@@ -35,7 +35,6 @@ from ldraw.library.colours import (
     Yellow,
 )
 from ldraw.library.parts import Brick1X1
-
 from ldraw.pieces import *
 
 colours = [
@@ -65,12 +64,10 @@ def draw_mandelbrot(  # noqa: PLR0913
     y = 0
     z = z1
     while z <= z2:
-
         i = i1 + (z - z1) * (i2 - i1) / (z2 - z1)
 
         x = x1
         while x <= x2:
-
             r = r1 + (x - x1) * (r2 - r1) / (x2 - x1)
 
             ci = r + i * 1j

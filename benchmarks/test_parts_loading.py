@@ -8,7 +8,9 @@ import pytest
 
 from ldraw.parts import PartCategory, Parts
 
-PARTS_LST = Path("tests/test_ldraw/ldraw/parts.lst")
+PARTS_LST = (
+    Path(__file__).resolve().parents[1] / "tests" / "test_ldraw" / "ldraw" / "parts.lst"
+)
 
 
 @pytest.fixture

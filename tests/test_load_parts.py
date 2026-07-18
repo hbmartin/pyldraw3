@@ -17,9 +17,11 @@ from ldraw.parts import (
 )
 from ldraw.snippets import module_path, suggested_import, symbol_name
 
+TESTS_DIR = Path(__file__).resolve().parent
+
 
 def test_load_parts() -> None:
-    p = Parts("tests/test_ldraw/ldraw/parts.lst")
+    p = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
     assert len(p.by_name) == 1
     assert len(p.by_code) == 1
     assert next(iter(p.by_name.values())) == "3001"
@@ -29,11 +31,11 @@ def test_load_parts() -> None:
 
     part = p.part(code="3001")
 
-    assert str(part.path) == "tests/test_ldraw/ldraw/parts/3001.dat"
+    assert part.path == TESTS_DIR / "test_ldraw" / "ldraw" / "parts" / "3001.dat"
 
 
 def test_typed_catalog_entries() -> None:
-    p = Parts("tests/test_ldraw/ldraw/parts.lst")
+    p = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
     entry = p.get_entry_by_code("3001")
     assert entry is not None
@@ -189,10 +191,11 @@ def test_module_sections_cover_categories_and_minifig_sections() -> None:
 
     assert sections[("bricks",)] == {"Brick  2 x  4": "3001"}
     assert sections[("minifig_accessory",)] == {"Shield Triangular": "3846"}
-    # Symbol names strip the Minifig prefix in every module they appear in.
-    assert sections[("minifig", "hats")] == {"Hair Male": "3901"}
-    assert sections[("minifig", "torsos")] == {"Torso": "973"}
-    assert sections[("minifigs",)] == {"Torso": "973"}
+    # Sections carry as-written descriptions; the Minifig prefix is
+    # stripped from symbol names at generation time.
+    assert sections[("minifig", "hats")] == {"Minifig Hair Male": "3901"}
+    assert sections[("minifig", "torsos")] == {"Minifig Torso": "973"}
+    assert sections[("minifigs",)] == {"Minifig Torso": "973"}
     assert ("other",) not in sections
 
 
@@ -267,7 +270,7 @@ def test_description_category_word_resolves_new_categories(tmp_path: Path) -> No
 
 
 def test_load_primitives() -> None:
-    p = Parts("tests/test_ldraw/ldraw/parts.lst")
+    p = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
     assert len(p.primitives_by_name) == 4
     assert len(p.primitives_by_code) == 4
     assert p.primitives_by_name["Box with 5 Faces and All Edges"] == "box5"
@@ -275,13 +278,13 @@ def test_load_primitives() -> None:
 
     part = p.part(code="box5")
 
-    assert str(part.path) == "tests/test_ldraw/ldraw/p/box5.dat"
+    assert part.path == TESTS_DIR / "test_ldraw" / "ldraw" / "p" / "box5.dat"
 
 
 @patch.object(Path, "open", side_effect=OSError)
 def test_cantreadpartslst(mocked) -> None:
     with pytest.raises(OSError):
-        Parts("tests/test_ldraw/ldraw/parts.lst")
+        Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
 
 def test_parts_get_memoizes_by_stat(tmp_path: Path) -> None:
@@ -331,8 +334,9 @@ def test_minifig_descriptions_are_kept_as_written(tmp_path: Path) -> None:
     assert entry is not None
     assert entry.description == "Minifig Torso"
     assert entry.minifig_section == MinifigSection.TORSOS
-    # Generated symbols still strip the prefix.
-    assert parts.catalog.module_sections()[("minifig", "torsos")] == {"Torso": "973"}
+    assert parts.catalog.module_sections()[("minifig", "torsos")] == {
+        "Minifig Torso": "973",
+    }
 
 
 def test_description_for_tolerates_casing_differences(tmp_path: Path) -> None:
@@ -350,7 +354,7 @@ def test_description_for_tolerates_casing_differences(tmp_path: Path) -> None:
 
 
 def test_part_raises_for_unknown_description_code_or_file() -> None:
-    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+    parts = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
     with pytest.raises(PartNotFoundError):
         parts.part(description="No Such Part")
@@ -363,7 +367,7 @@ def test_part_raises_for_unknown_description_code_or_file() -> None:
 
 
 def test_find_part_returns_none_instead_of_raising() -> None:
-    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+    parts = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
     assert parts.find_part(description="No Such Part") is None
     assert parts.find_part(code="99999") is None
@@ -428,3 +432,158 @@ def test_glitter_speckle_and_glow_finishes_are_detected(tmp_path: Path) -> None:
     red = parts.colours_by_code[4]
     assert red.colour_attributes == []
     assert red.is_solid
+
+
+def test_malformed_parts_lst_line_warns_and_continues(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick 2 x 4\n")
+    (parts_dir / "3002.dat").write_text("0 Brick 2 x 3\n")
+    (ldraw_dir / "parts.lst").write_text(
+        "3001.dat  Brick 2 x 4\n"
+        "this line has no dat extension\n"
+        "\n"
+        "3002.dat  Brick 2 x 3\n",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="ldraw.parts"):
+        parts = Parts(ldraw_dir / "parts.lst")
+
+    assert parts.by_code == {"3001": "Brick 2 x 4", "3002": "Brick 2 x 3"}
+    assert "skipping malformed line 2" in caplog.text
+
+
+def test_description_containing_dat_is_kept(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "9999.dat").write_text("0 Sticker for Set 8880.dat\n")
+    (ldraw_dir / "parts.lst").write_text("9999.dat  Sticker for Set 8880.dat\n")
+
+    parts = Parts(ldraw_dir / "parts.lst")
+
+    assert parts.by_code["9999"] == "Sticker for Set 8880.dat"
+
+
+def test_missing_part_file_skipped_during_categorization(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    ldraw_dir = tmp_path / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick 2 x 4\n")
+    (ldraw_dir / "parts.lst").write_text(
+        "3001.dat  Brick 2 x 4\nmissing.dat  Ghost Part\n",
+    )
+
+    parts = Parts(ldraw_dir / "parts.lst")
+    with caplog.at_level(logging.WARNING, logger="ldraw.parts"):
+        catalog = parts.catalog
+
+    assert catalog.get_entry_by_code("3001") is not None
+    assert catalog.get_entry_by_code("missing") is None
+    assert "skipping part missing" in caplog.text
+
+
+def test_concurrent_catalog_access_categorizes_once(monkeypatch) -> None:
+    import threading
+
+    parts = Parts(TESTS_DIR / "test_ldraw2" / "ldraw" / "parts.lst")
+    calls = {"count": 0}
+    original = Parts._categorize_parts  # noqa: SLF001
+
+    def counting(self) -> None:
+        calls["count"] += 1
+        original(self)
+
+    monkeypatch.setattr(Parts, "_categorize_parts", counting)
+    barrier = threading.Barrier(8)
+    errors: list[Exception] = []
+
+    def hit_catalog() -> None:
+        try:
+            barrier.wait()
+            assert parts.catalog.by_code
+        except Exception as exc:  # noqa: BLE001 - surface thread failures
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hit_catalog) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert calls["count"] == 1
+    for category_entries in parts.catalog.by_category.values():
+        codes = [entry.code for entry in category_entries]
+        assert len(codes) == len(set(codes))
+
+
+def test_catalog_add_replaces_everywhere() -> None:
+    catalog = PartsCatalog()
+    catalog.add(
+        CatalogEntry(
+            code="3001",
+            description="Brick 2 x 4",
+            category=PartCategory.BRICK,
+            minifig_section=MinifigSection.TORSOS,
+        ),
+    )
+    catalog.add(
+        CatalogEntry(
+            code="3001",
+            description="Tile 2 x 4",
+            category=PartCategory.TILE,
+        ),
+    )
+
+    assert catalog.by_code["3001"].description == "Tile 2 x 4"
+    assert "Brick 2 x 4" not in catalog.by_description
+    assert catalog.by_category[PartCategory.BRICK] == []
+    assert catalog.entries_by_category(PartCategory.BRICK) == ()
+    assert len(catalog.entries_by_category(PartCategory.TILE)) == 1
+    assert catalog.minifig_entries(MinifigSection.TORSOS) == ()
+
+
+def test_module_sections_keeps_prefix_colliding_descriptions() -> None:
+    catalog = PartsCatalog()
+    catalog.add(
+        CatalogEntry(
+            code="973",
+            description="Minifig Torso Plain",
+            category=PartCategory.MINIFIG,
+            minifig_section=MinifigSection.TORSOS,
+        ),
+    )
+    catalog.add(
+        CatalogEntry(
+            code="999",
+            description="Torso Plain",
+            category=PartCategory.MINIFIG,
+        ),
+    )
+
+    sections = catalog.module_sections()
+
+    assert sections[("minifigs",)] == {
+        "Minifig Torso Plain": "973",
+        "Torso Plain": "999",
+    }
+
+
+def test_parts_get_expands_user_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(TESTS_DIR))
+
+    parts = Parts.get("~/test_ldraw/ldraw/parts.lst")
+
+    assert parts.by_code["3001"] == "Brick  2 x  4"

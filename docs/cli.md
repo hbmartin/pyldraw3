@@ -180,6 +180,7 @@ uv build
 Build and preview documentation:
 
 ```bash
+uv sync --group docs
 uv run zensical serve
 uv run zensical build --clean --strict
 ```

@@ -31,7 +31,6 @@ VIEWS: dict[str, tuple[int, int]] = {
 }
 
 RENDER_TIMEOUT_S = 240
-RENDERER_PRIORITY = ("ldview", "leocad")
 
 
 @dataclass(frozen=True)
@@ -66,7 +65,8 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
 
 
 def _detect() -> list[str]:
-    return [renderer for renderer in RENDERER_PRIORITY if shutil.which(renderer)]
+    # RENDERERS insertion order is the detection priority (ldview before leocad).
+    return [renderer for renderer in RENDERERS if shutil.which(renderer)]
 
 
 def _render_ldview(
@@ -130,7 +130,8 @@ def _parse_views(value: str) -> list[str]:
         if view not in VIEWS:
             print(f"skipping unknown view {view!r}", file=sys.stderr)
             continue
-        views.append(view)
+        if view not in views:
+            views.append(view)
     return views
 
 
@@ -191,8 +192,12 @@ def _prepare_request(args: argparse.Namespace) -> RenderRequest | None:
         width_s, height_s = args.size.lower().split("x", 1)
         size = (int(width_s), int(height_s))
     except ValueError:
+        size = None
+
+    if size is None or size[0] <= 0 or size[1] <= 0:
         print(
-            f"error: bad --size {args.size!r}; expected WxH like 1024x768",
+            f"error: bad --size {args.size!r}; expected WxH like 1024x768 "
+            "with positive integers",
             file=sys.stderr,
         )
         return None
@@ -230,6 +235,8 @@ def _render_with_backend(request: RenderRequest, renderer: str) -> list[Path]:
     produced: list[Path] = []
     for view in request.views:
         out = request.outputs[view]
+        # Guards the rare case where a prior backend's bottom-of-loop cleanup
+        # hit an OSError and left a stale file we must not mistake for a render.
         if cleanup_error := _remove_partial_output(out):
             message = f"could not remove stale output: {cleanup_error}"
             print(f"failed {view} view: {message}", file=sys.stderr)

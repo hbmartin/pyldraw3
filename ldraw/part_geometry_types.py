@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ldraw.geometry import Vector
 
@@ -12,6 +12,10 @@ __all__ = ["BoundingBox", "StudReference"]
 # downwards (underside tubes and the like) or are drawing aids, not studs a
 # brick above would sit on.
 _NON_TOP_STUD_MARKERS = ("tube", "underside", "placeholder")
+
+# A top stud's transformed up direction must stay within ~8 degrees of
+# straight up; anything looser is a sideways or inverted placement.
+_TOP_STUD_MIN_ALIGNMENT = 0.99
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +57,20 @@ class StudReference:
     position: Vector
     """The primitive's origin -- for top studs, the centre of the stud base."""
 
+    up: Vector = field(default_factory=lambda: Vector(0, -1, 0))
+    """Image of the stud's local up direction (0, -1, 0) under the placing
+    transforms; unit length under rigid placements."""
+
     @property
     def is_top_stud(self) -> bool:
         """Whether this stud is an upward connector a brick can sit on.
 
-        Judged from the primitive's description: underside tubes and
-        placeholder primitives are excluded, everything else counts.
+        Excludes underside tubes and placeholder primitives by description,
+        and any stud whose placing transforms point it away from up (LDraw
+        up is -Y), such as the sideways front stud of a headlight brick.
         """
         lowered = self.description.casefold()
-        return not any(marker in lowered for marker in _NON_TOP_STUD_MARKERS)
+        if any(marker in lowered for marker in _NON_TOP_STUD_MARKERS):
+            return False
+        length = abs(self.up)
+        return length > 0 and self.up.y <= -_TOP_STUD_MIN_ALIGNMENT * length

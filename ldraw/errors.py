@@ -1,5 +1,7 @@
 """Exception classes for pyldraw package."""
 
+from typing import Self
+
 
 class PartError(Exception):
     """An exception happening during Part file processing."""
@@ -7,6 +9,17 @@ class PartError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+        self.source: str | None = None
+        self.line_number: int | None = None
+
+    def add_context(self, *, source: str, line_number: int) -> Self:
+        """Extend the message with file/line context, at most once."""
+        if self.source is None:
+            self.source = source
+            self.line_number = line_number
+            self.message = f"{self.message} in {source} at line {line_number}"
+            self.args = (self.message,)
+        return self
 
 
 class PartNotFoundError(PartError):
@@ -56,6 +69,45 @@ class UnknownCommandError(PartError):
 
     def __init__(self, command: str) -> None:
         super().__init__(f"Unknown command ({command})")
+
+
+class InvalidColourValueError(PartError, ValueError):
+    """A colour field token is neither a colour code nor a direct colour."""
+
+    def __init__(self, token: str) -> None:
+        super().__init__(f"Invalid colour value {token!r}")
+        self.token = token
+
+
+class EmptyPartFileError(PartError):
+    """A part file has no content to read a description from."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"Part file {path} is empty; expected a description on its first line",
+        )
+        self.path = path
+
+
+class StructuralCommentError(PartError):
+    """A comment would serialize as MPD structure and corrupt round-trips."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(
+            f"Comment {text!r} would serialize as MPD structure (0 FILE / 0 NOFILE) "
+            "and be consumed as a section boundary when re-parsed; "
+            "rename it or use Model.add_submodel",
+        )
+        self.text = text
+
+
+class MisplacedNofileError(PartError):
+    """A 0 NOFILE line appeared before any 0 FILE section."""
+
+    def __init__(self, *, source: str, line_number: int) -> None:
+        super().__init__(
+            f"0 NOFILE before any 0 FILE section in {source} at line {line_number}",
+        )
 
 
 class DuplicateSubmodelError(PartError):
@@ -110,12 +162,19 @@ class ModuleImportError(ImportError):
 
 
 class CouldNotLoadSpecError(ModuleImportError):
-    """Could not determine the latest parts list version."""
+    """Could not build an import spec for a generated library module."""
 
     def __init__(self, fullname: str) -> None:
-        super().__init__(
-            f"Could not determine the latest parts list version for {fullname}.",
-        )
+        super().__init__(f"Could not build an import spec for {fullname}.")
+
+
+class ConfigLoadError(Exception):
+    """The pyldraw config file could not be read or parsed."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"Could not load config {path}: {reason}")
+        self.path = path
+        self.reason = reason
 
 
 class CouldNotFindModuleError(ModuleImportError):

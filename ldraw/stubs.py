@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from ldraw.errors import LibraryNotGeneratedError
@@ -19,6 +20,8 @@ def write_stub_package(generated_path: Path | str, out_dir: Path | str) -> Path:
     if not (library_dir / "__init__.py").is_file():
         raise LibraryNotGeneratedError(str(generated_path))
     stubs_dir = Path(out_dir) / "ldraw-stubs"
+    if stubs_dir.is_dir():
+        shutil.rmtree(stubs_dir)
     library_stubs = stubs_dir / "library"
     for source in sorted(library_dir.rglob("*.py")):
         target = library_stubs / source.relative_to(library_dir).with_suffix(".pyi")

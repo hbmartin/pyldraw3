@@ -6,7 +6,9 @@ import pytest
 
 from ldraw.errors import (
     DuplicateSubmodelError,
-    PartError,
+    InvalidNumericValueError,
+    MisplacedNofileError,
+    StructuralCommentError,
     SubmodelNameRequiredError,
 )
 from ldraw.geometry import Identity, Vector
@@ -14,7 +16,7 @@ from ldraw.lines import Comment, MetaCommand
 from ldraw.model import Model, parse_model, read_model
 from ldraw.pieces import Piece
 
-MODELS_DIR = Path("tests/models")
+MODELS_DIR = Path(__file__).resolve().parent / "models"
 
 
 def test_read_simple_ldr() -> None:
@@ -152,11 +154,72 @@ def test_unnamed_model_with_submodels_cannot_serialize() -> None:
 def test_parse_error_carries_source_and_line() -> None:
     text = "0 FILE a.ldr\n0 ok\n2 16 0 0 x 1 1 1\n"
 
-    with pytest.raises(PartError, match=r"'x' .* in model\.mpd at line 3"):
+    with pytest.raises(
+        InvalidNumericValueError,
+        match=r"'x' .* in model\.mpd at line 3",
+    ):
         parse_model(text, source="model.mpd")
 
-    with pytest.raises(PartError, match=r"'x' .* in <string> at line 3"):
+    with pytest.raises(InvalidNumericValueError, match=r"'x' .* in <string> at line 3"):
         parse_model(text)
+
+
+def test_stray_nofile_raises() -> None:
+    with pytest.raises(MisplacedNofileError, match=r"in m\.ldr at line 2"):
+        parse_model("0 a\n0 NOFILE\n0 lost\n", source="m.ldr")
+
+    with pytest.raises(MisplacedNofileError, match=r"in <string> at line 1"):
+        parse_model("0 NOFILE\n0 FILE a.ldr\n")
+
+
+def test_structural_comments_rejected_at_serialization() -> None:
+    for text in ("NOFILE", "FILE other.ldr", "file x"):
+        with pytest.raises(StructuralCommentError, match=r"section boundary"):
+            Model(objects=[Comment(text)]).to_ldraw()
+
+    root = Model(name="main.ldr")
+    sub = Model(name="sub.ldr", objects=[Comment("NOFILE")])
+    root.add_submodel(sub)
+    with pytest.raises(StructuralCommentError):
+        root.to_ldraw()
+
+    assert Model(objects=[Comment("FILENAME: x")]).to_ldraw() == "0 FILENAME: x"
+
+
+def test_description_ignores_managed_headers() -> None:
+    assert parse_model("0 Name: a.ldr\n").description is None
+    assert parse_model("0 Author: x\n").description is None
+    assert parse_model("0 BFC CERTIFY CCW\n").description is None
+    assert parse_model("0 A real description\n").description == "A real description"
+
+
+def test_model_equality_and_hash_are_identity() -> None:
+    text = "0 Model\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+    first = parse_model(text)
+    second = parse_model(text)
+
+    assert first != second
+    assert first == first  # noqa: PLR0124 - identity equality is the contract
+    assert isinstance(hash(first), int)
+    assert first.to_ldraw() == second.to_ldraw()
+
+    occurrence = next(first.iter_occurrences())
+    assert isinstance(hash(occurrence), int)
+
+
+def test_source_line_for_is_identity_based() -> None:
+    model = parse_model("0 Model\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+    piece = model.pieces[0]
+
+    assert model.source_line_for(piece) == 2
+
+    equal_valued = Piece.place("3001", colour=4)
+    assert model.source_line_for(equal_valued) is None
+
+    model.objects.remove(piece)
+    del piece
+    fresh = Piece.place("3005", colour=0)
+    assert model.source_line_for(fresh) is None
 
 
 def test_crlf_and_bom_are_tolerated(tmp_path: Path) -> None:

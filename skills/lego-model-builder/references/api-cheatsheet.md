@@ -84,8 +84,8 @@ Piece.place(Slope2X1, colour=Red, position=Vector(0, 0, 0), matrix=m)
 ## Finding parts not in the palette
 
 ```bash
-ldraw parts search "slope 45 2 x 2"   # list candidate codes
-ldraw parts info 3039                  # confirm code, category, and import line
+"$PYTHON_BIN" -m ldraw.cli parts search "slope brick 45 2 x 2"  # candidate codes
+"$PYTHON_BIN" -m ldraw.cli parts info 3039     # confirm code, category, import line
 ```
 
 `ldraw parts info` prints the exact `from ldraw.library.parts... import ...`
@@ -99,7 +99,7 @@ Named colours live in `ldraw.library.colours` (generated). Import by name
 name exists, list them:
 
 ```bash
-python -c "from ldraw.library.colours import ColoursByName; print('\n'.join(sorted(ColoursByName)))"
+"$PYTHON_BIN" -c "from ldraw.library.colours import ColoursByName; print('\n'.join(sorted(ColoursByName)))"
 ```
 
 or fall back to a bare colour code int (`Piece.place(part, colour=4)` = red).

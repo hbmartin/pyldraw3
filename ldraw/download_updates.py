@@ -1,6 +1,7 @@
 """LDraw library update download functionality."""
 
 import html.parser
+import re
 
 import requests
 
@@ -8,6 +9,12 @@ from ldraw.errors import CouldNotDetermineLatestVersionError
 
 UPDATES_PAGE_URL = "https://library.ldraw.org/updates"
 TARGET_HREF = "https://library.ldraw.org/library/updates/complete.zip"
+
+_REQUEST_TIMEOUT_SECONDS = 30
+
+# The release id is the trailing segment of the anchor's data-pan value:
+# either a dashed YYYY-MM update id or a plain numeric id.
+_RELEASE_ID_RE = re.compile(r"(\d{4}-\d{2}|\d+)$")
 
 
 class AnchorTagParser(html.parser.HTMLParser):
@@ -53,10 +60,14 @@ def extract_data_pan_from_html(html_content: str) -> str | None:
 
 
 def get_latest_release_id() -> str:
-    """Get the latest LDraw library release ID from the updates page."""
-    response = requests.get(UPDATES_PAGE_URL)  # noqa: S113
+    """Get the latest LDraw library release ID from the updates page.
+
+    Preserves dashed ``YYYY-MM`` update ids in full rather than splitting
+    on dashes, which would truncate ``...-2024-01`` to ``01``.
+    """
+    response = requests.get(UPDATES_PAGE_URL, timeout=_REQUEST_TIMEOUT_SECONDS)
     response.raise_for_status()
     pan = extract_data_pan_from_html(response.text)
-    if pan is None:
+    if pan is None or (match := _RELEASE_ID_RE.search(pan)) is None:
         raise CouldNotDetermineLatestVersionError
-    return pan.split("-")[-1]
+    return match.group()

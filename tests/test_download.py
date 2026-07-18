@@ -192,3 +192,215 @@ def test_normalize_tree_missing_destination(tmp_path: Path) -> None:
     _normalize_tree(tmp_path / "nonexistent")
 
     assert not (tmp_path / "nonexistent").exists()
+
+
+@patch("ldraw.downloads.requests.get")
+def test_download_timeout_is_set(
+    get_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    response = get_mock.return_value.__enter__.return_value
+    response.iter_content.return_value = [b"zip-bytes"]
+
+    _download("https://example.test/x.zip", "x.zip")
+
+    assert get_mock.call_args.kwargs["timeout"] == 30
+
+
+@patch("ldraw.downloads.requests.get")
+def test_download_failure_cleans_up_part_file(
+    get_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    response = get_mock.return_value.__enter__.return_value
+    response.iter_content.side_effect = requests.ConnectionError("dropped")
+
+    with pytest.raises(requests.ConnectionError):
+        _download("https://example.test/x.zip", "x.zip")
+
+    assert not (tmp_path / "x.zip.part").exists()
+
+
+@patch("ldraw.download_updates.requests.get")
+def test_latest_release_id_preserves_dashed_id(get_mock: MagicMock) -> None:
+    from ldraw.download_updates import TARGET_HREF, get_latest_release_id
+
+    get_mock.return_value.text = (
+        f'<html><body><a data-pan="update-complete-zip-2024-01" '
+        f'href="{TARGET_HREF}">Download</a></body></html>'
+    )
+
+    assert get_latest_release_id() == "2024-01"
+    assert get_mock.call_args.kwargs["timeout"] == 30
+
+
+@patch("ldraw.download_updates.requests.get")
+def test_latest_release_id_plain_numeric(get_mock: MagicMock) -> None:
+    from ldraw.download_updates import TARGET_HREF, get_latest_release_id
+
+    get_mock.return_value.text = (
+        f'<html><body><a data-pan="update-complete-zip-2606" '
+        f'href="{TARGET_HREF}">Download</a></body></html>'
+    )
+
+    assert get_latest_release_id() == "2606"
+
+
+@patch("ldraw.download_updates.requests.get")
+def test_latest_release_id_missing_anchor_raises(get_mock: MagicMock) -> None:
+    from ldraw.download_updates import get_latest_release_id
+    from ldraw.errors import CouldNotDetermineLatestVersionError
+
+    get_mock.return_value.text = "<html><body>no anchors here</body></html>"
+
+    with pytest.raises(CouldNotDetermineLatestVersionError):
+        get_latest_release_id()
+
+
+@patch("ldraw.download_updates.requests.get")
+def test_latest_release_id_unparseable_pan_raises(get_mock: MagicMock) -> None:
+    from ldraw.download_updates import TARGET_HREF, get_latest_release_id
+    from ldraw.errors import CouldNotDetermineLatestVersionError
+
+    get_mock.return_value.text = (
+        f'<html><body><a data-pan="no-trailing-id-" '
+        f'href="{TARGET_HREF}">Download</a></body></html>'
+    )
+
+    with pytest.raises(CouldNotDetermineLatestVersionError):
+        get_latest_release_id()
+
+
+@patch("ldraw.downloads.get_latest_release_id", return_value="2099-01")
+@patch("ldraw.downloads.generate_parts_lst")
+@patch("ldraw.downloads.unpack_version")
+@patch("ldraw.downloads._download")
+def test_download_complete_discards_cached_zip(  # noqa: PLR0913 - stacked patches
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    get_latest_release_id_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    unpack_version_mock.return_value = tmp_path / "complete"
+    stale = tmp_path / "complete.zip"
+    stale.write_bytes(b"stale bytes")
+
+    download(show_progress=False)
+
+    assert not stale.exists()
+    download_mock.assert_called_once()
+
+
+@patch("ldraw.downloads.generate_parts_lst")
+@patch("ldraw.downloads.unpack_version")
+@patch("ldraw.downloads._download")
+def test_download_versioned_keeps_cached_zip(
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    cached = tmp_path / "2018-02.zip"
+    cached.write_bytes(b"immutable tag archive")
+
+    download(show_progress=False, version="2018-02")
+
+    assert cached.exists()
+
+
+def test_normalize_tree_raises_on_case_collision(tmp_path: Path) -> None:
+    ldraw_dir = tmp_path / "ldraw"
+    parts_upper = ldraw_dir / "PARTS"
+    parts_upper.mkdir(parents=True)
+    (ldraw_dir / "Parts").mkdir(exist_ok=True)
+    if len(list(ldraw_dir.iterdir())) < 2:
+        pytest.skip("case-insensitive filesystem cannot host colliding names")
+
+    with pytest.raises(ValueError, match="Case-colliding"):
+        _normalize_tree(tmp_path)
+
+
+def test_case_safe_rename_rolls_back_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "LDRAW"
+    source.mkdir()
+    original_rename = Path.rename
+    calls = {"count": 0}
+
+    def failing_second_rename(self: Path, target: Path) -> Path:
+        calls["count"] += 1
+        if calls["count"] == 2:
+            message = "simulated failure"
+            raise OSError(message)
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_second_rename)
+
+    with pytest.raises(OSError, match="simulated failure"):
+        _case_safe_rename(source, tmp_path / "ldraw")
+
+    entries = [child.name for child in tmp_path.iterdir()]
+    assert entries == ["LDRAW"]
+
+
+def test_normalize_tree_replaces_stale_tree_with_new_wrapper(tmp_path: Path) -> None:
+    stale_parts = tmp_path / "ldraw" / "parts"
+    stale_parts.mkdir(parents=True)
+    (stale_parts / "old.dat").write_text("0 Old Part")
+    fresh = tmp_path / "ldraw-parts-2099-01" / "LDRAW" / "PARTS"
+    fresh.mkdir(parents=True)
+    (fresh / "NEW.DAT").write_text("0 New Part")
+
+    _normalize_tree(tmp_path)
+
+    assert not (tmp_path / "ldraw-parts-2099-01").exists()
+    assert (tmp_path / "ldraw" / "parts" / "new.dat").read_text() == "0 New Part"
+    assert not (tmp_path / "ldraw" / "parts" / "old.dat").exists()
+
+
+@patch("zipfile.ZipFile", spec=zipfile.ZipFile)
+def test_unpack_version_show_progress_false_is_silent(
+    zip_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path / "cache")
+    zip_mock.return_value.__enter__.return_value.infolist.return_value = []
+    version_zip = tmp_path / "2018-02.zip"
+    version_zip.write_bytes(b"zip")
+
+    unpack_version(version_zip, "2018-02", show_progress=False)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_anchor_tag_parser_first_match_wins() -> None:
+    from ldraw.download_updates import TARGET_HREF, AnchorTagParser
+
+    parser = AnchorTagParser()
+    parser.feed(
+        f'<a data-pan="update-arch-zip-0001" href="https://other.test/x.zip">o</a>'
+        f'<a data-pan="update-complete-zip-2024-01" href="{TARGET_HREF}">first</a>'
+        f'<a data-pan="update-complete-zip-9999" href="{TARGET_HREF}">later</a>',
+    )
+
+    assert parser.found is True
+    assert parser.data_pan_value == "update-complete-zip-2024-01"
+
+
+def test_extract_data_pan_returns_none_without_anchor() -> None:
+    from ldraw.download_updates import extract_data_pan_from_html
+
+    assert extract_data_pan_from_html("<html></html>") is None

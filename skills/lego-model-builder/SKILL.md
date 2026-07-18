@@ -25,6 +25,12 @@ build API, the coordinate system, and the gotchas. Reach into
 > folder containing this `SKILL.md`). Set it first so the helpers resolve from
 > anywhere, since you run this skill from the user's model output directory:
 > `SKILL_DIR=/absolute/path/to/skills/lego-model-builder`.
+>
+> **`$PYTHON_BIN`** means the interpreter preflight selected. Set it once, the
+> same way preflight does:
+> `PYTHON_BIN="${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}"; PYTHON_BIN="${PYTHON_BIN:-python3}"`.
+> Always run the CLI as `"$PYTHON_BIN" -m ldraw.cli ...` so it shares the
+> environment pyldraw3 was installed into.
 
 ### 1. Preflight the environment
 
@@ -48,7 +54,9 @@ each for `pyldraw3:`, `library:`, and `renderer:`. It will, only as needed:
   a one-time setup. To trade coverage for speed the user may instead pin a
   smaller release, e.g. `ldraw download --version 2018-02 --yes`.
 - Detect a renderer on `PATH` in order `ldview` → `leocad`, and try to install
-  one if neither is found (Linux: `leocad` + `xvfb`; macOS: `brew`).
+  one if neither is found (Linux: `leocad` + `xvfb` via apt; macOS: detects
+  existing LDView.app/LeoCAD.app bundles and prints how to put them on `PATH` —
+  install LDView from https://tcobbs.github.io/ldview/ if absent).
 
 If the report ends with `renderer: NONE`, continue in **validate-only mode**:
 you will still generate, validate, and BOM the model, but you cannot see it —
@@ -77,11 +85,11 @@ straight to building.
   and predictable. For anything it lacks, find the real code with the CLI:
 
   ```bash
-  ldraw parts search "arch 1 x 6"     # code + category + description
-  ldraw parts info 3455               # confirms code, category, import line
+  "$PYTHON_BIN" -m ldraw.cli parts search "arch 1 x 6"  # code + category + description
+  "$PYTHON_BIN" -m ldraw.cli parts info 3455            # code, category, import line
   ```
 
-  Always confirm a code with `ldraw parts info` before baking it in.
+  Always confirm a code with `parts info` before baking it in.
 - Lay out coordinates using the conventions in `references/api-cheatsheet.md`:
   LDraw units (LDU), **`-Y` is up**, brick = 24 LDU tall, plate = 8 LDU, stud
   pitch = 20 LDU. Prefer loops and named constants over hand-placed magic
@@ -103,15 +111,15 @@ Write `<slug>.py` (slug = a short kebab-case name from the description, e.g.
 ### 5. Run it
 
 ```bash
-python <slug>.py        # writes <slug>.ldr into the current directory
+"$PYTHON_BIN" <slug>.py        # writes <slug>.ldr into the current directory
 ```
 
 ### 6. Verify
 
 ```bash
-ldraw validate <slug>.ldr                             # unknown parts/colours, syntax
-python "$SKILL_DIR/scripts/check_geometry.py" <slug>.ldr   # duplicate / floating pieces
-python "$SKILL_DIR/scripts/render.py" <slug>.ldr           # front/iso/top PNGs (if a renderer exists)
+"$PYTHON_BIN" -m ldraw.cli validate <slug>.ldr        # unknown parts/colours, syntax
+"$PYTHON_BIN" "$SKILL_DIR/scripts/check_geometry.py" <slug>.ldr  # duplicate / floating pieces
+"$PYTHON_BIN" "$SKILL_DIR/scripts/render.py" <slug>.ldr          # front/iso/top PNGs (if a renderer exists)
 ```
 
 `render.py` writes `<slug>.front.png`, `<slug>.iso.png`, `<slug>.top.png` and
@@ -119,6 +127,12 @@ prints the paths. Before replacing requested views, it moves the existing PNGs
 into a UTC timestamped directory under `previous/` and prints an `ARCHIVED:`
 line for each one. Render history is retained across iterations. **View the new
 images** — do not assume the model is correct.
+
+If a re-render exits 1, check its output for `ARCHIVED:` lines. If any were
+printed, the prior images were moved into `previous/<timestamp>/` before the
+failed render — look there rather than treating the views as lost. If there
+are no `ARCHIVED:` lines (bad arguments, missing model, or no renderer), the
+prior images are untouched in the working directory.
 
 ### 7. Iterate (bounded)
 
@@ -130,7 +144,7 @@ and present the best result even if imperfect (say what's still off).
 ### 8. Present
 
 - Show the renders.
-- Print the bill of materials: `ldraw bom <slug>.ldr`.
+- Print the bill of materials: `"$PYTHON_BIN" -m ldraw.cli bom <slug>.ldr`.
 - Hand over both files: `<slug>.py` (re-runnable, tweak the constants) and
   `<slug>.ldr` (open in any LDraw viewer — LDView, Studio, LeoCAD, Bricklink).
 - In validate-only mode, state clearly that the model was **not** visually
