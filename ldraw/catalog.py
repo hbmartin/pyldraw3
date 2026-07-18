@@ -5,7 +5,7 @@ file in the library for its ``!CATEGORY`` header — tens of thousands of
 file reads for a full LDraw release. This module caches the result in a
 single SQLite file under the configured ``generated_path`` so later runs
 skip that pass entirely. The index is keyed to the MD5 of ``parts.lst``
-plus an aggregate fingerprint of the part trees (so in-place ``.dat``
+plus a per-file metadata fingerprint of the part trees (so in-place ``.dat``
 header edits invalidate it) and is best-effort: any missing, stale,
 corrupt, or version-mismatched index simply falls back to a full build.
 """
@@ -28,9 +28,9 @@ from ldraw.parts import (
 
 logger = logging.getLogger(__name__)
 
-# Version 4: freshness is additionally keyed to an aggregate parts-tree
-# fingerprint (meta key `tree_fingerprint`), so in-place .dat header edits
-# that leave parts.lst byte-identical still invalidate the index.
+# Version 4: freshness is additionally keyed to a per-file parts-tree
+# metadata fingerprint (meta key `tree_fingerprint`), so path, size, or mtime
+# changes that leave parts.lst byte-identical still invalidate the index.
 # (Version 3: entry descriptions stored as written in parts.lst.)
 CATALOG_SCHEMA_VERSION = 4
 
@@ -60,26 +60,29 @@ def parts_lst_md5(parts_lst: Path) -> str:
 
 
 def parts_tree_fingerprint(ldraw_dir: Path) -> str:
-    """Aggregate file-count/size/mtime fingerprint of the parts and p trees.
+    """Hash each file's relative path, size, and mtime in the parts and p trees.
 
     Catches in-place ``.dat`` header edits (``!CATEGORY``/``!KEYWORDS``)
     that leave ``parts.lst`` byte-identical. A stat-only pass — no file
     contents are read.
     """
-    count = 0
-    total_size = 0
-    newest_mtime_ns = 0
+    digest = hashlib.sha256()
     for sub in ("parts", "p"):
         root = ldraw_dir / sub
         if not root.is_dir():
             continue
-        for dirpath, _dirnames, filenames in root.walk():
-            for filename in filenames:
-                stat_result = (dirpath / filename).stat()
-                count += 1
-                total_size += stat_result.st_size
-                newest_mtime_ns = max(newest_mtime_ns, stat_result.st_mtime_ns)
-    return f"{count}:{total_size}:{newest_mtime_ns}"
+        for dirpath, dirnames, filenames in root.walk():
+            dirnames.sort()
+            for filename in sorted(filenames):
+                path = dirpath / filename
+                stat_result = path.stat()
+                relative_path = path.relative_to(ldraw_dir).as_posix()
+                metadata = (
+                    f"{relative_path}\0{stat_result.st_size}\0"
+                    f"{stat_result.st_mtime_ns}\n"
+                )
+                digest.update(metadata.encode())
+    return digest.hexdigest()
 
 
 def _stored_path(part: Part | None, library_root: Path) -> str | None:
@@ -165,7 +168,11 @@ def load_catalog(
     """
     if not db_path.is_file():
         return None
-    rows = _read_index_rows(db_path, md5, tree_fingerprint)
+    rows = _read_index_rows(
+        db_path=db_path,
+        md5=md5,
+        tree_fingerprint=tree_fingerprint,
+    )
     if rows is None:
         return None
     catalog = PartsCatalog()

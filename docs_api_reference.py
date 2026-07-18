@@ -113,4 +113,7 @@ def define_env(env: MacroEnvironment) -> None:
     def public_api_reference(package_name: str = "ldraw") -> str:
         """Return generated public API reference directives."""
         supplemental = SUPPLEMENTAL_API if package_name == "ldraw" else ()
-        return _reference_markdown(package_name, supplemental)
+        return _reference_markdown(
+            package_name=package_name,
+            supplemental=supplemental,
+        )

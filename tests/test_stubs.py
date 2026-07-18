@@ -58,7 +58,7 @@ def test_write_stub_package_requires_generated_library(tmp_path: Path) -> None:
 
 
 def test_write_stub_package_removes_stale_stubs(
-    generated_library,
+    generated_library: str,
     tmp_path: Path,
 ) -> None:
     out_dir = tmp_path / "project"

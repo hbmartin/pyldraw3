@@ -113,6 +113,21 @@ def test_download_explicit_version(
     config.write.assert_called_once()
 
 
+@patch("ldraw.cli.Config")
+@patch("ldraw.cli.do_download", return_value="2018-02")
+def test_download_config_write_failure_returns_one(
+    do_download_mock: MagicMock,
+    config_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_mock.load.return_value.write.side_effect = OSError("read-only")
+
+    assert main(["download", "--version", "2018-02", "--yes"]) == 1
+
+    do_download_mock.assert_called_once()
+    assert "Could not update configuration: read-only" in capsys.readouterr().err
+
+
 @patch("ldraw.cli._confirm", return_value=False)
 @patch("ldraw.cli.do_download")
 def test_download_declined(

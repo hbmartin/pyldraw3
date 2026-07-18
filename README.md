@@ -330,7 +330,7 @@ uv run ldraw generate --yes
 ```bash
 # Run tests
 uv run pytest                 # All tests
-uv run pytest --cov=ldraw     # With coverage
+uv run pytest --cov=ldraw     # With coverage (97% regression gate)
 uv run pytest --integration   # Integration tests only
 
 # Code formatting and linting

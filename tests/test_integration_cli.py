@@ -18,7 +18,7 @@ NETWORK_ERROR_MARKERS = (
 
 
 @pytest.mark.integration
-def test_cli_download_command():
+def test_cli_download_command() -> None:
     """Test CLI download command."""
     # Test help
     result = subprocess.run(
@@ -32,7 +32,7 @@ def test_cli_download_command():
 
 
 @pytest.mark.integration
-def test_cli_generate_command():
+def test_cli_generate_command() -> None:
     """Test CLI generate command."""
     # Test help
     result = subprocess.run(
@@ -60,7 +60,7 @@ def test_cli_new_command_help(command: str) -> None:
 
 
 @pytest.mark.integration
-def test_cli_config_command():
+def test_cli_config_command() -> None:
     """Test CLI config command."""
     result = subprocess.run(
         ["uv", "run", "ldraw", "config"],
@@ -74,7 +74,7 @@ def test_cli_config_command():
 
 
 @pytest.mark.integration
-def test_cli_version_command():
+def test_cli_version_command() -> None:
     """Test CLI version command."""
     result = subprocess.run(
         ["uv", "run", "ldraw", "version"],
@@ -88,7 +88,7 @@ def test_cli_version_command():
 
 
 @pytest.mark.integration
-def test_cli_main_help():
+def test_cli_main_help() -> None:
     """Test main CLI help."""
     result = subprocess.run(
         ["uv", "run", "ldraw", "--help"],
@@ -102,7 +102,7 @@ def test_cli_main_help():
 
 
 @pytest.mark.integration
-def test_cli_no_args():
+def test_cli_no_args() -> None:
     """Test CLI with no arguments prints help and exits cleanly."""
     result = subprocess.run(
         ["uv", "run", "ldraw"],
@@ -127,6 +127,7 @@ def test_cli_full_workflow(tmp_path: Path) -> None:
     """
     env = {
         **os.environ,
+        "HOME": str(tmp_path / "home"),
         "XDG_CACHE_HOME": str(tmp_path / "cache"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),

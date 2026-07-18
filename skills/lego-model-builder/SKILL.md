@@ -49,10 +49,12 @@ each for `pyldraw3:`, `library:`, and `renderer:`. It will, only as needed:
   fallbacks, so the generated model programs and the `ldraw` CLI share one
   environment.
 - Download + generate the parts library if missing —
-  `ldraw download --yes` then `ldraw generate --yes`. This fetches the
-  `complete` release (~80 MB) and is **slow on first run**; tell the user it's
-  a one-time setup. To trade coverage for speed the user may instead pin a
-  smaller release, e.g. `ldraw download --version 2018-02 --yes`.
+  `"$PYTHON_BIN" -m ldraw.cli download --yes` then
+  `"$PYTHON_BIN" -m ldraw.cli generate --yes`. This fetches the `complete`
+  release (~80 MB) and is **slow on first run**; tell the user it's a one-time
+  setup. To trade coverage for speed the user may instead pin a smaller
+  release, e.g.
+  `"$PYTHON_BIN" -m ldraw.cli download --version 2018-02 --yes`.
 - Detect a renderer on `PATH` in order `ldview` → `leocad`, and try to install
   one if neither is found (Linux: `leocad` + `xvfb` via apt; macOS: detects
   existing LDView.app/LeoCAD.app bundles and prints how to put them on `PATH` —

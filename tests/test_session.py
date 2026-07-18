@@ -204,9 +204,11 @@ def test_rebuild_index_replaces_catalog_atomically(
 
     assert session.rebuild_index(force=False).get_entry_by_code("3001") is not None
 
-    assert observed_db_names == ["catalog.sqlite.tmp"]
+    assert len(observed_db_names) == 1
+    assert observed_db_names[0].startswith(".catalog.sqlite.")
+    assert observed_db_names[0].endswith(".tmp")
     assert catalog_db.read_text() == "new catalog"
-    assert not catalog_db.with_name("catalog.sqlite.tmp").exists()
+    assert list(generated_path.glob(".catalog.sqlite.*.tmp")) == []
 
 
 def test_session_state_reads_catalog_with_file_uri(

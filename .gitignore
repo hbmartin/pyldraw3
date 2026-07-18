@@ -21,3 +21,4 @@ triage_decisions.db
 reviews_triage/
 .hypothesis/
 ldraw-stubs/
+.claude/settings.local.json

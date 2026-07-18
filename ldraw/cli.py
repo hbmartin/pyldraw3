@@ -194,7 +194,11 @@ def download_command(*, version: str, yes: bool) -> int:
 
     config = Config.load()
     config.ldraw_library_path = str(cache_ldraw / version)
-    config.write()
+    try:
+        config.write()
+    except OSError as exc:
+        print(f"Could not update configuration: {exc}", file=sys.stderr)
+        return 1
 
     print(f"Downloaded LDraw library release {release_id}.", file=sys.stderr)
     print(

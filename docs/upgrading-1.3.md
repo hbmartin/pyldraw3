@@ -258,7 +258,9 @@ Behavior changes you might notice:
 - The legacy `load_module`, `find_module`, and `get_code` members are
   gone. If you called `load_module` directly, use a normal `import` or
   `ldraw.imports.load_lib(generated_path, fullname)`.
-- `set_config` / `clean` are thread-safe (guarded by a class-level lock).
+- `set_config` / `clean` are thread-safe. Reconfiguration now waits for
+  in-flight generated-module imports to finish before evicting them, rather
+  than deleting their `sys.modules` entries during execution.
 
 ## Parts loading: resilient instead of brittle
 
@@ -288,9 +290,11 @@ Also in this area:
 The catalog index and the generated library were keyed only to the MD5 of
 `parts.lst` (plus LDConfig), so editing a part file's `!CATEGORY` or
 `!KEYWORDS` header in place left both serving stale data forever. Both
-fingerprints now include an aggregate stat fingerprint (count / total
-size / newest mtime) of the `parts/` and `p/` trees. Schema versions
-bumped accordingly (catalog v4, generation v3); the first run after
+fingerprints now hash every file's relative path, size, and nanosecond mtime
+under the `parts/` and `p/` trees. Unlike the earlier aggregate
+count/total-size/newest-mtime scheme, renames and offsetting metadata changes
+cannot collide. Schema versions remain catalog v4 and generation v3; an older
+aggregate fingerprint mismatches automatically, so the first run after
 upgrading rebuilds both.
 
 Generated modules are also **compile-checked before the generation is
@@ -300,7 +304,9 @@ interpretation, and a pathological description can no longer produce an
 unimportable module (invalid identifiers are skipped with a warning;
 digit-leading ones get a `P` prefix). Generated `Colour` objects now carry
 the LDConfig name (`ColoursByName["Two-tone"].name == "Two-tone"`), not
-the sanitized identifier.
+the sanitized identifier. Distinct colour names that sanitize to the same
+Python symbol now receive colour-code suffixes, so their `ColoursByCode` and
+`ColoursByName` entries cannot silently reference the last assignment.
 
 `ldraw stubs` clears the previous `ldraw-stubs` output before writing, so
 stale `.pyi` files no longer advertise symbols that are gone.
@@ -316,10 +322,16 @@ stale `.pyi` files no longer advertise symbols that are gone.
   traceback, and an unwritable output directory actually produces the
   friendly `UnwritableOutputError` message (the handler existed; the
   exception was never raised).
-- A malformed `config.yml` (bad YAML, a list instead of a mapping, a
-  non-string value, a directory at the path) raises `ConfigLoadError`
-  with the path and reason — previously every CLI command crashed with a
-  raw traceback. `Config.write` is atomic (temp file + rename).
+- A malformed `config.yml` (bad YAML, a list instead of a mapping, a falsey
+  scalar, a non-string value, or a directory at the path) raises
+  `ConfigLoadError` with the path and reason — previously every CLI command
+  crashed with a raw traceback or silently treated falsey non-mappings as an
+  empty config. `Config.write` uses a unique sibling temporary file and atomic
+  rename, so concurrent writers do not share `config.yml.tmp`; failed writes
+  clean up their temporary files.
+- If a download succeeds but persisting its selected library path fails, the
+  CLI now prints `Could not update configuration: ...` and exits 1 instead of
+  showing a traceback.
 - Importing `ldraw` no longer creates config/cache directories on disk;
   directories are created when first needed, so the import works in
   read-only environments.
@@ -327,13 +339,22 @@ stale `.pyi` files no longer advertise symbols that are gone.
   hangs `ldraw download` or `ensure_library` forever. Interrupted
   downloads clean up their `.part` file.
 - Dashed release ids (`2024-01`) are preserved in full when recording the
-  downloaded complete-library release (previously truncated to `01`).
+  downloaded complete-library release (previously truncated to `01`), and the
+  parser now requires the ID to be its own dashed segment instead of accepting
+  a malformed suffix such as `zipfoo2024-01`.
 - A cached `complete.zip` (only ever left behind by a failed unpack) is
   discarded instead of reused — the complete release is a moving target.
   Versioned archives still cache (their tags are immutable).
+- Archive-wrapper entries are checked for case-insensitive collisions before
+  anything is hoisted. An archive containing both `LDRAW` and `ldraw` now fails
+  without deleting either tree.
 - `ensure_library` wraps *all* download failures (including
   `CouldNotDetermineLatestVersionError` and `OSError`) in the documented
   `RuntimeError`.
+
+`LDrawSession.rebuild_index()` uses the same unique-temporary-file rule for
+`catalog.sqlite`, preventing concurrent rebuilds from replacing or unlinking
+one another's work.
 
 ## Minifigure defaults that exist everywhere
 
@@ -341,7 +362,7 @@ stale `.pyi` files no longer advertise symbols that are gone.
 variants that only exist in libraries from 2019 onwards. The defaults are
 now the plain codes `3815` / `3816` / `3817`, which resolve in every
 library vintage (modern libraries keep them as moved-to aliases). The
-default head is a plain `3626b` instead of a Star Wars patterned head
+default head is a plain `3626b` instead of a Star Wars-patterned head
 (`HeadWithSwSmirkAndBrownEyebrowsPattern` remains available as an explicit
 constant), and the default hat is an actual hat (`3624`, police hat)
 instead of hair — `3901` is `Minifig Hair Male`.

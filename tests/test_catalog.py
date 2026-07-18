@@ -16,9 +16,11 @@ from ldraw.catalog import (
 )
 from ldraw.parts import CatalogEntry, PartCategory, Parts, PartsCatalog
 
-PARTS_LST = Path(__file__).resolve().parent / "test_ldraw2" / "ldraw" / "parts.lst"
-LIBRARY_ROOT = PARTS_LST.parent
-TREE = parts_tree_fingerprint(LIBRARY_ROOT)
+PARTS_LST: Path = (
+    Path(__file__).resolve().parent / "test_ldraw2" / "ldraw" / "parts.lst"
+)
+LIBRARY_ROOT: Path = PARTS_LST.parent
+TREE: str = parts_tree_fingerprint(LIBRARY_ROOT)
 
 
 @pytest.fixture
@@ -26,7 +28,7 @@ def slow_catalog() -> PartsCatalog:
     return Parts(PARTS_LST).catalog
 
 
-def entry_key(entry: CatalogEntry) -> tuple:
+def entry_key(entry: CatalogEntry) -> tuple[object, ...]:
     return (
         entry.code,
         entry.description,
@@ -304,14 +306,16 @@ def test_catalog_db_path() -> None:
     assert catalog_db_path("/gen") == Path("/gen/catalog.sqlite")
 
 
-def test_lazy_categorization_only_runs_on_catalog_access(monkeypatch) -> None:
+def test_lazy_categorization_only_runs_on_catalog_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     parts = Parts(PARTS_LST)
     assert parts.by_code  # parts.lst pass already done
 
     calls = {"count": 0}
     original = Parts._categorize_parts  # noqa: SLF001
 
-    def counting(self) -> None:
+    def counting(self: Parts) -> None:
         calls["count"] += 1
         original(self)
 
@@ -324,7 +328,10 @@ def test_lazy_categorization_only_runs_on_catalog_access(monkeypatch) -> None:
     assert calls["count"] == 1  # first catalog access, exactly once
 
 
-def test_stale_tree_fingerprint_returns_none(tmp_path, slow_catalog) -> None:
+def test_stale_tree_fingerprint_returns_none(
+    tmp_path: Path,
+    slow_catalog: PartsCatalog,
+) -> None:
     db_path = tmp_path / "catalog.sqlite"
     md5 = parts_lst_md5(PARTS_LST)
     save_catalog(
@@ -346,7 +353,10 @@ def test_stale_tree_fingerprint_returns_none(tmp_path, slow_catalog) -> None:
     )
 
 
-def test_dat_header_edit_invalidates_index(tmp_path, monkeypatch) -> None:
+def test_dat_header_edit_invalidates_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import shutil
 
     library = tmp_path / "ldraw"
@@ -362,7 +372,7 @@ def test_dat_header_edit_invalidates_index(tmp_path, monkeypatch) -> None:
     calls = {"count": 0}
     original = Parts._categorize_parts  # noqa: SLF001
 
-    def counting(self) -> None:
+    def counting(self: Parts) -> None:
         calls["count"] += 1
         original(self)
 
@@ -373,11 +383,26 @@ def test_dat_header_edit_invalidates_index(tmp_path, monkeypatch) -> None:
     assert calls["count"] == 1
 
 
-def test_fresh_index_load_is_memoized(tmp_path, monkeypatch) -> None:
+def test_tree_fingerprint_includes_relative_paths(tmp_path: Path) -> None:
+    parts_dir = tmp_path / "parts"
+    parts_dir.mkdir()
+    original = parts_dir / "3001.dat"
+    original.write_text("0 Brick 2 x 4\n")
+    before = parts_tree_fingerprint(tmp_path)
+
+    original.rename(parts_dir / "renamed.dat")
+
+    assert parts_tree_fingerprint(tmp_path) != before
+
+
+def test_fresh_index_load_is_memoized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     Parts.clear_cache()
     load_parts(PARTS_LST, tmp_path, build_index=True)
 
-    def boom(self) -> None:
+    def boom(self: Parts) -> None:
         message = "categorization must not run on the fast path"
         raise AssertionError(message)
 

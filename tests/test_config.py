@@ -69,6 +69,18 @@ def test_config_load_rejects_yaml_list(tmp_path: Path) -> None:
     assert str(config_path) in str(exc.value)
 
 
+@pytest.mark.parametrize("value", [[], 0, False, ""])
+def test_config_load_rejects_falsey_non_mapping(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ConfigLoadError, match=r"expected a mapping"):
+        Config.load(config_path)
+
+
 def test_config_load_rejects_malformed_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yml"
     config_path.write_text("{unclosed")
@@ -97,19 +109,52 @@ def test_config_load_missing_file_returns_defaults(tmp_path: Path) -> None:
     assert config.generated_path
 
 
-def test_config_write_is_atomic_and_creates_parent(tmp_path: Path) -> None:
+def test_config_write_is_atomic_and_creates_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config_path = tmp_path / "nested" / "config.yml"
     original = Config(
         ldraw_library_path="/library/path",
         generated_path="/generated/path",
     )
+    temp_names: list[str] = []
+    original_replace = Path.replace
 
+    def recording_replace(self: Path, target: Path) -> Path:
+        temp_names.append(self.name)
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    original.write(config_path)
     original.write(config_path)
 
     loaded = Config.load(config_path)
     assert loaded.ldraw_library_path == "/library/path"
     assert loaded.generated_path == "/generated/path"
-    assert not config_path.with_name("config.yml.tmp").exists()
+    assert len(temp_names) == 2
+    assert len(set(temp_names)) == 2
+    assert all(name.startswith(".config.yml.") for name in temp_names)
+    assert list(config_path.parent.glob(".config.yml.*.tmp")) == []
+
+
+def test_config_write_cleans_unique_temp_after_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.yml"
+
+    def denied_replace(self: Path, target: Path) -> Path:
+        message = f"cannot replace {target} with {self}"
+        raise OSError(message)
+
+    monkeypatch.setattr(Path, "replace", denied_replace)
+
+    with pytest.raises(OSError, match="cannot replace"):
+        Config().write(config_path)
+
+    assert list(tmp_path.glob(".config.yml.*.tmp")) == []
 
 
 def test_config_write_load_round_trip(tmp_path: Path) -> None:

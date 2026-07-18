@@ -31,13 +31,13 @@ def validate(tmp_path: Path, text: str, parts: Parts | None) -> list[ValidationI
     return list(iter_ldr_issues(file, parts))
 
 
-def test_clean_file_has_no_issues(tmp_path, parts) -> None:
+def test_clean_file_has_no_issues(tmp_path: Path, parts: Parts) -> None:
     text = f"0 Model\n1 4 0 0 0 {IDENTITY} 3001.dat\n"
 
     assert validate(tmp_path, text, parts) == []
 
 
-def test_unknown_colour_code_is_an_error(tmp_path, parts) -> None:
+def test_unknown_colour_code_is_an_error(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, f"1 999 0 0 0 {IDENTITY} 3001.dat\n", parts)
 
     assert issues == [
@@ -46,7 +46,10 @@ def test_unknown_colour_code_is_an_error(tmp_path, parts) -> None:
     assert issues[0].severity is Severity.ERROR
 
 
-def test_unknown_colour_checked_on_geometry_lines(tmp_path, parts) -> None:
+def test_unknown_colour_checked_on_geometry_lines(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     issues = validate(tmp_path, "2 999 0 0 0 1 1 1\n", parts)
 
     assert issues == [
@@ -54,7 +57,10 @@ def test_unknown_colour_checked_on_geometry_lines(tmp_path, parts) -> None:
     ]
 
 
-def test_legacy_dithered_colour_is_a_warning(tmp_path, parts) -> None:
+def test_legacy_dithered_colour_is_a_warning(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     issues = validate(tmp_path, f"1 256 0 0 0 {IDENTITY} 3001.dat\n", parts)
 
     assert issues == [
@@ -66,7 +72,9 @@ def test_legacy_dithered_colour_is_a_warning(tmp_path, parts) -> None:
     ]
 
 
-def test_garbage_colour_token_is_an_error_even_without_library(tmp_path) -> None:
+def test_garbage_colour_token_is_an_error_even_without_library(
+    tmp_path: Path,
+) -> None:
     issues = validate(tmp_path, f"1 abc 0 0 0 {IDENTITY} 3001.dat\n", None)
 
     assert issues == [
@@ -75,7 +83,7 @@ def test_garbage_colour_token_is_an_error_even_without_library(tmp_path) -> None
     assert issues[0].severity is Severity.ERROR
 
 
-def test_malformed_direct_colour_is_reported_not_crashed(tmp_path) -> None:
+def test_malformed_direct_colour_is_reported_not_crashed(tmp_path: Path) -> None:
     issues = validate(tmp_path, f"1 0x2GGHHII 0 0 0 {IDENTITY} 3001.dat\n", None)
 
     assert len(issues) == 1
@@ -83,19 +91,22 @@ def test_malformed_direct_colour_is_reported_not_crashed(tmp_path) -> None:
     assert "Invalid colour value" in issues[0].message
 
 
-def test_valid_direct_colour_is_clean(tmp_path, parts) -> None:
+def test_valid_direct_colour_is_clean(tmp_path: Path, parts: Parts) -> None:
     assert validate(tmp_path, f"1 0x2FF0000 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
 
 
-def test_decimal_direct_colour_is_clean(tmp_path, parts) -> None:
+def test_decimal_direct_colour_is_clean(tmp_path: Path, parts: Parts) -> None:
     assert validate(tmp_path, f"1 50266112 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
 
 
-def test_uppercase_direct_colour_prefix_is_clean(tmp_path, parts) -> None:
+def test_uppercase_direct_colour_prefix_is_clean(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     assert validate(tmp_path, f"1 0X2FF0000 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
 
 
-def test_short_direct_colour_is_an_error(tmp_path, parts) -> None:
+def test_short_direct_colour_is_an_error(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, f"1 0x2FFF 0 0 0 {IDENTITY} 3001.dat\n", parts)
 
     assert len(issues) == 1
@@ -103,7 +114,7 @@ def test_short_direct_colour_is_an_error(tmp_path, parts) -> None:
     assert "Invalid colour value '0x2FFF'" in issues[0].message
 
 
-def test_catalogued_dithered_range_colour_does_not_warn(tmp_path) -> None:
+def test_catalogued_dithered_range_colour_does_not_warn(tmp_path: Path) -> None:
     ldraw_dir = tmp_path / "lib" / "ldraw"
     parts_dir = ldraw_dir / "parts"
     parts_dir.mkdir(parents=True)
@@ -118,11 +129,11 @@ def test_catalogued_dithered_range_colour_does_not_warn(tmp_path) -> None:
     assert validate(tmp_path, text, catalogued_parts) == []
 
 
-def test_colour_codes_skipped_without_library(tmp_path) -> None:
+def test_colour_codes_skipped_without_library(tmp_path: Path) -> None:
     assert validate(tmp_path, "2 999 0 0 0 1 1 1\n", None) == []
 
 
-def test_colour_codes_skipped_when_ldconfig_missing(tmp_path) -> None:
+def test_colour_codes_skipped_when_ldconfig_missing(tmp_path: Path) -> None:
     ldraw_dir = tmp_path / "lib" / "ldraw"
     parts_dir = ldraw_dir / "parts"
     parts_dir.mkdir(parents=True)
@@ -134,7 +145,7 @@ def test_colour_codes_skipped_when_ldconfig_missing(tmp_path) -> None:
     assert validate(tmp_path, text, bare_parts) == []
 
 
-def test_singular_matrix_is_a_warning(tmp_path, parts) -> None:
+def test_singular_matrix_is_a_warning(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, f"1 4 0 0 0 {SINGULAR} 3001.dat\n", parts)
 
     assert issues == [
@@ -146,7 +157,7 @@ def test_singular_matrix_is_a_warning(tmp_path, parts) -> None:
     ]
 
 
-def test_scaled_matrix_is_a_warning(tmp_path, parts) -> None:
+def test_scaled_matrix_is_a_warning(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, f"1 4 0 0 0 {SCALED} 3001.dat\n", parts)
 
     assert issues == [
@@ -160,11 +171,11 @@ def test_scaled_matrix_is_a_warning(tmp_path, parts) -> None:
     ]
 
 
-def test_rotated_matrix_is_clean(tmp_path, parts) -> None:
+def test_rotated_matrix_is_clean(tmp_path: Path, parts: Parts) -> None:
     assert validate(tmp_path, f"1 4 0 0 0 {ROTATED_90_Y} 3001.dat\n", parts) == []
 
 
-def test_unknown_bang_meta_is_a_warning(tmp_path, parts) -> None:
+def test_unknown_bang_meta_is_a_warning(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, "0 !FOOBAR something\n", parts)
 
     assert issues == [
@@ -177,23 +188,26 @@ def test_unknown_bang_meta_is_a_warning(tmp_path, parts) -> None:
 
 
 @pytest.mark.parametrize("meta", sorted(KNOWN_META_COMMANDS))
-def test_known_bang_metas_are_clean(tmp_path, meta) -> None:
+def test_known_bang_metas_are_clean(tmp_path: Path, meta: str) -> None:
     assert validate(tmp_path, f"0 !{meta} something\n", None) == []
 
 
-def test_plain_comments_and_commands_are_never_flagged(tmp_path, parts) -> None:
+def test_plain_comments_and_commands_are_never_flagged(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     text = "0 STEP\n0 BFC CERTIFY CCW\n0 WRITE hello\n0 just some prose\n"
 
     assert validate(tmp_path, text, parts) == []
 
 
-def test_blank_lines_are_ignored(tmp_path, parts) -> None:
+def test_blank_lines_are_ignored(tmp_path: Path, parts: Parts) -> None:
     text = f"0 Model\n\n1 4 0 0 0 {IDENTITY} 3001.dat\n\n"
 
     assert validate(tmp_path, text, parts) == []
 
 
-def test_malformed_line_is_an_error(tmp_path) -> None:
+def test_malformed_line_is_an_error(tmp_path: Path) -> None:
     issues = validate(tmp_path, "9 16 0 0 0\n", None)
 
     assert issues == [
@@ -201,7 +215,7 @@ def test_malformed_line_is_an_error(tmp_path) -> None:
     ]
 
 
-def test_unknown_part_reference_is_an_error(tmp_path, parts) -> None:
+def test_unknown_part_reference_is_an_error(tmp_path: Path, parts: Parts) -> None:
     issues = validate(tmp_path, f"1 4 0 0 0 {IDENTITY} 9999.dat\n", parts)
 
     assert issues == [
@@ -209,7 +223,10 @@ def test_unknown_part_reference_is_an_error(tmp_path, parts) -> None:
     ]
 
 
-def test_own_submodel_references_are_not_unknown_parts(tmp_path, parts) -> None:
+def test_own_submodel_references_are_not_unknown_parts(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     text = (
         "0 FILE main.ldr\n"
         f"1 16 0 0 0 {IDENTITY} BODY.LDR\n"
@@ -222,7 +239,10 @@ def test_own_submodel_references_are_not_unknown_parts(tmp_path, parts) -> None:
     assert validate(tmp_path, text, parts) == []
 
 
-def test_one_line_can_produce_multiple_issues(tmp_path, parts) -> None:
+def test_one_line_can_produce_multiple_issues(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
     issues = validate(tmp_path, f"1 999 0 0 0 {SCALED} 9999.dat\n", parts)
 
     messages = [issue.message for issue in issues]
