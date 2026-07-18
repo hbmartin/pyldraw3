@@ -13,9 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 from ldraw.config import Config
-from ldraw.errors import CouldNotFindModuleError, CouldNotLoadSpecError
+from ldraw.errors import (
+    CouldNotFindModuleError,
+    CouldNotLoadSpecError,
+    StaleModuleSpecError,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import ModuleType
 
 VIRTUAL_MODULE = "ldraw.library"
@@ -28,8 +33,22 @@ _STATE_LOCK = threading.RLock()
 class _StateLockedSourceFileLoader(importlib.machinery.SourceFileLoader):
     """Serialize generated-module execution against importer reconfiguration."""
 
+    def __init__(
+        self,
+        fullname: str,
+        path: str,
+        *,
+        config_generation: int,
+        generation_getter: Callable[[], int],
+    ) -> None:
+        super().__init__(fullname, path)
+        self._config_generation = config_generation
+        self._generation_getter = generation_getter
+
     def exec_module(self, module: ModuleType) -> None:
         with _STATE_LOCK:
+            if self._config_generation != self._generation_getter():
+                raise StaleModuleSpecError(self.name)
             super().exec_module(module)
 
 
@@ -73,9 +92,10 @@ def load_lib(library_path: str | Path, fullname: str) -> ModuleType:
 class LibraryImporter:
     """Import hook added to sys.meta_path."""
 
-    # Written by set_config (last caller wins) and read without the lock in
-    # find_spec — a benign racy read of a single reference.
+    # Written by set_config (last caller wins) and read with its generation in
+    # _config_snapshot so loaders can reject specs invalidated by clean().
     _default_config: ClassVar[Config | None] = None
+    _config_generation: ClassVar[int] = 0
     # Shared with generated-module loaders so reconfiguration cannot evict a
     # module while its code is executing.
     _state_lock: ClassVar[threading.RLock] = _STATE_LOCK
@@ -94,9 +114,19 @@ class LibraryImporter:
     @classmethod
     def set_config(cls, config: Config) -> None:
         """Set the default configuration and clean cached modules."""
-        with cls._state_lock:
-            cls._default_config = config
-        cls.clean()
+        cls.clean(config=config)
+
+    def _config_snapshot(self) -> tuple[Config, int]:
+        """Return one configuration and cache generation snapshot."""
+        with self._state_lock:
+            config = self.config or self._default_config
+            generation = self._config_generation
+        return (config or Config.load()), generation
+
+    @classmethod
+    def _current_config_generation(cls) -> int:
+        """Return the current cache generation while the caller holds the lock."""
+        return cls._config_generation
 
     def find_spec(
         self,
@@ -119,7 +149,7 @@ class LibraryImporter:
         """
         if not self.valid_module(fullname):
             return None
-        config = self.config or self._default_config or Config.load()
+        config, config_generation = self._config_snapshot()
         library_root = Path(config.generated_path)
         if not (library_root / "library" / "__init__.py").is_file():
             return None
@@ -131,7 +161,12 @@ class LibraryImporter:
         else:
             raise CouldNotFindModuleError(fullname, str(init_path), str(py_path))
         logger.debug("loading %s from %s", fullname, config.generated_path)
-        loader = _StateLockedSourceFileLoader(fullname, str(module_path))
+        loader = _StateLockedSourceFileLoader(
+            fullname,
+            str(module_path),
+            config_generation=config_generation,
+            generation_getter=self._current_config_generation,
+        )
         spec = importlib.util.spec_from_file_location(
             fullname,
             module_path,
@@ -142,9 +177,12 @@ class LibraryImporter:
         return spec
 
     @classmethod
-    def clean(cls) -> None:
-        """Clean cached library modules after any in-flight imports finish."""
+    def clean(cls, *, config: Config | None = None) -> None:
+        """Install an optional config and clean cached generated modules."""
         with cls._state_lock:
+            if config is not None:
+                cls._default_config = config
+            cls._config_generation += 1
             initializing: list[str] = []
             for fullname, module in list(sys.modules.items()):
                 if not cls.valid_module(fullname):

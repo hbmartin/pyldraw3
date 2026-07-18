@@ -260,7 +260,9 @@ Behavior changes you might notice:
   `ldraw.imports.load_lib(generated_path, fullname)`.
 - `set_config` / `clean` are thread-safe. Reconfiguration now waits for
   in-flight generated-module imports to finish before evicting them, rather
-  than deleting their `sys.modules` entries during execution.
+  than deleting their `sys.modules` entries during execution. A spec resolved
+  before reconfiguration but not yet executing is rejected with
+  `StaleModuleSpecError`; retry that import against the new configuration.
 
 ## Parts loading: resilient instead of brittle
 
