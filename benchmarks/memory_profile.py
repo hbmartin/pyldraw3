@@ -6,7 +6,9 @@ from ldraw.geometry import Identity, Vector, YAxis
 from ldraw.parts import Parts
 from ldraw.pieces import Piece
 
-PARTS_LST = Path("tests/test_ldraw/ldraw/parts.lst")
+PARTS_LST = (
+    Path(__file__).resolve().parents[1] / "tests" / "test_ldraw" / "ldraw" / "parts.lst"
+)
 
 
 @profile

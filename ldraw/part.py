@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from ldraw.colour import Colour
 from ldraw.errors import (
+    EmptyPartFileError,
+    InvalidColourValueError,
     InvalidLineDataError,
     InvalidNumericValueError,
     PartError,
@@ -30,21 +33,35 @@ ParsedObject = (
 LineHandler = Callable[[list[str]], ParsedObject]
 
 
-def colour_from_str(colour_str: str) -> Colour | int | None:
-    """Get a colour code or direct colour from a string."""
+_DIRECT_COLOUR_HIGH_BYTE = 0x2
+_DIRECT_COLOUR_HEX_RE = re.compile(r"[0-9A-Fa-f]{6}")
+
+
+def colour_from_str(colour_str: str) -> Colour | int:
+    """Parse an LDraw colour field into a code or a direct colour.
+
+    Accepts integer colour codes, ``0x2RRGGBB`` direct colours (prefix
+    case-insensitive), and the same direct colours written as decimal
+    integers. Raises ``InvalidColourValueError`` for anything else.
+    """
     try:
-        return int(colour_str)
+        code = int(colour_str)
     except ValueError:
-        if colour_str.startswith("0x2"):
-            return Colour(rgb=f"#{colour_str[3:]}", alpha=255)
-    return None
+        pass
+    else:
+        if code >> 24 == _DIRECT_COLOUR_HIGH_BYTE:
+            return Colour(rgb=f"#{code & 0xFF_FF_FF:06X}", alpha=255)
+        return code
+    if colour_str[:3].casefold() == "0x2" and _DIRECT_COLOUR_HEX_RE.fullmatch(
+        colour_str[3:],
+    ):
+        return Colour(rgb=f"#{colour_str[3:]}", alpha=255)
+    raise InvalidColourValueError(colour_str)
 
 
 def _colour(pieces: list[str]) -> Colour:
     value = colour_from_str(pieces[0])
-    if isinstance(value, Colour):
-        return value
-    return Colour(value)
+    return value if isinstance(value, Colour) else Colour(code=value)
 
 
 def _comment_or_meta(pieces: list[str]) -> Comment | MetaCommand:
@@ -166,7 +183,7 @@ class Part:
     @property
     def lines(self) -> Iterator[str]:
         """Yield lines from the part file."""
-        with self.path.open("r", encoding="utf-8") as file:
+        with self.path.open("r", encoding="utf-8-sig") as file:
             yield from file
 
     @property
@@ -176,8 +193,8 @@ class Part:
             try:
                 parsed = parse_ldraw_line(line)
             except PartError as parse_error:
-                message = f"{parse_error.message} in {self.path} at line {number}"
-                raise PartError(message) from parse_error
+                parse_error.add_context(source=str(self.path), line_number=number)
+                raise
             if parsed is not None:
                 yield parsed
 
@@ -185,7 +202,9 @@ class Part:
     def description(self) -> str:
         """Get the description of the part from the first line of the file."""
         if self._description is None:
-            self._description = " ".join(next(self.lines).split()[1:])
+            if (first_line := next(self.lines, None)) is None:
+                raise EmptyPartFileError(str(self.path))
+            self._description = " ".join(first_line.split()[1:])
         return self._description
 
     def _parse_header(self) -> tuple[str, ...]:

@@ -1,6 +1,6 @@
 """Tests for utility functions."""
 
-from ldraw.utils import clean, split_reference
+from ldraw.utils import clean, safe_identifier, split_reference
 
 
 def test_split_reference_preserves_case() -> None:
@@ -17,3 +17,10 @@ def test_clean() -> None:
     assert clean("Brick 1x   3") == "Brick_1x_3"
 
     assert clean("Brick%%%%1") == "Brick_1"
+
+
+def test_safe_identifier() -> None:
+    assert safe_identifier("Brick2X4") == "Brick2X4"
+    assert safe_identifier("2X2Brick") == "P2X2Brick"
+    assert safe_identifier("None") == "None_"
+    assert safe_identifier("") is None

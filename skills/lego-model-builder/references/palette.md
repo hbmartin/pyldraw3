@@ -71,15 +71,19 @@ Dimensions reminder: brick = 24 LDU tall, plate = 8 LDU, stud pitch = 20 LDU,
 
 ## Slopes — confirm import name via `parts info`
 
+Variant-suffixed codes (`3040b`, `3665a`, `4032a`, `3794b`) are the 2018-02
+catalog names; newer releases may alias the bare code — `parts info` confirms
+either way.
+
 | Code | Part |
 |------|------|
-| 3040 | Slope 45° 2 × 1 |
+| 3040b | Slope 45° 2 × 1 |
 | 3039 | Slope 45° 2 × 2 |
 | 3038 | Slope 45° 2 × 3 |
 | 3037 | Slope 45° 2 × 4 |
 | 4286 | Slope 33° 3 × 1 |
 | 3298 | Slope 33° 3 × 2 |
-| 3665 | Slope Inverted 45° 2 × 1 |
+| 3665a | Slope Inverted 45° 2 × 1 |
 | 3660 | Slope Inverted 45° 2 × 2 |
 
 ## Round bricks & plates
@@ -88,8 +92,8 @@ Dimensions reminder: brick = 24 LDU tall, plate = 8 LDU, stud pitch = 20 LDU,
 |------|------|
 | 3062b | Brick 1 × 1 Round |
 | 3941 | Brick 2 × 2 Round |
-| 4073 | Plate 1 × 1 Round |
-| 4032 | Plate 2 × 2 Round |
+| 6141 | Plate 1 × 1 Round |
+| 4032a | Plate 2 × 2 Round |
 | 6143 | Brick 2 × 2 Round (open stud, alt) |
 
 ## SNOT / utility (sideways studs, brackets, jumpers)
@@ -101,7 +105,7 @@ Dimensions reminder: brick = 24 LDU tall, plate = 8 LDU, stud pitch = 20 LDU,
 | 4733 | Brick 1 × 1 with Studs on 4 Sides |
 | 99781 | Bracket 1 × 2 – 1 × 2 |
 | 44728 | Bracket 1 × 2 – 2 × 2 |
-| 3794 | Plate 1 × 2 with 1 Centre Stud (jumper) |
+| 3794b | Plate 1 × 2 with 1 Centre Stud (jumper) |
 
 ## Colours
 

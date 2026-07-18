@@ -6,7 +6,7 @@ files, show the configuration, and print the version.
 """
 
 import sys
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -21,7 +21,12 @@ from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
-from ldraw.errors import LibraryNotGeneratedError, PartError
+from ldraw.errors import (
+    ConfigLoadError,
+    CouldNotDetermineLatestVersionError,
+    LibraryNotGeneratedError,
+    PartError,
+)
 from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.model import read_model
 from ldraw.parts import CatalogEntry, Parts
@@ -177,16 +182,25 @@ def download_command(*, version: str, yes: bool) -> int:
 
     try:
         release_id = do_download(version=version, show_progress=sys.stderr.isatty())
-    except (requests.RequestException, ValueError, BadZipFile) as exc:
-        print(f"Download failed: {exc}")
+    except (
+        requests.RequestException,
+        ValueError,
+        BadZipFile,
+        CouldNotDetermineLatestVersionError,
+        OSError,
+    ) as exc:
+        print(f"Download failed: {exc}", file=sys.stderr)
         return 1
 
     config = Config.load()
     config.ldraw_library_path = str(cache_ldraw / version)
     config.write()
 
-    print(f"Downloaded LDraw library release {release_id}.")
-    print(f"Configured ldraw_library_path: {config.ldraw_library_path}")
+    print(f"Downloaded LDraw library release {release_id}.", file=sys.stderr)
+    print(
+        f"Configured ldraw_library_path: {config.ldraw_library_path}",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -201,7 +215,17 @@ def generate_command(*, yes: bool, force: bool) -> int:
     try:
         do_generate(config=config, force=force)
     except UnwritableOutputError:
-        print(f"{config.generated_path} is unwritable, select another out directory")
+        print(
+            f"{config.generated_path} is unwritable, select another out directory",
+            file=sys.stderr,
+        )
+        return 1
+    except FileNotFoundError:
+        print(
+            f"LDraw library not found under {config.ldraw_library_path}; "
+            "run `ldraw download` first.",
+            file=sys.stderr,
+        )
         return 1
     print(
         "Run 'ldraw stubs' from your project root to refresh the ldraw-stubs "
@@ -234,6 +258,7 @@ def _load_parts() -> Parts | None:
     if (parts := _try_load_parts(build_index=True)) is None:
         print(
             f"parts.lst not found at {_parts_lst_path()}; run `ldraw download` first.",
+            file=sys.stderr,
         )
     return parts
 
@@ -243,21 +268,32 @@ def _suggested_import(entry: CatalogEntry) -> str | None:
     return suggested_import(entry)
 
 
+def _search_key(text: str) -> str:
+    """Casefold and collapse whitespace runs for substring matching.
+
+    Catalog descriptions are column-aligned with double spaces
+    (``Arch  1 x  6``), so naturally spaced queries only match after
+    normalization.
+    """
+    return " ".join(text.split()).casefold()
+
+
 def parts_search_command(*, term: str, limit: int) -> int:
     """Search the parts catalog by description or code substring."""
     if (parts := _load_parts()) is None:
         return 1
-    needle = term.lower()
+    needle = _search_key(term)
     matches = sorted(
         (
             entry
             for entry in parts.catalog.by_code.values()
-            if needle in entry.description.lower() or needle in entry.code.lower()
+            if needle in _search_key(entry.description)
+            or needle in entry.code.casefold()
         ),
         key=lambda entry: entry.description,
     )
     if not matches:
-        print(f"No parts found matching {term!r}.")
+        print(f"No parts found matching {term!r}.", file=sys.stderr)
         return 1
     for entry in matches[:limit]:
         print(f"{entry.code:<12} {entry.category.value:<20} {entry.description}")
@@ -272,7 +308,7 @@ def parts_info_command(*, code: str) -> int:
         return 1
     entry = parts.get_entry_by_code(code)
     if entry is None:
-        print(f"No part with code {code!r}.")
+        print(f"No part with code {code!r}.", file=sys.stderr)
         return 1
     print(f"code: {entry.code}")
     print(f"description: {entry.description}")
@@ -289,12 +325,19 @@ def parts_info_command(*, code: str) -> int:
 def validate_command(*, file: Path, strict: bool = False) -> int:
     """Validate an LDraw file, reporting issues with line numbers."""
     if not file.is_file():
-        print(f"{file}: not found")
+        print(f"{file}: not found", file=sys.stderr)
         return 1
     parts = _try_load_parts()
     if parts is None:
-        print("note: no parts library found; skipping unknown-part and colour checks")
-    issues = list(iter_ldr_issues(file, parts))
+        print(
+            "note: no parts library found; skipping unknown-part and colour checks",
+            file=sys.stderr,
+        )
+    try:
+        issues = list(iter_ldr_issues(file, parts))
+    except UnicodeDecodeError as exc:
+        print(f"{file}: error: not valid UTF-8 text ({exc})", file=sys.stderr)
+        return 1
     for issue in issues:
         print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
     if not issues:
@@ -334,7 +377,7 @@ def _format_bom(rows: list[BomRow], *, output_format: str) -> str:
 def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
     """Print or write a bill of materials for an LDraw model file."""
     if not file.is_file():
-        print(f"{file}: not found")
+        print(f"{file}: not found", file=sys.stderr)
         return 1
     parts = _try_load_parts()
     if parts is None:
@@ -345,14 +388,18 @@ def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
     try:
         model = read_model(file)
         rows = model.bill_of_materials(parts=parts)
-    except PartError as exc:
-        print(f"{file}: {exc.message}")
+    except (PartError, UnicodeDecodeError) as exc:
+        print(f"{file}: {exc}", file=sys.stderr)
         return 1
     text = _format_bom(rows, output_format=output_format)
     if not text.endswith("\n"):
         text = f"{text}\n"
     if out is not None:
-        out.write_text(text, encoding="utf-8")
+        try:
+            out.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"Could not write {out}: {exc}", file=sys.stderr)
+            return 1
         print(f"Wrote {len(rows)} rows to {out}")
     else:
         print(text, end="")
@@ -367,7 +414,10 @@ def stubs_command(*, out: Path) -> int:
             out_dir=out,
         )
     except LibraryNotGeneratedError as exc:
-        print(exc)
+        print(exc, file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"Could not write stubs to {out}: {exc}", file=sys.stderr)
         return 1
     print(f"Wrote stub package to {stubs_dir}")
     return 0
@@ -388,11 +438,19 @@ def version_command() -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911 - one return per subcommand
+def main(argv: list[str] | None = None) -> int:
     """Run the ldraw CLI and return an exit code."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(args=args, parser=parser)
+    except ConfigLoadError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
+
+def _dispatch(*, args: Namespace, parser: ArgumentParser) -> int:  # noqa: PLR0911 - one return per subcommand
+    """Dispatch parsed arguments to the matching subcommand."""
     match args.command:
         case "download":
             return download_command(version=args.version, yes=args.yes)

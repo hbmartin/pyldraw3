@@ -13,11 +13,14 @@ import requests
 from ldraw.cli import _confirm, _suggested_import, build_parser, main
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
+from ldraw.errors import ConfigLoadError, CouldNotDetermineLatestVersionError
 from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.parts import CatalogEntry, MinifigSection, PartCategory
 
+TESTS_DIR = Path(__file__).resolve().parent
+
 FIXTURE_CONFIG = Config(
-    ldraw_library_path="tests/test_ldraw",
+    ldraw_library_path=str(TESTS_DIR / "test_ldraw"),
     generated_path="/gen",
 )
 
@@ -93,7 +96,7 @@ def test_download_default_version(
     config = config_mock.load.return_value
     assert config.ldraw_library_path == str(cache_ldraw / COMPLETE_VERSION)
     config.write.assert_called_once()
-    assert "2024-01" in capsys.readouterr().out
+    assert "2024-01" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config")
@@ -134,7 +137,7 @@ def test_download_failure_returns_one(
 
     do_download_mock.assert_called_once()
     config_mock.load.assert_not_called()
-    assert "Download failed: not found" in capsys.readouterr().out
+    assert "Download failed: not found" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load")
@@ -166,7 +169,7 @@ def test_generate_force(
 
 
 @patch("ldraw.cli.Config.load")
-@patch("ldraw.cli.do_generate", side_effect=UnwritableOutputError)
+@patch("ldraw.cli.do_generate", side_effect=UnwritableOutputError("/gen"))
 def test_generate_unwritable_returns_one(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -176,7 +179,7 @@ def test_generate_unwritable_returns_one(
 
     assert main(["generate", "--yes"]) == 1
 
-    assert "unwritable" in capsys.readouterr().out
+    assert "unwritable" in capsys.readouterr().err
 
 
 @patch("ldraw.cli._confirm", return_value=False)
@@ -243,7 +246,7 @@ def test_parts_search_no_match_returns_one(
 ) -> None:
     assert main(["parts", "search", "nonexistent"]) == 1
 
-    assert "No parts found matching" in capsys.readouterr().out
+    assert "No parts found matching" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
@@ -277,7 +280,7 @@ def test_parts_info_unknown_code_returns_one(
 ) -> None:
     assert main(["parts", "info", "9999"]) == 1
 
-    assert "No part with code '9999'." in capsys.readouterr().out
+    assert "No part with code '9999'." in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load")
@@ -294,7 +297,7 @@ def test_parts_commands_without_library_return_one(
     assert main(["parts", "search", "brick"]) == 1
     assert main(["parts", "info", "3001"]) == 1
 
-    assert "run `ldraw download` first" in capsys.readouterr().out
+    assert "run `ldraw download` first" in capsys.readouterr().err
 
 
 def test_suggested_import_minifig_section() -> None:
@@ -383,7 +386,7 @@ def test_validate_missing_file_returns_one(
 ) -> None:
     assert main(["validate", "does/not/exist.ldr"]) == 1
 
-    assert "not found" in capsys.readouterr().out
+    assert "not found" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load")
@@ -401,9 +404,9 @@ def test_validate_without_library_is_syntax_only(
 
     assert main(["validate", str(model)]) == 0
 
-    out = capsys.readouterr().out
-    assert "skipping unknown-part and colour checks" in out
-    assert "OK" in out
+    captured = capsys.readouterr()
+    assert "skipping unknown-part and colour checks" in captured.err
+    assert "OK" in captured.out
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
@@ -582,7 +585,7 @@ def test_bom_missing_file_returns_one(
 ) -> None:
     assert main(["bom", "does/not/exist.ldr"]) == 1
 
-    assert "not found" in capsys.readouterr().out
+    assert "not found" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
@@ -596,7 +599,7 @@ def test_bom_malformed_file_returns_one(
 
     assert main(["bom", str(model)]) == 1
 
-    assert "Unknown command (9)" in capsys.readouterr().out
+    assert "Unknown command (9)" in capsys.readouterr().err
 
 
 @patch("ldraw.cli.Config.load")
@@ -670,7 +673,7 @@ def test_stubs_without_generated_library_returns_one(
 
     assert main(["stubs"]) == 1
 
-    assert "run `ldraw generate` first" in capsys.readouterr().out
+    assert "run `ldraw generate` first" in capsys.readouterr().err
 
 
 def test_build_parser_download_defaults() -> None:
@@ -696,3 +699,117 @@ def test_version_handles_missing_package(
 
     package_version_mock.assert_called_once_with("pyldraw3")
     assert capsys.readouterr().out.strip() == "unknown (not installed)"
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli.do_generate", side_effect=FileNotFoundError)
+def test_generate_before_download_hints(
+    do_generate_mock: MagicMock,
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["generate", "--yes"]) == 1
+
+    assert "run `ldraw download` first" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config")
+@patch("ldraw.cli.do_download", side_effect=CouldNotDetermineLatestVersionError)
+def test_download_reports_latest_version_failure(
+    do_download_mock: MagicMock,
+    config_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["download", "--yes"]) == 1
+
+    assert "Download failed" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config")
+@patch("ldraw.cli.do_download", side_effect=OSError("disk full"))
+def test_download_reports_oserror(
+    do_download_mock: MagicMock,
+    config_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["download", "--yes"]) == 1
+
+    assert "Download failed: disk full" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_validate_non_utf8_file_reports_error(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "binary.ldr"
+    model.write_bytes(b"\xff\xfe\x00bad")
+
+    assert main(["validate", str(model)]) == 1
+
+    assert "not valid UTF-8" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_non_utf8_file_reports_error(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "binary.ldr"
+    model.write_bytes(b"\xff\xfe\x00bad")
+
+    assert main(["bom", str(model)]) == 1
+
+    assert "codec" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_bom_output_write_failure_returns_one(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+    missing_dir = tmp_path / "nonexistent" / "bom.csv"
+
+    assert main(["bom", str(model), "-o", str(missing_dir)]) == 1
+
+    assert "Could not write" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli.write_stub_package", side_effect=OSError("denied"))
+def test_stubs_write_failure_returns_one(
+    write_stub_mock: MagicMock,
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["stubs"]) == 1
+
+    assert "Could not write stubs" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_search_normalizes_whitespace(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "search", "brick 2 x 4"]) == 0
+
+    assert "3001" in capsys.readouterr().out
+
+
+@patch(
+    "ldraw.cli.Config.load",
+    side_effect=ConfigLoadError(path="/c.yml", reason="boom"),
+)
+def test_config_load_error_exits_one(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["config"]) == 1
+
+    assert "Could not load config /c.yml: boom" in capsys.readouterr().err

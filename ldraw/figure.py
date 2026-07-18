@@ -24,27 +24,29 @@ def dependent_piece(
     def decorator(fn: Callable[..., R]) -> Callable[..., R | None]:
         @wraps(fn)
         def wrapped(self: Person, *args: object, **kwargs: object) -> R | None:
-            try:
-                dependent_object = self.pieces_info[dep]
-                return fn(self, dependent_object, *args, **kwargs)
-            except KeyError:
+            if (dependent_object := self.pieces_info.get(dep)) is None:
                 return None
+            return fn(self, dependent_object, *args, **kwargs)
 
         return wrapped
 
     return decorator
 
 
+# Unsuffixed part codes resolve in every library vintage; suffixed variants
+# like 3815b only exist from 2019 onwards.
 Airtanks = "3838"
 HipsAndLegs = "3815c01"
-Hips = "3815b"
+Hips = "3815"
 ArmLeft = "3819"
 ArmRight = "3818"
 Hand = "3820"
-LegLeft = "3817b"
-LegRight = "3816b"
+LegLeft = "3817"
+LegRight = "3816"
 Torso = "973"
-Head = HeadWithSwSmirkAndBrownEyebrowsPattern = "3626bps5"
+Head = "3626b"
+HeadWithSwSmirkAndBrownEyebrowsPattern = "3626bps5"
+Hat = "3624"
 
 
 class Person:
@@ -80,10 +82,9 @@ class Person:
         return piece
 
     @dependent_piece("head")
-    def hat(self, head: Piece, colour: ColourInput, part: str = "3901") -> Piece:
+    def hat(self, head: Piece, colour: ColourInput, part: str = Hat) -> Piece:
         """Add a hat piece to the figure's head."""
-        displacement = head.position + head.matrix * Vector(0, 0, 0)
-        return Piece(colour, displacement, head.matrix, part, self.group)
+        return Piece(colour, head.position.copy(), head.matrix, part, self.group)
 
     def torso(self, colour: ColourInput, part: str = Torso) -> Piece:
         """Add a torso piece."""

@@ -12,6 +12,8 @@ from ldraw.validation import (
     iter_ldr_issues,
 )
 
+TESTS_DIR = Path(__file__).resolve().parent
+
 IDENTITY = "1 0 0 0 1 0 0 0 1"
 ROTATED_90_Y = "0 0 -1 0 1 0 1 0 0"
 SCALED = "2 0 0 0 1 0 0 0 1"
@@ -20,7 +22,7 @@ SINGULAR = "1 0 0 0 1 0 0 0 0"
 
 @pytest.fixture
 def parts() -> Parts:
-    return Parts.get("tests/test_ldraw/ldraw/parts.lst")
+    return Parts.get(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
 
 def validate(tmp_path: Path, text: str, parts: Parts | None) -> list[ValidationIssue]:
@@ -68,8 +70,9 @@ def test_garbage_colour_token_is_an_error_even_without_library(tmp_path) -> None
     issues = validate(tmp_path, f"1 abc 0 0 0 {IDENTITY} 3001.dat\n", None)
 
     assert issues == [
-        ValidationIssue(line_number=1, message="invalid colour value"),
+        ValidationIssue(line_number=1, message="Invalid colour value 'abc'"),
     ]
+    assert issues[0].severity is Severity.ERROR
 
 
 def test_malformed_direct_colour_is_reported_not_crashed(tmp_path) -> None:
@@ -77,11 +80,42 @@ def test_malformed_direct_colour_is_reported_not_crashed(tmp_path) -> None:
 
     assert len(issues) == 1
     assert issues[0].severity is Severity.ERROR
-    assert "Invalid rgb value" in issues[0].message
+    assert "Invalid colour value" in issues[0].message
 
 
 def test_valid_direct_colour_is_clean(tmp_path, parts) -> None:
     assert validate(tmp_path, f"1 0x2FF0000 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
+
+
+def test_decimal_direct_colour_is_clean(tmp_path, parts) -> None:
+    assert validate(tmp_path, f"1 50266112 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
+
+
+def test_uppercase_direct_colour_prefix_is_clean(tmp_path, parts) -> None:
+    assert validate(tmp_path, f"1 0X2FF0000 0 0 0 {IDENTITY} 3001.dat\n", parts) == []
+
+
+def test_short_direct_colour_is_an_error(tmp_path, parts) -> None:
+    issues = validate(tmp_path, f"1 0x2FFF 0 0 0 {IDENTITY} 3001.dat\n", parts)
+
+    assert len(issues) == 1
+    assert issues[0].severity is Severity.ERROR
+    assert "Invalid colour value '0x2FFF'" in issues[0].message
+
+
+def test_catalogued_dithered_range_colour_does_not_warn(tmp_path) -> None:
+    ldraw_dir = tmp_path / "lib" / "ldraw"
+    parts_dir = ldraw_dir / "parts"
+    parts_dir.mkdir(parents=True)
+    (parts_dir / "3001.dat").write_text("0 Brick 2 x 4\n")
+    (ldraw_dir / "parts.lst").write_text("3001.dat  Brick 2 x 4\n")
+    (ldraw_dir / "LDConfig.ldr").write_text(
+        "0 !COLOUR Magnet CODE 493 VALUE #656761 EDGE #595959\n",
+    )
+    catalogued_parts = Parts(ldraw_dir / "parts.lst")
+
+    text = f"1 493 0 0 0 {IDENTITY} 3001.dat\n"
+    assert validate(tmp_path, text, catalogued_parts) == []
 
 
 def test_colour_codes_skipped_without_library(tmp_path) -> None:

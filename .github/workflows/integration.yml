@@ -26,7 +26,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     
     - name: Install uv
-      uses: astral-sh/setup-uv@v5
+      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
     
     - name: Create uv environment
       run: uv venv
@@ -62,11 +62,11 @@ jobs:
     - name: Test example scripts
       run: |
         cd examples
-        # Test a few example scripts to ensure they work with real data
-        timeout 60 uv run python stairs.py || echo "Stairs example completed/timed out"
-        timeout 60 uv run python figure.py || echo "Figure example completed/timed out"
+        # A hang fails the step via timeout's exit 124; LDraw stdout is
+        # discarded to keep the log readable, stderr still shows failures.
+        timeout 60 uv run python stairs.py > /dev/null
+        timeout 60 uv run python figure.py > /dev/null
       timeout-minutes: 10
-      continue-on-error: true
     
     - name: Upload test results
       if: always()

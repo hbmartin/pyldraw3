@@ -240,6 +240,65 @@ def test_render_rejects_empty_or_invalid_views_before_detection(
     assert not (tmp_path / "previous").exists()
 
 
+def test_render_deduplicates_views_while_preserving_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    render = _load_script("render")
+    model = tmp_path / "model.ldr"
+    model.touch()
+    rendered: list[str] = []
+
+    def working_renderer(
+        _model: Path,
+        output: Path,
+        _angle: tuple[int, int],
+        _size: tuple[int, int],
+    ) -> tuple[bool, str]:
+        rendered.append(output.name)
+        output.touch()
+        return True, ""
+
+    monkeypatch.setattr(render, "_detect", lambda: ["ldview"])
+    monkeypatch.setitem(render.RENDERERS, "ldview", working_renderer)
+
+    assert render.main([str(model), "--views", "front,iso,front,top,iso"]) == 0
+    assert rendered == [
+        "model.front.png",
+        "model.iso.png",
+        "model.top.png",
+    ]
+    assert "Rendered 3 view(s) with ldview." in capsys.readouterr().err
+
+
+def test_render_rejects_non_positive_size_before_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    render = _load_script("render")
+    model = tmp_path / "model.ldr"
+    existing = tmp_path / "model.front.png"
+    model.touch()
+    existing.write_text("keep me", encoding="utf-8")
+    detection_calls: list[bool] = []
+
+    def track_detection() -> list[str]:
+        detection_calls.append(True)
+        return ["ldview"]
+
+    monkeypatch.setattr(render, "_detect", track_detection)
+
+    for size in ("0x768", "1024x0", "-1x768", "1024x-1"):
+        assert render.main([str(model), "--size", size, "--views", "front"]) == 1
+        assert "with positive integers" in capsys.readouterr().err
+
+    assert detection_calls == []
+    assert existing.read_text(encoding="utf-8") == "keep me"
+    assert not (tmp_path / "previous").exists()
+
+
 def test_render_leaves_existing_outputs_when_no_renderer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

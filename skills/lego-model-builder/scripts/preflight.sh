@@ -170,11 +170,23 @@ if [ -z "${renderer}" ]; then
       fi
       ;;
     Darwin)
-      if have brew; then
-        note "installing a renderer via brew"
-        brew install --cask ldview >&2 2>&1 || brew install leocad >&2 2>&1 || true
-      else
-        note "Homebrew not found; install from https://brew.sh then 'brew install --cask ldview'"
+      # No reliable Homebrew install exists: there is no ldview cask, and the
+      # leocad cask is deprecated and does not put a CLI on PATH. Detect app
+      # bundles and tell the user how to expose them instead.
+      found_bundle=""
+      for app_bin in \
+        "/Applications/LDView.app/Contents/MacOS/LDView" \
+        "/Applications/LeoCAD.app/Contents/MacOS/LeoCAD"; do
+        if [ -x "$app_bin" ]; then
+          found_bundle="yes"
+          note "found $(basename "$app_bin") at $app_bin, but it is not on PATH"
+          note "expose it for this session: export PATH=\"$(dirname "$app_bin"):\$PATH\""
+          note "then re-run this preflight"
+        fi
+      done
+      if [ -z "$found_bundle" ]; then
+        note "install LDView from https://tcobbs.github.io/ldview/ (Downloads),"
+        note "then export PATH=\"/Applications/LDView.app/Contents/MacOS:\$PATH\""
       fi
       ;;
   esac
@@ -186,7 +198,7 @@ if [ -n "${renderer}" ]; then
 else
   say "renderer: NONE"
   note "Continuing in validate-only mode (no images). To enable rendering, install"
-  note "LDView (https://tcobbs.github.io/ldview/) or 'leocad' (+ xvfb on Linux)."
+  note "LDView (https://tcobbs.github.io/ldview/) or, on Linux, 'leocad' + xvfb."
 fi
 
 exit 0

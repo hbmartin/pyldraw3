@@ -2,8 +2,9 @@
 
 import pytest
 
+import ldraw.figure as figure_mod
 from ldraw.colour import Colour
-from ldraw.figure import Person
+from ldraw.figure import Person, dependent_piece
 from ldraw.geometry import Identity, Vector, YAxis
 from ldraw.pieces import Group, Piece
 from ldraw.serialization import format_ldraw_number
@@ -47,7 +48,7 @@ def test_piece_to_ldraw_and_str_are_compact() -> None:
         Brick1X1,
     )
 
-    expected = "1 15 40 0.125 0 0 0 -1 0 1 0 1 0 0 3005.dat"
+    expected = "1 15 40 0.125 0 0 0 1 0 1 0 -1 0 0 3005.dat"
     assert piece.to_ldraw() == expected
     assert str(piece) == expected
     assert not repr(piece).startswith("1 ")
@@ -167,7 +168,7 @@ def test_piece_place_explicit_arguments() -> None:
         group=group,
     )
 
-    assert piece.to_ldraw() == "1 15 10 0 0 0 0 -1 0 1 0 1 0 0 3005.dat"
+    assert piece.to_ldraw() == "1 15 10 0 0 0 0 1 0 1 0 -1 0 0 3005.dat"
     assert piece in group.pieces
 
 
@@ -183,6 +184,12 @@ def test_piece_place_splits_existing_extension_with_default_suffix() -> None:
 
     assert piece.reference == "body.ldr"
     assert piece.to_ldraw() == "1 16 0 0 0 1 0 0 0 1 0 0 0 1 body.ldr"
+
+
+def test_piece_place_does_not_double_matching_suffix() -> None:
+    assert Piece.place("car.ldr", suffix=".ldr").reference == "car.ldr"
+    assert Piece.place("CAR.LDR", suffix=".ldr").reference == "CAR.LDR"
+    assert Piece.place("my.body", suffix=".ldr").reference == "my.body.ldr"
 
 
 def test_piece_preserves_suffix_case() -> None:
@@ -268,3 +275,36 @@ def test_add_ls_item_nopart(figure, full_figure) -> None:
 def test_add_rs_item_nopart(figure, full_figure) -> None:
     assert full_figure.right_shoe(Black, 10) is None
     assert full_figure.right_shoe(Black, 10, Flipper) is not None
+
+
+def test_hat_sits_at_head_position(figure) -> None:
+    head = figure.head(Yellow)
+    hat = figure.hat(White)
+
+    assert hat is not None
+    assert hat.part == figure_mod.Hat
+    assert hat.position == head.position
+    assert hat.position is not head.position
+    assert hat.matrix == head.matrix
+
+
+def test_default_leg_and_hip_parts_are_plain_codes(figure) -> None:
+    assert figure.hips(Yellow).part == figure_mod.Hips == "3815"
+    assert figure.left_leg(Yellow).part == figure_mod.LegLeft == "3817"
+    assert figure.right_leg(Yellow).part == figure_mod.LegRight == "3816"
+    assert figure.head(Yellow).part == figure_mod.Head == "3626b"
+
+
+def test_dependent_piece_propagates_inner_key_errors() -> None:
+    class Exploding(Person):
+        @dependent_piece("head")
+        def boom(self, _head: Piece) -> Piece:
+            message = "inner failure"
+            raise KeyError(message)
+
+    person = Exploding()
+    assert person.boom() is None
+
+    person.head(Yellow)
+    with pytest.raises(KeyError, match="inner failure"):
+        person.boom()

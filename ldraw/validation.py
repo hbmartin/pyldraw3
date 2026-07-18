@@ -22,8 +22,9 @@ if TYPE_CHECKING:
 
 # Official bang meta-commands from the ldraw.org File Format, Official
 # Header, MPD, and OMR specs, plus widespread editor metas ("!:" is the
-# TEXMAP fallback prefix). Plain "0 STEP"-style commands parse as
-# comments and are never checked against this list.
+# TEXMAP fallback prefix; LDCad and BrickLink Studio write their own).
+# Plain "0 STEP"-style commands parse as comments and are never checked
+# against this list.
 KNOWN_META_COMMANDS = frozenset(
     {
         "LDRAW_ORG",
@@ -40,6 +41,8 @@ KNOWN_META_COMMANDS = frozenset(
         "THEME",
         "LPUB",
         "LEOCAD",
+        "LDCAD",
+        "STUDIO",
     }
 )
 
@@ -74,9 +77,9 @@ def _colour_issue(
     number: int,
     colours_by_code: dict[int, Colour] | None,
 ) -> ValidationIssue | None:
-    if colour.code is None and colour.rgb is None:
-        return ValidationIssue(line_number=number, message="invalid colour value")
     if colour.code is None or colours_by_code is None:
+        return None
+    if colour.code in colours_by_code:
         return None
     if _LEGACY_DITHERED_MIN <= colour.code <= _LEGACY_DITHERED_MAX:
         return ValidationIssue(
@@ -84,12 +87,10 @@ def _colour_issue(
             message=f"legacy dithered colour code {colour.code}",
             severity=Severity.WARNING,
         )
-    if colour.code not in colours_by_code:
-        return ValidationIssue(
-            line_number=number,
-            message=f"unknown colour code {colour.code}",
-        )
-    return None
+    return ValidationIssue(
+        line_number=number,
+        message=f"unknown colour code {colour.code}",
+    )
 
 
 def _matrix_issue(piece: Piece, number: int) -> ValidationIssue | None:

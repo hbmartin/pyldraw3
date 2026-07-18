@@ -1,5 +1,7 @@
 """Tests for colour functionality."""
 
+from pathlib import Path
+
 import pytest
 
 from ldraw.colour import Colour
@@ -110,7 +112,9 @@ def test_colour_display_helpers() -> None:
 
 
 def test_parts_resolve_colour_enriches_catalogued_codes() -> None:
-    parts = Parts("tests/test_ldraw/ldraw/parts.lst")
+    parts = Parts(
+        Path(__file__).resolve().parent / "test_ldraw" / "ldraw" / "parts.lst"
+    )
 
     red = parts.resolve_colour(4)
     direct = Colour(rgb="#123456")

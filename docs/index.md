@@ -69,7 +69,7 @@ from ldraw.parts import Parts
 
 config = Config.load()
 parts = Parts(Path(config.ldraw_library_path) / "ldraw" / "parts.lst")
-cowboy_hat = parts.get_entry_by_description("Hat Cowboy").code
+cowboy_hat = parts.get_entry_by_description("Minifig Hat Cowboy").code
 brick1x1 = parts.get_entry_by_description("Brick  1 x  1").code
 ```
 

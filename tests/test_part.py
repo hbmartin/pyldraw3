@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from ldraw.colour import Colour
 from ldraw.errors import (
+    EmptyPartFileError,
+    InvalidColourValueError,
     InvalidLineDataError,
     InvalidNumericValueError,
     PartError,
@@ -19,7 +22,7 @@ from ldraw.lines import (
     Quadrilateral,
     Triangle,
 )
-from ldraw.part import HANDLERS, ParsedObject, Part, parse_ldraw_line
+from ldraw.part import HANDLERS, ParsedObject, Part, colour_from_str, parse_ldraw_line
 from ldraw.pieces import Piece
 
 
@@ -114,7 +117,7 @@ def test_objects_adds_path_and_line_context(tmp_path: Path) -> None:
     path.write_text("0 Test Part\n2 16 0 0 x 1 1 1\n")
 
     with pytest.raises(
-        PartError,
+        InvalidNumericValueError,
         match=r"Invalid numeric value 'x' .* in .*bad\.dat at line 2",
     ):
         list(Part(path).objects)
@@ -137,10 +140,50 @@ def test_objects_unknown_command(tmp_path: Path) -> None:
     path.write_text("0 Test Part\n\n9 16 0 0 0\n")
 
     with pytest.raises(
-        PartError,
+        UnknownCommandError,
         match=r"Unknown command \(9\) in .*unknown\.dat at line 3",
     ):
         list(Part(path).objects)
+
+
+def test_invalid_colour_token_raises_at_parse_time() -> None:
+    with pytest.raises(InvalidColourValueError, match=r"'abc'") as excinfo:
+        parse_ldraw_line("1 abc 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat")
+
+    assert isinstance(excinfo.value, PartError)
+    assert isinstance(excinfo.value, ValueError)
+
+
+def test_short_direct_colour_token_is_rejected() -> None:
+    with pytest.raises(InvalidColourValueError, match=r"'0x2FFF'"):
+        parse_ldraw_line("2 0x2FFF 0 0 0 1 1 1")
+
+
+def test_direct_colour_decimal_and_uppercase_prefix_parse() -> None:
+    expected = Colour(rgb="#FF0000", alpha=255)
+    assert colour_from_str("50266112") == expected
+    assert colour_from_str("0X2FF0000") == expected
+    assert colour_from_str("0x2FF0000") == expected
+    assert colour_from_str("4") == 4
+
+
+def test_part_file_with_utf8_bom_parses(tmp_path: Path) -> None:
+    path = tmp_path / "bom.dat"
+    path.write_bytes(b"\xef\xbb\xbf0 Test Part\n2 16 0 0 0 1 1 1\n")
+
+    part = Part(path)
+    assert part.description == "Test Part"
+    objects = list(part.objects)
+    assert isinstance(objects[0], Comment)
+    assert isinstance(objects[1], Line)
+
+
+def test_empty_part_file_description_raises(tmp_path: Path) -> None:
+    path = tmp_path / "empty.dat"
+    path.write_text("")
+
+    with pytest.raises(EmptyPartFileError, match=r"empty"):
+        _ = Part(path).description
 
 
 def test_keywords_from_multiple_lines(tmp_path: Path) -> None:

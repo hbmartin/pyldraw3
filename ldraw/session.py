@@ -16,11 +16,13 @@ from ldraw.catalog import (
     catalog_db_path,
     load_parts,
     parts_lst_md5,
+    parts_tree_fingerprint,
     save_catalog,
 )
 from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as download_library
+from ldraw.errors import CouldNotDetermineLatestVersionError
 from ldraw.generation import generate as generate_library
 from ldraw.generation import (
     generated_library_path,
@@ -181,15 +183,19 @@ class LDrawSession:
                 path=paths.catalog_db,
             ),
         )
-        if paths.catalog_db.exists():
-            paths.catalog_db.unlink()
+        temp_db = paths.catalog_db.with_name(f"{paths.catalog_db.name}.tmp")
         parts = Parts.get(paths.parts_lst)
-        save_catalog(
-            paths.catalog_db,
-            md5=parts_lst_md5(paths.parts_lst),
-            catalog=parts.catalog,
-            library_root=paths.parts_lst.parent,
-        )
+        try:
+            save_catalog(
+                temp_db,
+                md5=parts_lst_md5(paths.parts_lst),
+                catalog=parts.catalog,
+                library_root=paths.parts_lst.parent,
+                tree_fingerprint=parts_tree_fingerprint(paths.parts_lst.parent),
+            )
+            temp_db.replace(paths.catalog_db)
+        finally:
+            temp_db.unlink(missing_ok=True)
         return parts
 
     def open_model(self, path: Path | str) -> Model:
@@ -207,15 +213,24 @@ def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
         )
     except sqlite3.Error:
         return LDrawStateReason.INDEX_UNREADABLE
+    meta_checks = (
+        (
+            "SELECT value FROM meta WHERE key = 'parts_lst_md5'",
+            parts_lst_md5(paths.parts_lst),
+        ),
+        (
+            "SELECT value FROM meta WHERE key = 'tree_fingerprint'",
+            parts_tree_fingerprint(paths.parts_lst.parent),
+        ),
+    )
     try:
         (version,) = connection.execute("PRAGMA user_version").fetchone()
         if version != CATALOG_SCHEMA_VERSION:
             return LDrawStateReason.INDEX_STALE
-        row = connection.execute(
-            "SELECT value FROM meta WHERE key = 'parts_lst_md5'",
-        ).fetchone()
-        if row is None or row[0] != parts_lst_md5(paths.parts_lst):
-            return LDrawStateReason.INDEX_STALE
+        for statement, expected_value in meta_checks:
+            row = connection.execute(statement).fetchone()
+            if row is None or row[0] != expected_value:
+                return LDrawStateReason.INDEX_STALE
     except (OSError, sqlite3.Error):
         return LDrawStateReason.INDEX_UNREADABLE
     finally:
@@ -243,7 +258,13 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
     force_generate: bool = False,
     on_progress: ProgressCallback | None = None,
 ) -> LDrawSession:
-    """Ensure a configured library, generated package, and catalog index exist."""
+    """Ensure a configured library, generated package, and catalog index exist.
+
+    When the library is downloaded, ``config.ldraw_library_path`` is
+    updated in place on the caller's Config (persisted only when
+    ``write_config`` is true), and the process-global default import
+    configuration is replaced via ``LibraryImporter.set_config``.
+    """
     cfg = Config.load(config_file) if config is None else config
     session = LDrawSession(cfg)
     state = session.state()
@@ -255,7 +276,13 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
                 show_progress=False,
                 on_progress=on_progress,
             )
-        except (requests.RequestException, ValueError, BadZipFile) as exc:
+        except (
+            requests.RequestException,
+            ValueError,
+            BadZipFile,
+            CouldNotDetermineLatestVersionError,
+            OSError,
+        ) as exc:
             message = f"Could not download LDraw library: {exc}"
             raise RuntimeError(message) from exc
         cfg.ldraw_library_path = str(cache_ldraw / version)

@@ -9,7 +9,8 @@ from ldraw.model import Model, read_model
 from ldraw.parts import Parts
 from ldraw.pieces import Piece
 
-MODELS_DIR = Path("tests/models")
+TESTS_DIR = Path(__file__).resolve().parent
+MODELS_DIR = TESTS_DIR / "models"
 
 
 def test_bom_counts_leaf_pieces_without_catalog() -> None:
@@ -42,6 +43,56 @@ def test_bom_counts_leaf_pieces_without_catalog() -> None:
     ]
 
 
+def test_bom_resolves_main_colour_to_placed_colour() -> None:
+    root = Model(name="main.ldr")
+    arm = Model(name="arm.ldr", objects=[Piece.place("3001", colour=16)])
+    root.add_submodel(arm, colour=4)
+
+    rows = root.bill_of_materials()
+
+    assert [(row.part, row.colour_code, row.quantity) for row in rows] == [
+        ("3001", 4, 1),
+    ]
+
+
+def test_bom_resolves_main_colour_through_nested_submodels() -> None:
+    inner = Model(name="inner.ldr", objects=[Piece.place("3005", colour=16)])
+    outer = Model(name="outer.ldr")
+    outer.add_submodel(inner, colour=16)
+    root = Model(name="main.ldr")
+    root.add_submodel(outer, colour=1)
+
+    rows = root.bill_of_materials()
+
+    assert [(row.part, row.colour_code, row.quantity) for row in rows] == [
+        ("3005", 1, 1),
+    ]
+
+
+def test_bom_placed_colours_split_rows() -> None:
+    root = Model(name="main.ldr")
+    arm = Model(name="arm.ldr", objects=[Piece.place("3001", colour=16)])
+    root.add_submodel(arm, colour=4)
+    root.add_submodel(arm, colour=1)
+
+    rows = root.bill_of_materials()
+
+    assert [(row.part, row.colour_code, row.quantity) for row in rows] == [
+        ("3001", 1, 1),
+        ("3001", 4, 1),
+    ]
+
+
+def test_bom_root_level_main_colour_stays_16() -> None:
+    model = Model(objects=[Piece.place("3001", colour=16)])
+
+    rows = model.bill_of_materials()
+
+    assert [(row.part, row.colour_code, row.quantity) for row in rows] == [
+        ("3001", 16, 1),
+    ]
+
+
 def test_bom_counts_repeated_submodel_references_twice() -> None:
     root = Model(name="main.ldr")
     wheels = Model(
@@ -65,7 +116,7 @@ def test_bom_counts_repeated_submodel_references_twice() -> None:
 
 
 def test_bom_resolves_description_and_colour_name_from_catalog() -> None:
-    parts = Parts.get("tests/test_ldraw/ldraw/parts.lst")
+    parts = Parts.get(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
     model = Model(objects=[Piece.place("3001", colour=189)])
 
     rows = bill_of_materials(model, parts=parts)
@@ -101,7 +152,7 @@ def test_bom_counts_codes_case_insensitively(tmp_path: Path) -> None:
 
 
 def test_bom_unknown_part_and_colour_stay_unresolved() -> None:
-    parts = Parts.get("tests/test_ldraw/ldraw/parts.lst")
+    parts = Parts.get(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
     model = Model(objects=[Piece.place("9999", colour=99)])
 
     rows = bill_of_materials(model, parts=parts)

@@ -74,8 +74,10 @@ class Piece:
         suffix: str = DEFAULT_SUFFIX,
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
-        if suffix.casefold() == DEFAULT_SUFFIX and "." in part:
-            part, suffix = split_reference(part)
+        if "." in part:
+            stem, existing_suffix = split_reference(part)
+            if suffix.casefold() in {DEFAULT_SUFFIX, existing_suffix.casefold()}:
+                part, suffix = stem, existing_suffix
         return cls(
             colour=colour,
             position=position if position is not None else Vector(0, 0, 0),

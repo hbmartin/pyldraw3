@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from ldraw.dirs import get_cache_dir, get_config_dir, get_data_dir
+from ldraw.errors import ConfigLoadError
 
 CONFIG_FILE = Path(get_config_dir()) / "config.yml"
 
@@ -44,18 +45,40 @@ class Config:
 
     @classmethod
     def load(cls, config_file: str | Path | None = None) -> Config:
-        """Load configuration from YAML file or create default configuration."""
+        """Load configuration from YAML file or create default configuration.
+
+        A missing file yields the defaults; an unreadable or malformed
+        file raises ``ConfigLoadError`` naming the path and the problem.
+        """
         config_path = get_config(config_file)
 
         try:
             with config_path.open() as config_file_handle:
                 cfg = yaml.load(config_file_handle, Loader=yaml.SafeLoader) or {}
-                return cls(
-                    ldraw_library_path=cfg.get("ldraw_library_path"),
-                    generated_path=cfg.get("generated_path"),
-                )
         except FileNotFoundError:
             return cls()
+        except (OSError, yaml.YAMLError) as exc:
+            raise ConfigLoadError(path=str(config_path), reason=str(exc)) from exc
+        if not isinstance(cfg, dict):
+            raise ConfigLoadError(
+                path=str(config_path),
+                reason=f"expected a mapping, got {type(cfg).__name__}",
+            )
+        ldraw_library_path = cfg.get("ldraw_library_path")
+        generated_path = cfg.get("generated_path")
+        for key, value in (
+            ("ldraw_library_path", ldraw_library_path),
+            ("generated_path", generated_path),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise ConfigLoadError(
+                    path=str(config_path),
+                    reason=f"{key} must be a string",
+                )
+        return cls(
+            ldraw_library_path=ldraw_library_path,
+            generated_path=generated_path,
+        )
 
     def __str__(self) -> str:
         return f"Config({self.ldraw_library_path=}, {self.generated_path=})"
@@ -70,8 +93,9 @@ class Config:
         return written
 
     def write(self, config_file: str | Path | None = None) -> None:
-        """Write the config to config.yml."""
+        """Write the config to config.yml atomically."""
         config_path = get_config(config_file=config_file)
-
-        with config_path.open("w") as config_file_handle:
-            yaml.dump(self.to_dict(), config_file_handle)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = config_path.with_name(f"{config_path.name}.tmp")
+        temp_path.write_text(yaml.dump(self.to_dict()), encoding="utf-8")
+        temp_path.replace(config_path)

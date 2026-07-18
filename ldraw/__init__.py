@@ -95,8 +95,3 @@ __all__ = [
 library_importer_instance = LibraryImporter()
 if not any(isinstance(hook, LibraryImporter) for hook in sys.meta_path):
     sys.meta_path.insert(0, library_importer_instance)
-
-if __name__ == "__main__":
-    from ldraw import cli
-
-    cli.main()

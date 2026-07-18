@@ -34,8 +34,8 @@ configured, two users on different LDraw releases get different (but
 correctly matching) `ldraw.library.*` contents.
 
 That generated tree does not live inside the installed `ldraw` package. It
-lives in an OS-appropriate cache directory (`generated_path`, see
-[Configuration](index.md)). Something has to bridge the gap between the import
+lives in an OS-appropriate cache directory (`generated_path`, see the
+`ldraw config` command in the [CLI Reference](cli.md#commands)). Something has to bridge the gap between the import
 statement `from ldraw.library.parts.bricks import Brick2X4` and a file sitting
 in a cache folder somewhere else on disk. That something is `LibraryImporter`.
 
@@ -119,41 +119,41 @@ the next finder, exactly as if `LibraryImporter` were not there.
 
 ### Finding and loading
 
-For a claimed name, `find_spec` hands back a spec whose loader is the hook
-itself:
-
-```python
-def find_spec(self, fullname, path, target=None):
-    if self.valid_module(fullname):
-        return importlib.util.spec_from_loader(fullname, self)
-    return None
-```
-
-(`find_module` is also implemented for older callers; both funnel through
-`valid_module`.)
-
-Loading then maps the dotted name to a file on disk in `load_lib`. The `ldraw`
-prefix is stripped, the remaining components become a path under
-`<generated_path>`, and the last component is resolved to either a package
+For a claimed name, `find_spec` resolves the dotted name to a real file on
+disk and hands back a standard file-backed spec. The `ldraw` prefix is
+stripped, the remaining components become a path under `<generated_path>`,
+and the last component is resolved to either a package
 (`…/name/__init__.py`) or a plain module (`…/name.py`):
 
 ```python
-def load_lib(library_path, fullname):
-    dot_split = fullname.split(".")
-    dot_split.pop(0)                       # drop "ldraw"
-    lib_name = dot_split[-1]
-    library_root = Path(library_path)
-    lib_dir = library_root.joinpath(*dot_split[:-1]) if len(dot_split) > 1 else library_root
-
-    init_path = lib_dir / lib_name / "__init__.py"
-    py_path = lib_dir / f"{lib_name}.py"
-    module_path = init_path if init_path.exists() else py_path
-    # …spec_from_file_location + exec_module…
+def find_spec(self, fullname, path=None, target=None):
+    if not self.valid_module(fullname):
+        return None
+    config = self.config or self._default_config or Config.load()
+    library_root = Path(config.generated_path)
+    if not (library_root / "library" / "__init__.py").is_file():
+        return None                      # nothing generated: don't claim it
+    init_path, py_path = _module_candidates(library_root, fullname)
+    # …pick whichever exists, then importlib.util.spec_from_file_location…
 ```
 
-The module is registered in `sys.modules` before execution and popped back out
-again if execution raises, so a failed import never leaves a half-initialised
-module cached.
+Because the returned spec's loader is a standard `SourceFileLoader`, CPython
+itself performs the load: it registers the module in `sys.modules` before
+execution and rolls it back if execution raises, so a failed import never
+leaves a half-initialised module cached. There is no custom loader and no
+legacy `load_module()` fallback — imports work unchanged under
+`python -W error::ImportWarning`.
+
+Two failure modes are deliberately distinct: when *no* generated library
+exists at all, `find_spec` returns `None`, so
+`importlib.util.find_spec("ldraw.library")` is a truthful availability probe
+and the import raises a standard `ModuleNotFoundError`; when the generated
+library exists but the specific submodule does not, `find_spec` raises
+`CouldNotFindModuleError` naming both candidate paths.
+
+(`load_lib` remains available for embedders that want to load a generated
+module from an explicit path; it resolves the same two candidates and
+performs the same register-then-roll-back dance by hand.)
 
 ### Worked example
 
@@ -161,14 +161,13 @@ Resolving `from ldraw.library.parts.bricks import Brick2X4`:
 
 1. The interpreter walks `sys.meta_path`; `LibraryImporter` is first.
 2. `valid_module("ldraw.library.parts.bricks")` → `True`, so `find_spec`
-   returns a spec pointing at the hook as loader.
-3. `load_module` resolves the configuration (see below) to find
-   `generated_path`, then calls `load_lib`.
-4. `load_lib` strips `ldraw`, leaving `["library", "parts", "bricks"]`. It looks
+   resolves the configuration (see below) to find `generated_path`.
+3. It strips `ldraw`, leaving `["library", "parts", "bricks"]`. It looks
    for `<generated_path>/library/parts/bricks/__init__.py` (a package) and, not
    finding it, falls back to `<generated_path>/library/parts/bricks.py` (a
    module) — which exists.
-5. That file is loaded as the module `ldraw.library.parts.bricks`; it contains
+4. `find_spec` returns a file-backed spec for that path, and CPython loads it
+   as the module `ldraw.library.parts.bricks`; it contains
    `Brick2X4 = "3001"`, so the name binds to the string `"3001"`.
 
 Along the way the parent packages `ldraw.library` and `ldraw.library.parts`
@@ -176,7 +175,7 @@ are imported the same way, each resolving to its generated `__init__.py`.
 
 ## Where the configuration comes from
 
-`load_module` has to know *which* `generated_path` to read from. It resolves
+`find_spec` has to know *which* `generated_path` to read from. It resolves
 the configuration in priority order:
 
 ```python

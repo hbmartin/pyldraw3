@@ -49,16 +49,11 @@ def assert_example_completed(
     example_name: str,
     result: subprocess.CompletedProcess[str],
 ) -> None:
-    """Assert an example either succeeds or exits gracefully."""
-    assert result.returncode in [
-        0,
-        1,
-    ], f"{example_name} script failed unexpectedly: {result.stderr}"
-
-    if result.returncode == 0:
-        assert result.stdout.strip(), (
-            f"{example_name} script should write LDraw output to stdout"
-        )
+    """Examples must succeed and emit LDraw text on stdout."""
+    assert result.returncode == 0, f"{example_name} script failed: {result.stderr}"
+    assert result.stdout.strip(), (
+        f"{example_name} script should write LDraw output to stdout"
+    )
 
 
 @pytest.mark.integration

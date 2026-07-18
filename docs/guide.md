@@ -20,8 +20,8 @@ standard used by CAD applications for LEGO models. With PyLDraw3, you can:
 First, ensure you have the package installed and set up your environment:
 
 ```bash
-source .venv/bin/activate
 uv sync
+source .venv/bin/activate
 uv run ldraw download --version 2018-02 --yes
 uv run ldraw generate --yes
 ```
@@ -77,7 +77,7 @@ from ldraw.library.colours import (
     Green,
     Light_Grey,
     Red,
-    Trans_Blue,
+    Trans_Dark_Blue,
     Trans_Clear,
     Trans_Red,
     White,

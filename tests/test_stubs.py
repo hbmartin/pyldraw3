@@ -15,7 +15,7 @@ def generated_library(tmp_path: Path) -> str:
     generated_path = tmp_path / "generated"
     generated_path.mkdir()
     config = Config(
-        ldraw_library_path=str(Path("tests") / "test_ldraw"),
+        ldraw_library_path=str(Path(__file__).resolve().parent / "test_ldraw"),
         generated_path=str(generated_path),
     )
     generate(config)
@@ -49,9 +49,24 @@ def test_write_stub_package_mirrors_library(
     bricks_pyi = stubs_dir / "library" / "parts" / "bricks.pyi"
     bricks_py = Path(generated_library) / "library" / "parts" / "bricks.py"
     assert bricks_pyi.read_text() == bricks_py.read_text()
-    assert 'Brick2X4 = "3001"' in bricks_pyi.read_text()
+    assert "Brick2X4 = '3001'" in bricks_pyi.read_text()
 
 
 def test_write_stub_package_requires_generated_library(tmp_path: Path) -> None:
     with pytest.raises(LibraryNotGeneratedError, match="run `ldraw generate` first"):
         write_stub_package(tmp_path, tmp_path)
+
+
+def test_write_stub_package_removes_stale_stubs(
+    generated_library,
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "project"
+    stale = out_dir / "ldraw-stubs" / "library" / "parts" / "stale.pyi"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("Ghost = '0000'\n")
+
+    stubs_dir = write_stub_package(generated_library, out_dir)
+
+    assert not stale.exists()
+    assert (stubs_dir / "library" / "parts" / "bricks.pyi").is_file()

@@ -469,7 +469,7 @@ flattening the whole file.
 A convenience for the common "what is part `3001` called?" question:
 
 ```python
-parts.description_for("3001")      # "Brick 2 x 4"
+parts.description_for("3001")      # "Brick  2 x  4" (as written in parts.lst)
 parts.description_for("30071B")    # found even though parts.lst says "30071b"
 parts.description_for("nonsense")  # None
 ```

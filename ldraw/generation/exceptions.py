@@ -1,12 +1,20 @@
 """Exception classes for library generation."""
 
 
-class NoLibrarySelectedError(Exception):
-    """Exception raised when no library is selected."""
-
-
 class UnwritableOutputError(Exception):
-    """Exception raised when output directory is not writable."""
+    """The generated-library output directory cannot be created or replaced."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"Cannot write generated library at {path}")
+        self.path = path
+
+
+class GeneratedModuleSyntaxError(Exception):
+    """A generated module failed to compile — a generator bug."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"Generated module does not compile: {path}")
+        self.path = path
 
 
 class DuplicateSymbolError(Exception):

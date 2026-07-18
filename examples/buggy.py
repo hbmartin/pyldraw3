@@ -20,6 +20,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from ldraw.figure import *
+from ldraw.geometry import YAxis
 from ldraw.library.colours import *
 from ldraw.library.parts import (
     Antenna4HWithRoundedTop,
@@ -32,9 +34,6 @@ from ldraw.library.parts import (
     Tyre6_50X8OffsetTread,
 )
 from ldraw.library.parts.minifig.accessories import Seat2X2
-
-from ldraw.figure import *
-from ldraw.geometry import YAxis
 from ldraw.pieces import Group, Piece
 
 figure = Person(Vector(0, 0, -10))
@@ -47,7 +46,7 @@ print(figure.left_leg(White, 0))
 print(figure.right_leg(White, 0))
 print(figure.left_arm(White, -45))
 print(figure.left_hand(White, 0))
-print(figure.left_hand_item(Grey, Vector(0, -11, -12), 0, part="3959"))
+print(figure.left_hand_item(Light_Grey, Vector(0, -11, -12), 0, part="3959"))
 print(figure.right_arm(White, 0))
 print(figure.right_hand(White, 0))
 

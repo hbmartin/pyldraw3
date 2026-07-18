@@ -33,10 +33,14 @@ def test_public_api_reference_uses_canonical_public_exports() -> None:
         if line.startswith("::: ")
     ]
 
-    assert len(directives) == len(ldraw.__all__)
+    expected_count = len(ldraw.__all__) + len(docs_api_reference.SUPPLEMENTAL_API)
+    assert len(directives) == expected_count
     assert "ldraw.generation.generate" in directives
     assert "ldraw.generate" not in directives
-    assert markdown.count("show_root_heading: true") == len(ldraw.__all__)
+    assert "ldraw.config.Config" in directives
+    assert "ldraw.bom.rows_to_csv" in directives
+    assert "ldraw.errors.PartNotFoundError" in directives
+    assert markdown.count("show_root_heading: true") == expected_count
 
 
 def test_reference_markdown_deduplicates_canonical_objects(
@@ -98,3 +102,20 @@ def test_public_api_reference_reports_stale_all_export(
         "sample_package has no export named 'Missing'"
     )
     assert str(exc_info.value) == expected
+
+
+def test_supplemental_reports_stale_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        docs_api_reference,
+        "SUPPLEMENTAL_API",
+        (("ldraw.bom", "does_not_exist"),),
+    )
+
+    env = MacroEnv()
+    docs_api_reference.define_env(env)
+
+    assert env.macro_fn is not None
+    with pytest.raises(AttributeError, match=r"does_not_exist"):
+        env.macro_fn()

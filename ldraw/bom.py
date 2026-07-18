@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from ldraw.colour import Colour
+    from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
-    from ldraw.pieces import Piece
 
 BOM_FIELDS: tuple[str, ...] = (
     "part",
@@ -26,10 +26,15 @@ BOM_FIELDS: tuple[str, ...] = (
 
 
 class _ModelLike(Protocol):
-    """Object that can yield fully expanded leaf pieces."""
+    """Object that can yield colour-resolved leaf occurrences."""
 
-    def iter_pieces(self) -> Iterator[Piece]:  # pragma: no cover
-        """Yield leaf pieces, expanding submodel references."""
+    def iter_occurrences(  # pragma: no cover
+        self,
+        *,
+        expand_submodels: bool = True,
+        include_steps: bool = True,
+    ) -> Iterator[ModelOccurrence]:
+        """Yield placed leaf occurrences, expanding submodel references."""
         raise NotImplementedError
 
 
@@ -73,8 +78,10 @@ def bill_of_materials(
     """Count leaf pieces by part and colour, expanding submodel references.
 
     A submodel placed twice contributes its pieces twice. Submodel
-    reference pieces themselves are expanded, never counted. Descriptions
-    and colour names are resolved when a parts catalog is given.
+    reference pieces themselves are expanded, never counted. Colour 16
+    (the main colour) inside a submodel is resolved to the colour the
+    submodel was placed with. Descriptions and colour names are resolved
+    when a parts catalog is given.
 
     References only resolve against the given model's own submodel table.
     To count one submodel of a larger model, pass
@@ -87,10 +94,10 @@ def bill_of_materials(
     """
     counts: Counter[tuple[str, Colour]] = Counter()
     display: dict[str, str] = {}
-    for piece in model.iter_pieces():
-        part_key = piece.part.casefold()
-        display.setdefault(part_key, piece.part)
-        counts[(part_key, piece.colour)] += 1
+    for occurrence in model.iter_occurrences(include_steps=False):
+        part_key = occurrence.part_code.casefold()
+        display.setdefault(part_key, occurrence.part_code)
+        counts[(part_key, occurrence.colour)] += 1
     rows = [
         BomRow(
             part=display[part_key],
