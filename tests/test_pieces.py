@@ -227,12 +227,12 @@ def test_piece_place_accepts_int_colour() -> None:
 
 
 @pytest.fixture
-def figure():
+def figure() -> Person:
     return Person(Vector(0, 0, -10))
 
 
 @pytest.fixture
-def full_figure(figure):
+def full_figure(figure: Person) -> Person:
     figure.left_arm(Yellow, -45)
     figure.left_hand(Yellow, 10)
     figure.right_arm(Yellow, -45)
@@ -242,16 +242,16 @@ def full_figure(figure):
     return figure
 
 
-def test_add_hat_valid_head(figure) -> None:
+def test_add_hat_valid_head(figure: Person) -> None:
     assert figure.hat(White, HelmetClassic) is None
 
 
-def test_add_hat_no_head(figure) -> None:
+def test_add_hat_no_head(figure: Person) -> None:
     assert figure.head(Yellow, 30) is not None
     assert figure.hat(White, HelmetClassic) is not None
 
 
-def test_add_lh_item_nopart(figure, full_figure) -> None:
+def test_add_lh_item_nopart(figure: Person, full_figure: Person) -> None:
     assert full_figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15) is None
     assert (
         full_figure.left_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie)
@@ -259,7 +259,7 @@ def test_add_lh_item_nopart(figure, full_figure) -> None:
     )
 
 
-def test_add_rh_item_nopart(figure, full_figure) -> None:
+def test_add_rh_item_nopart(figure: Person, full_figure: Person) -> None:
     assert full_figure.right_hand_item(Light_Grey, Vector(0, 0, -12), -15) is None
     assert (
         full_figure.right_hand_item(Light_Grey, Vector(0, 0, -12), -15, CameraMovie)
@@ -267,17 +267,17 @@ def test_add_rh_item_nopart(figure, full_figure) -> None:
     )
 
 
-def test_add_ls_item_nopart(figure, full_figure) -> None:
+def test_add_ls_item_nopart(figure: Person, full_figure: Person) -> None:
     assert full_figure.left_shoe(Black, 10) is None
     assert full_figure.left_shoe(Black, 10, Flipper) is not None
 
 
-def test_add_rs_item_nopart(figure, full_figure) -> None:
+def test_add_rs_item_nopart(figure: Person, full_figure: Person) -> None:
     assert full_figure.right_shoe(Black, 10) is None
     assert full_figure.right_shoe(Black, 10, Flipper) is not None
 
 
-def test_hat_sits_at_head_position(figure) -> None:
+def test_hat_sits_at_head_position(figure: Person) -> None:
     head = figure.head(Yellow)
     hat = figure.hat(White)
 
@@ -288,7 +288,7 @@ def test_hat_sits_at_head_position(figure) -> None:
     assert hat.matrix == head.matrix
 
 
-def test_default_leg_and_hip_parts_are_plain_codes(figure) -> None:
+def test_default_leg_and_hip_parts_are_plain_codes(figure: Person) -> None:
     assert figure.hips(Yellow).part == figure_mod.Hips == "3815"
     assert figure.left_leg(Yellow).part == figure_mod.LegLeft == "3817"
     assert figure.right_leg(Yellow).part == figure_mod.LegRight == "3816"

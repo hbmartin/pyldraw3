@@ -3,12 +3,13 @@
 **Reach for these first.** They are the common, geometrically predictable parts
 and the standard LEGO colours — using them keeps freeform builds reliable and
 avoids obscure-part mistakes. For anything not here, search the full library
-(`ldraw parts search "..."`) and confirm the code with `ldraw parts info CODE`.
+(`"$PYTHON_BIN" -m ldraw.cli parts search "..."`) and confirm the code with
+`"$PYTHON_BIN" -m ldraw.cli parts info CODE`.
 
 > Confirm before baking in: the codes below are the canonical LDraw catalog
 > codes and the import names follow pyldraw3's naming convention, but the exact
 > generated import symbol can vary (variant suffixes like `a`/`b`, spacing). If
-> an import fails, run `ldraw parts info CODE` — it prints the exact
+> an import fails, run `"$PYTHON_BIN" -m ldraw.cli parts info CODE` — it prints the exact
 > `from ldraw.library.parts... import ...` line — and use the code string
 > directly (`Piece.place("3001", ...)`) as a fallback.
 
@@ -144,7 +145,7 @@ Import from `ldraw.library.colours` (spaces → underscores). Codes shown for th
 To list exactly what the generated library provides:
 
 ```bash
-python -c "from ldraw.library.colours import ColoursByName; print(', '.join(sorted(ColoursByName)))"
+"$PYTHON_BIN" -c "from ldraw.library.colours import ColoursByName; print(', '.join(sorted(ColoursByName)))"
 ```
 
 Custom/direct colour (no name needed): `from ldraw import Colour;

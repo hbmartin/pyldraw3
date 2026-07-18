@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import yaml
 
@@ -54,11 +55,12 @@ class Config:
 
         try:
             with config_path.open() as config_file_handle:
-                cfg = yaml.load(config_file_handle, Loader=yaml.SafeLoader) or {}
+                loaded = yaml.load(config_file_handle, Loader=yaml.SafeLoader)
         except FileNotFoundError:
             return cls()
         except (OSError, yaml.YAMLError) as exc:
             raise ConfigLoadError(path=str(config_path), reason=str(exc)) from exc
+        cfg = {} if loaded is None else loaded
         if not isinstance(cfg, dict):
             raise ConfigLoadError(
                 path=str(config_path),
@@ -93,9 +95,22 @@ class Config:
         return written
 
     def write(self, config_file: str | Path | None = None) -> None:
-        """Write the config to config.yml atomically."""
+        """Write the config atomically with a unique sibling temporary file."""
         config_path = get_config(config_file=config_file)
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = config_path.with_name(f"{config_path.name}.tmp")
-        temp_path.write_text(yaml.dump(self.to_dict()), encoding="utf-8")
-        temp_path.replace(config_path)
+        temp_path: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=config_path.parent,
+                prefix=f".{config_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                yaml.safe_dump(self.to_dict(), temp_file)
+            temp_path.replace(config_path)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)

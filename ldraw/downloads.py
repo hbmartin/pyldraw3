@@ -120,7 +120,19 @@ def _unwrap_archive_wrapper(destination: Path) -> None:
     )
     if wrapper is None:
         return
-    for entry in wrapper.iterdir():
+    entries = list(wrapper.iterdir())
+    by_lower: dict[str, str] = {}
+    for entry in entries:
+        lower_name = entry.name.lower()
+        if (clashing := by_lower.get(lower_name)) is not None:
+            message = (
+                f"Case-colliding wrapper entries {clashing!r} and {entry.name!r}"
+                f" in {wrapper}; cannot unwrap the LDraw archive"
+            )
+            raise ValueError(message)
+        by_lower[lower_name] = entry.name
+
+    for entry in entries:
         for existing in destination.iterdir():
             if existing != wrapper and existing.name.lower() == entry.name.lower():
                 if existing.is_dir():
@@ -211,7 +223,11 @@ def _download(
         return retrieved
 
     partial = retrieved.with_name(f"{retrieved.name}.part")
-    with requests.get(url, stream=True, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+    with requests.get(
+        url=url,
+        stream=True,
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    ) as response:
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
         message = f"Downloading {filename}"
@@ -291,15 +307,15 @@ def download(
         )
         cached.unlink()
     retrieved = _download(
-        url,
-        filename,
+        url=url,
+        filename=filename,
         show_progress=show_progress,
         on_progress=on_progress,
     )
 
     version_dir = unpack_version(
-        retrieved,
-        version,
+        version_zip=retrieved,
+        version=version,
         show_progress=show_progress,
         on_progress=on_progress,
     )

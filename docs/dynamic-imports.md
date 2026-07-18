@@ -76,7 +76,8 @@ interpreter asks each finder on `sys.meta_path`, in order, "can you handle this
 module?" — and the first one that says yes provides a **loader** that produces
 the module object. This is the mechanism described in Python's import
 reference; `LibraryImporter` (in [`ldraw/imports.py`](https://github.com/hbmartin/pyldraw3/blob/main/ldraw/imports.py))
-is one such finder, acting as its own loader.
+is one such finder. It returns a file-backed loader for each generated module;
+the finder itself does not execute module code.
 
 ### Registration
 
@@ -137,12 +138,13 @@ def find_spec(self, fullname, path=None, target=None):
     # …pick whichever exists, then importlib.util.spec_from_file_location…
 ```
 
-Because the returned spec's loader is a standard `SourceFileLoader`, CPython
-itself performs the load: it registers the module in `sys.modules` before
-execution and rolls it back if execution raises, so a failed import never
-leaves a half-initialised module cached. There is no custom loader and no
-legacy `load_module()` fallback — imports work unchanged under
-`python -W error::ImportWarning`.
+The returned spec uses a `SourceFileLoader` subclass that takes the importer's
+state lock while executing generated code. CPython still owns the normal module
+lifecycle: it registers the module in `sys.modules` before execution and rolls
+it back if execution raises, so a failed import never leaves a half-initialised
+module cached. The small loader wrapper only prevents `set_config()` from
+purging the cache during execution; there is no legacy `load_module()` fallback,
+and imports work unchanged under `python -W error::ImportWarning`.
 
 Two failure modes are deliberately distinct: when *no* generated library
 exists at all, `find_spec` returns `None`, so
@@ -214,6 +216,11 @@ drops the `library` attribute off the `ldraw` module object), so the next
 import re-resolves against the new `generated_path`. This is what lets an
 application point pyldraw3 at a freshly generated library — after switching
 LDraw releases, say — without restarting.
+
+If another thread is currently importing a generated module, `clean` waits for
+that import to leave CPython's per-module import lock before evicting it. This
+prevents reconfiguration from deleting a `sys.modules` entry while the import
+machinery is still finalizing it.
 
 ## Why your IDE can't see it (and the fix)
 

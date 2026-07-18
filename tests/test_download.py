@@ -54,7 +54,7 @@ def test_download_versioned_uses_archive_url(
 ) -> None:
     download(show_progress=False, version="2018-02")
 
-    assert download_mock.call_args.args[0] == f"{ARCHIVE_URL}/2018-02.zip"
+    assert download_mock.call_args.kwargs["url"] == f"{ARCHIVE_URL}/2018-02.zip"
 
 
 @patch("ldraw.downloads.get_latest_release_id", return_value="2099-01")
@@ -72,7 +72,7 @@ def test_download_complete_uses_ldraw_url(
 
     assert download(show_progress=False) == "2099-01"
 
-    assert download_mock.call_args.args[0] == f"{LDRAW_URL}/complete.zip"
+    assert download_mock.call_args.kwargs["url"] == f"{LDRAW_URL}/complete.zip"
     assert (tmp_path / "ldraw" / "_release.txt").read_text() == "2099-01"
 
 
@@ -329,6 +329,30 @@ def test_normalize_tree_raises_on_case_collision(tmp_path: Path) -> None:
         _normalize_tree(tmp_path)
 
 
+def test_normalize_tree_rejects_wrapper_collision_before_mutation(
+    tmp_path: Path,
+) -> None:
+    wrapper = tmp_path / "ldraw-parts-2099-01"
+    upper = wrapper / "LDRAW"
+    lower = wrapper / "ldraw"
+    upper.mkdir(parents=True)
+    try:
+        lower.mkdir()
+    except FileExistsError:
+        pytest.skip("case-insensitive filesystem cannot host colliding names")
+    if len(list(wrapper.iterdir())) < 2:
+        pytest.skip("case-insensitive filesystem cannot host colliding names")
+    (upper / "upper.dat").write_text("upper")
+    (lower / "lower.dat").write_text("lower")
+
+    with pytest.raises(ValueError, match="Case-colliding wrapper entries"):
+        _normalize_tree(tmp_path)
+
+    assert (upper / "upper.dat").read_text() == "upper"
+    assert (lower / "lower.dat").read_text() == "lower"
+    assert wrapper.is_dir()
+
+
 def test_case_safe_rename_rolls_back_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -404,3 +428,19 @@ def test_extract_data_pan_returns_none_without_anchor() -> None:
     from ldraw.download_updates import extract_data_pan_from_html
 
     assert extract_data_pan_from_html("<html></html>") is None
+
+
+@patch("ldraw.download_updates.requests.get")
+def test_latest_release_id_rejects_missing_segment_boundary(
+    get_mock: MagicMock,
+) -> None:
+    from ldraw.download_updates import TARGET_HREF, get_latest_release_id
+    from ldraw.errors import CouldNotDetermineLatestVersionError
+
+    get_mock.return_value.text = (
+        f'<a data-pan="update-complete-zipfoo2024-01" '
+        f'href="{TARGET_HREF}">malformed</a>'
+    )
+
+    with pytest.raises(CouldNotDetermineLatestVersionError):
+        get_latest_release_id()

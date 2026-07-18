@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pystache
 
+from ldraw.generation.exceptions import DuplicateSymbolError
 from ldraw.resources import _get_resource_content
 from ldraw.utils import camel, clean, safe_identifier
 
@@ -42,8 +44,38 @@ def colours_module_content(parts: Parts) -> str:
             )
             continue
         rows.append(get_c_dict(colour, name=name))
+    _dedupe_colour_names(rows)
     rows.sort(key=lambda row: row["code"])
     return pystache.render(colours_template, context={"colours": rows})
+
+
+def _dedupe_colour_names(rows: list[dict[str, object]]) -> None:
+    """Make sanitized colour symbols unique using their LDraw colour codes."""
+    by_name: defaultdict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        name = row["name"]
+        if not isinstance(name, str):
+            message = f"invalid generated colour name: {name!r}"
+            raise TypeError(message)
+        by_name[name].append(row)
+
+    for name, group in by_name.items():
+        if len(group) == 1:
+            continue
+        logger.warning(
+            "%d colours sanitize to the same symbol %r;"
+            " suffixing each with its colour code",
+            len(group),
+            name,
+        )
+        for row in group:
+            row["name"] = f"{name}_{row['code']}"
+
+    seen: defaultdict[str, int] = defaultdict(int)
+    for row in rows:
+        seen[str(row["name"])] += 1
+    if colliding := [name for name, count in seen.items() if count > 1]:
+        raise DuplicateSymbolError("colours", colliding)
 
 
 def get_c_dict(colour: Colour, *, name: str) -> dict[str, object]:

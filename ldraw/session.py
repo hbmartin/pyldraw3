@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 from zipfile import BadZipFile
 
@@ -183,8 +184,14 @@ class LDrawSession:
                 path=paths.catalog_db,
             ),
         )
-        temp_db = paths.catalog_db.with_name(f"{paths.catalog_db.name}.tmp")
         parts = Parts.get(paths.parts_lst)
+        with NamedTemporaryFile(
+            dir=paths.catalog_db.parent,
+            prefix=f".{paths.catalog_db.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_db = Path(temp_file.name)
         try:
             save_catalog(
                 temp_db,

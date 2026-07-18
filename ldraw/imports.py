@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.machinery
 import importlib.util
 import logging
 import sys
 import threading
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -19,6 +21,16 @@ if TYPE_CHECKING:
 VIRTUAL_MODULE = "ldraw.library"
 
 logger = logging.getLogger("ldraw")
+
+_STATE_LOCK = threading.RLock()
+
+
+class _StateLockedSourceFileLoader(importlib.machinery.SourceFileLoader):
+    """Serialize generated-module execution against importer reconfiguration."""
+
+    def exec_module(self, module: ModuleType) -> None:
+        with _STATE_LOCK:
+            super().exec_module(module)
 
 
 def _module_candidates(library_root: Path, fullname: str) -> tuple[Path, Path]:
@@ -47,12 +59,13 @@ def load_lib(library_path: str | Path, fullname: str) -> ModuleType:
         raise CouldNotLoadSpecError(fullname)
     library_module = importlib.util.module_from_spec(spec)
 
-    sys.modules[fullname] = library_module
-    try:
-        spec.loader.exec_module(library_module)
-    except Exception:
-        sys.modules.pop(fullname, None)
-        raise
+    with _STATE_LOCK:
+        sys.modules[fullname] = library_module
+        try:
+            spec.loader.exec_module(library_module)
+        except Exception:
+            sys.modules.pop(fullname, None)
+            raise
 
     return library_module
 
@@ -63,8 +76,9 @@ class LibraryImporter:
     # Written by set_config (last caller wins) and read without the lock in
     # find_spec — a benign racy read of a single reference.
     _default_config: ClassVar[Config | None] = None
-    # RLock: set_config calls clean under the same lock.
-    _state_lock: ClassVar[threading.RLock] = threading.RLock()
+    # Shared with generated-module loaders so reconfiguration cannot evict a
+    # module while its code is executing.
+    _state_lock: ClassVar[threading.RLock] = _STATE_LOCK
 
     def __init__(self, config: Config | None = None) -> None:
         self.config = config
@@ -82,7 +96,7 @@ class LibraryImporter:
         """Set the default configuration and clean cached modules."""
         with cls._state_lock:
             cls._default_config = config
-            cls.clean()
+        cls.clean()
 
     def find_spec(
         self,
@@ -96,9 +110,10 @@ class LibraryImporter:
         generated library exists at all — so probing with
         ``importlib.util.find_spec`` is truthful — and raises
         ``CouldNotFindModuleError`` for a missing submodule of an existing
-        generated library. The returned spec's loader is a standard
-        ``SourceFileLoader``, so CPython registers the module in
-        ``sys.modules`` before executing it and rolls back on failure.
+        generated library. The returned spec uses a ``SourceFileLoader``
+        subclass that serializes execution against reconfiguration; CPython
+        still registers the module in ``sys.modules`` before executing it and
+        rolls back on failure.
         Resolving the configuration may raise ``ConfigLoadError`` for a
         corrupt config file.
         """
@@ -116,17 +131,43 @@ class LibraryImporter:
         else:
             raise CouldNotFindModuleError(fullname, str(init_path), str(py_path))
         logger.debug("loading %s from %s", fullname, config.generated_path)
-        spec = importlib.util.spec_from_file_location(fullname, module_path)
+        loader = _StateLockedSourceFileLoader(fullname, str(module_path))
+        spec = importlib.util.spec_from_file_location(
+            fullname,
+            module_path,
+            loader=loader,
+        )
         if spec is None or spec.loader is None:
             raise CouldNotLoadSpecError(fullname)
         return spec
 
     @classmethod
     def clean(cls) -> None:
-        """Clean cached library modules from sys.modules."""
+        """Clean cached library modules after any in-flight imports finish."""
         with cls._state_lock:
-            for fullname in list(sys.modules):
-                if cls.valid_module(fullname):
+            initializing: list[str] = []
+            for fullname, module in list(sys.modules.items()):
+                if not cls.valid_module(fullname):
+                    continue
+                spec = getattr(module, "__spec__", None)
+                if getattr(spec, "_initializing", False):
+                    initializing.append(fullname)
+                else:
+                    del sys.modules[fullname]
+
+        # Importing an initializing module waits on CPython's per-module import
+        # lock. Do this without _state_lock so its loader can finish execution.
+        for fullname in initializing:
+            # A failed import removes itself from sys.modules; clean-up has
+            # nothing further to do for that name.
+            with suppress(Exception):
+                importlib.import_module(fullname)
+
+        with cls._state_lock:
+            for fullname in initializing:
+                module = sys.modules.get(fullname)
+                spec = getattr(module, "__spec__", None)
+                if module is not None and not getattr(spec, "_initializing", False):
                     del sys.modules[fullname]
             if "ldraw" in sys.modules:
                 ldraw_mod = sys.modules["ldraw"]

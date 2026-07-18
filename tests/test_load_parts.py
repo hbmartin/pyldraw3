@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -282,7 +282,7 @@ def test_load_primitives() -> None:
 
 
 @patch.object(Path, "open", side_effect=OSError)
-def test_cantreadpartslst(mocked) -> None:
+def test_cantreadpartslst(mocked: MagicMock) -> None:
     with pytest.raises(OSError):
         Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
 
@@ -494,14 +494,16 @@ def test_missing_part_file_skipped_during_categorization(
     assert "skipping part missing" in caplog.text
 
 
-def test_concurrent_catalog_access_categorizes_once(monkeypatch) -> None:
+def test_concurrent_catalog_access_categorizes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import threading
 
     parts = Parts(TESTS_DIR / "test_ldraw2" / "ldraw" / "parts.lst")
     calls = {"count": 0}
     original = Parts._categorize_parts  # noqa: SLF001
 
-    def counting(self) -> None:
+    def counting(self: Parts) -> None:
         calls["count"] += 1
         original(self)
 
@@ -520,8 +522,9 @@ def test_concurrent_catalog_access_categorizes_once(monkeypatch) -> None:
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=5)
 
+    assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     assert calls["count"] == 1
     for category_entries in parts.catalog.by_category.values():

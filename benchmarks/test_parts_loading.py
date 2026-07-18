@@ -8,7 +8,7 @@ import pytest
 
 from ldraw.parts import PartCategory, Parts
 
-PARTS_LST = (
+PARTS_LST: Path = (
     Path(__file__).resolve().parents[1] / "tests" / "test_ldraw" / "ldraw" / "parts.lst"
 )
 

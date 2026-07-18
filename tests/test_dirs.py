@@ -12,17 +12,27 @@ def test_dirs_do_not_create_directories(
     tmp_path: Path,
 ) -> None:
     never = tmp_path / "never"
+
+    def cache_dir(_name: str) -> str:
+        return str(never / "cache")
+
+    def config_dir(_name: str) -> str:
+        return str(never / "config")
+
+    def data_dir(_name: str) -> str:
+        return str(never / "data")
+
     monkeypatch.setattr(
         "ldraw.dirs.platformdirs.user_cache_dir",
-        lambda _name: str(never / "cache"),
+        cache_dir,
     )
     monkeypatch.setattr(
         "ldraw.dirs.platformdirs.user_config_dir",
-        lambda _name: str(never / "config"),
+        config_dir,
     )
     monkeypatch.setattr(
         "ldraw.dirs.platformdirs.user_data_dir",
-        lambda _name: str(never / "data"),
+        data_dir,
     )
 
     assert get_cache_dir() == str(never / "cache")

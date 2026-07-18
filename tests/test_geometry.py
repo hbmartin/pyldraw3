@@ -6,6 +6,7 @@ import random
 import pytest
 
 from ldraw.geometry import (
+    Axis,
     CoordinateSystem,
     Identity,
     Matrix,
@@ -36,17 +37,17 @@ def test_mulothers() -> None:
 
 
 @pytest.fixture
-def random_matrix():
+def random_matrix() -> Matrix:
     rng = random.Random(12345)
     return Matrix(rows=[[rng.random() for _ in range(3)] for _ in range(3)])
 
 
-def test_copy(random_matrix) -> None:
+def test_copy(random_matrix: Matrix) -> None:
     assert random_matrix.copy() == random_matrix
 
 
 @pytest.mark.parametrize("axis", [XAxis, YAxis, ZAxis])
-def test_rotate_radians(random_matrix, axis) -> None:
+def test_rotate_radians(random_matrix: Matrix, axis: type[Axis]) -> None:
     original = random_matrix.copy()
     rotated = original.rotate(90, axis=axis)
 
@@ -54,7 +55,7 @@ def test_rotate_radians(random_matrix, axis) -> None:
     assert rotated.flatten() == pytest.approx(original.flatten())
 
 
-def test_rotate_wrong_axis(random_matrix) -> None:
+def test_rotate_wrong_axis(random_matrix: Matrix) -> None:
     with pytest.raises(MatrixError):
         random_matrix.rotate(444, axis=None)
 
@@ -70,7 +71,7 @@ def test_rotate_90_maps_axes_cyclically() -> None:
         assert (rotated.x, rotated.y, rotated.z) == pytest.approx(expected, abs=1e-12)
 
 
-def test_rotate_and_scale_post_multiply(random_matrix) -> None:
+def test_rotate_and_scale_post_multiply(random_matrix: Matrix) -> None:
     rotated = random_matrix.rotate(30, axis=YAxis)
     assert rotated.flatten() == pytest.approx(
         (random_matrix * Identity().rotate(30, YAxis)).flatten(),
@@ -154,7 +155,7 @@ def test_rows_setter_rejects_non_3x3() -> None:
         m.rows = [[1, 2], [3, 4]]
 
 
-def test_vector_scalar_multiplication(random_matrix) -> None:
+def test_vector_scalar_multiplication(random_matrix: Matrix) -> None:
     assert Vector(1, 2, 3) * 2 == Vector(2, 4, 6)
     assert 2 * Vector(1, 2, 3) == Vector(2, 4, 6)
 

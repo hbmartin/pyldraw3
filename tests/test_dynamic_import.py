@@ -3,8 +3,10 @@
 import importlib
 import importlib.util
 import sys
+import threading
 import warnings
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -127,3 +129,52 @@ def test_load_lib_exec_failure_rolls_back_sys_modules(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="boom"):
         load_lib(tmp_path, "ldraw.library.broken")
     assert "ldraw.library.broken" not in sys.modules
+
+
+def test_set_config_waits_for_inflight_import(generated_library: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    gate_name = "_pyldraw_import_gate"
+    gate = ModuleType(gate_name)
+    gate.started = started
+    gate.release = release
+    sys.modules[gate_name] = gate
+    (generated_library / "slow.py").write_text(
+        f"from {gate_name} import release, started\n"
+        "started.set()\n"
+        "release.wait(timeout=5)\n"
+        "VALUE = 42\n",
+    )
+    errors: list[Exception] = []
+
+    def import_slow_module() -> None:
+        try:
+            importlib.import_module("ldraw.library.slow")
+        except Exception as exc:  # noqa: BLE001 - surface thread failures
+            errors.append(exc)
+
+    config = Config(
+        ldraw_library_path=str(generated_library.parent / "ldraw"),
+        generated_path=str(generated_library.parent),
+    )
+    import_thread = threading.Thread(target=import_slow_module)
+    reconfigure_thread = threading.Thread(
+        target=LibraryImporter.set_config,
+        args=(config,),
+    )
+    try:
+        import_thread.start()
+        assert started.wait(timeout=5)
+        reconfigure_thread.start()
+        reconfigure_thread.join(timeout=0.1)
+        assert reconfigure_thread.is_alive()
+    finally:
+        release.set()
+        import_thread.join(timeout=5)
+        reconfigure_thread.join(timeout=5)
+        sys.modules.pop(gate_name, None)
+
+    assert not import_thread.is_alive()
+    assert not reconfigure_thread.is_alive()
+    assert errors == []
+    assert "ldraw.library.slow" not in sys.modules
