@@ -9,9 +9,10 @@ avoids obscure-part mistakes. For anything not here, search the full library
 > Confirm before baking in: the codes below are the canonical LDraw catalog
 > codes and the import names follow pyldraw3's naming convention, but the exact
 > generated import symbol can vary (variant suffixes like `a`/`b`, spacing). If
-> an import fails, run `"$PYTHON_BIN" -m ldraw.cli parts info CODE` — it prints the exact
-> `from ldraw.library.parts... import ...` line — and use the code string
-> directly (`Piece.place("3001", ...)`) as a fallback.
+> an import fails, run `"$PYTHON_BIN" -m ldraw.cli parts info CODE` — it may print
+> the exact `from ldraw.library.parts... import ...` line. When no import
+> suggestion is available, use the code string directly
+> (`Piece.place("3001", ...)`) as a fallback.
 
 Dimensions reminder: brick = 24 LDU tall, plate = 8 LDU, stud pitch = 20 LDU,
 `-Y` is up. (See `api-cheatsheet.md`.)

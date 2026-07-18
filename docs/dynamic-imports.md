@@ -130,7 +130,7 @@ and the last component is resolved to either a package
 def find_spec(self, fullname, path=None, target=None):
     if not self.valid_module(fullname):
         return None
-    config = self.config or self._default_config or Config.load()
+    config, generation = self._config_snapshot()
     library_root = Path(config.generated_path)
     if not (library_root / "library" / "__init__.py").is_file():
         return None                      # nothing generated: don't claim it
@@ -138,13 +138,15 @@ def find_spec(self, fullname, path=None, target=None):
     # …pick whichever exists, then importlib.util.spec_from_file_location…
 ```
 
-The returned spec uses a `SourceFileLoader` subclass that takes the importer's
-state lock while executing generated code. CPython still owns the normal module
-lifecycle: it registers the module in `sys.modules` before execution and rolls
-it back if execution raises, so a failed import never leaves a half-initialised
-module cached. The small loader wrapper only prevents `set_config()` from
-purging the cache during execution; there is no legacy `load_module()` fallback,
-and imports work unchanged under `python -W error::ImportWarning`.
+The returned spec uses a `SourceFileLoader` subclass that captures that
+configuration generation and takes the importer's state lock while executing
+generated code. If `set_config()` or `clean()` invalidated the spec after
+resolution, the loader raises `StaleModuleSpecError` instead of executing code
+from the old path. CPython still owns the normal module lifecycle: it registers
+the module in `sys.modules` before execution and rolls it back if execution
+raises, so a failed import never leaves a half-initialised module cached. There
+is no legacy `load_module()` fallback, and imports work unchanged under
+`python -W error::ImportWarning`.
 
 Two failure modes are deliberately distinct: when *no* generated library
 exists at all, `find_spec` returns `None`, so
@@ -181,7 +183,7 @@ are imported the same way, each resolving to its generated `__init__.py`.
 the configuration in priority order:
 
 ```python
-config = self.config or self._default_config or Config.load()
+config, generation = self._config_snapshot()
 ```
 
 - **`self.config`** — a `Config` passed to a specific `LibraryImporter`
@@ -207,20 +209,22 @@ both halves:
 ```python
 @classmethod
 def set_config(cls, config):
-    cls._default_config = config
-    cls.clean()
+    cls.clean(config=config)
 ```
 
-`clean` evicts every cached `ldraw.library*` module from `sys.modules` (and
-drops the `library` attribute off the `ldraw` module object), so the next
-import re-resolves against the new `generated_path`. This is what lets an
-application point pyldraw3 at a freshly generated library — after switching
-LDraw releases, say — without restarting.
+Under one state lock, `clean` installs the optional configuration, advances a
+configuration generation, and evicts every cached `ldraw.library*` module from
+`sys.modules` (and drops the `library` attribute off the `ldraw` module object).
+The next import therefore re-resolves against the new `generated_path`. This is
+what lets an application point pyldraw3 at a freshly generated library — after
+switching LDraw releases, say — without restarting.
 
 If another thread is currently importing a generated module, `clean` waits for
 that import to leave CPython's per-module import lock before evicting it. This
 prevents reconfiguration from deleting a `sys.modules` entry while the import
-machinery is still finalizing it.
+machinery is still finalizing it. A spec that was resolved but had not started
+executing is instead rejected as stale; that individual import raises
+`StaleModuleSpecError` and can be retried against the new configuration.
 
 ## Why your IDE can't see it (and the fix)
 
@@ -250,7 +254,7 @@ Regenerate the stubs whenever you change LDraw releases. See the `README`'s
   cache files on demand.
 - It resolves which library to use from an explicit config, a process default
   (`set_config`), or the persisted CLI configuration.
-- `set_config` / `clean` allow switching libraries at runtime by evicting the
-  cached modules.
+- `set_config` / `clean` switch libraries at runtime by evicting cached modules
+  and rejecting not-yet-executed specs from the previous configuration.
 - Static tools can't see the generated modules, so `ldraw stubs` emits stub
   files for IDE autocompletion and type checking.

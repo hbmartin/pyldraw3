@@ -168,6 +168,16 @@ class CouldNotLoadSpecError(ModuleImportError):
         super().__init__(f"Could not build an import spec for {fullname}.")
 
 
+class StaleModuleSpecError(ModuleImportError):
+    """A generated-module spec was invalidated before it could execute."""
+
+    def __init__(self, fullname: str) -> None:
+        super().__init__(
+            f"Discarded stale import spec for {fullname} after library "
+            "reconfiguration; retry the import.",
+        )
+
+
 class ConfigLoadError(Exception):
     """The pyldraw config file could not be read or parsed."""
 

@@ -78,3 +78,37 @@ rules:
     pattern-either:
       - pattern: suffix == DEFAULT_SUFFIX
       - pattern: DEFAULT_SUFFIX == suffix
+
+  - id: pyldraw-import-config-must-use-generation-snapshot
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/imports.py
+    message: Read the default import configuration only through _config_snapshot().
+    patterns:
+      - pattern: $OWNER._default_config
+      - pattern-not-inside: |
+          def _config_snapshot(...):
+              ...
+      - pattern-not-inside: |
+          def clean(...):
+              ...
+
+  - id: pyldraw-thread-joins-must-share-a-deadline
+    languages:
+      - python
+    severity: WARNING
+    paths:
+      include:
+        - /tests/**
+    message: Use one monotonic deadline when joining multiple worker threads.
+    patterns:
+      - pattern-inside: |
+          for $THREAD in $THREADS:
+              ...
+      - pattern: $THREAD.join(timeout=$TIMEOUT)
+      - metavariable-regex:
+          metavariable: $TIMEOUT
+          regex: '^\d+(?:\.\d+)?$'

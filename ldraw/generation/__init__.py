@@ -49,8 +49,8 @@ def library_fingerprint(parts_lst: Path) -> str:
 
     Covers the generator schema version, ``parts.lst``, ``ldconfig.ldr``,
     and a per-file stat fingerprint of the part trees — a change to any of
-    them (including renames, in-place ``.dat`` header edits, and upgrading
-    to a pyldraw version with a fixed parser) invalidates the generation.
+    them, including renames and in-place ``.dat`` header edits, invalidates
+    the generation.
     """
     ldconfig_md5 = ""
     for item in parts_lst.parent.iterdir():

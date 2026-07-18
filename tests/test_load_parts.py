@@ -1,6 +1,7 @@
 """Tests for parts loading functionality."""
 
 import logging
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -494,20 +495,18 @@ def test_missing_part_file_skipped_during_categorization(
     assert "skipping part missing" in caplog.text
 
 
-def test_concurrent_catalog_access_categorizes_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_concurrent_catalog_access_categorizes_once() -> None:
     import threading
 
-    parts = Parts(TESTS_DIR / "test_ldraw2" / "ldraw" / "parts.lst")
     calls = {"count": 0}
     original = Parts._categorize_parts  # noqa: SLF001
 
-    def counting(self: Parts) -> None:
-        calls["count"] += 1
-        original(self)
+    class CountingParts(Parts):
+        def _categorize_parts(self) -> None:
+            calls["count"] += 1
+            original(self)
 
-    monkeypatch.setattr(Parts, "_categorize_parts", counting)
+    parts = CountingParts(TESTS_DIR / "test_ldraw2" / "ldraw" / "parts.lst")
     barrier = threading.Barrier(8)
     errors: list[Exception] = []
 
@@ -518,11 +517,15 @@ def test_concurrent_catalog_access_categorizes_once(
         except Exception as exc:  # noqa: BLE001 - surface thread failures
             errors.append(exc)
 
-    threads = [threading.Thread(target=hit_catalog) for _ in range(8)]
+    threads = [
+        threading.Thread(target=hit_catalog, daemon=True)
+        for _ in range(barrier.parties)
+    ]
     for thread in threads:
         thread.start()
+    deadline = time.monotonic() + 5
     for thread in threads:
-        thread.join(timeout=5)
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     assert not any(thread.is_alive() for thread in threads)
     assert errors == []

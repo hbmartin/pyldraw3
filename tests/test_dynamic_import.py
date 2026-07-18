@@ -12,7 +12,11 @@ import pytest
 
 from ldraw import LibraryImporter
 from ldraw.config import Config
-from ldraw.errors import CouldNotFindModuleError, CouldNotLoadSpecError
+from ldraw.errors import (
+    CouldNotFindModuleError,
+    CouldNotLoadSpecError,
+    StaleModuleSpecError,
+)
 from ldraw.imports import load_lib
 
 
@@ -131,9 +135,13 @@ def test_load_lib_exec_failure_rolls_back_sys_modules(tmp_path: Path) -> None:
     assert "ldraw.library.broken" not in sys.modules
 
 
-def test_set_config_waits_for_inflight_import(generated_library: Path) -> None:
+def test_set_config_waits_for_inflight_import(
+    generated_library: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     started = threading.Event()
     release = threading.Event()
+    clean_entered = threading.Event()
     gate_name = "_pyldraw_import_gate"
     gate = ModuleType(gate_name)
     gate.started = started
@@ -157,6 +165,18 @@ def test_set_config_waits_for_inflight_import(generated_library: Path) -> None:
         ldraw_library_path=str(generated_library.parent / "ldraw"),
         generated_path=str(generated_library.parent),
     )
+    original_clean = LibraryImporter.clean
+
+    def signaling_clean(
+        cls: type[LibraryImporter],
+        *,
+        config: Config | None = None,
+    ) -> None:
+        assert cls is LibraryImporter
+        clean_entered.set()
+        original_clean(config=config)
+
+    monkeypatch.setattr(LibraryImporter, "clean", classmethod(signaling_clean))
     import_thread = threading.Thread(target=import_slow_module)
     reconfigure_thread = threading.Thread(
         target=LibraryImporter.set_config,
@@ -166,6 +186,7 @@ def test_set_config_waits_for_inflight_import(generated_library: Path) -> None:
         import_thread.start()
         assert started.wait(timeout=5)
         reconfigure_thread.start()
+        assert clean_entered.wait(timeout=5)
         reconfigure_thread.join(timeout=0.1)
         assert reconfigure_thread.is_alive()
     finally:
@@ -178,3 +199,39 @@ def test_set_config_waits_for_inflight_import(generated_library: Path) -> None:
     assert not reconfigure_thread.is_alive()
     assert errors == []
     assert "ldraw.library.slow" not in sys.modules
+
+
+def test_stale_spec_is_rejected_after_reconfiguration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    for root, value in ((old_root, "old"), (new_root, "new")):
+        library = root / "library"
+        library.mkdir(parents=True)
+        (library / "__init__.py").write_text("__all__ = ['stale']\n")
+        (library / "stale.py").write_text(f"VALUE = {value!r}\n")
+
+    old_config = Config(generated_path=str(old_root))
+    new_config = Config(generated_path=str(new_root))
+    monkeypatch.setattr(LibraryImporter, "_default_config", old_config)
+    LibraryImporter.clean()
+
+    fullname = "ldraw.library.stale"
+    spec = LibraryImporter().find_spec(fullname)
+    assert spec is not None
+    assert isinstance(spec.loader, importlib.machinery.SourceFileLoader)
+    stale_module = importlib.util.module_from_spec(spec)
+
+    LibraryImporter.set_config(new_config)
+    sys.modules[fullname] = stale_module
+    try:
+        with pytest.raises(StaleModuleSpecError, match="retry the import"):
+            spec.loader.exec_module(stale_module)
+    finally:
+        sys.modules.pop(fullname, None)
+
+    fresh_module = importlib.import_module(fullname)
+    assert fresh_module.VALUE == "new"
+    LibraryImporter.clean()
