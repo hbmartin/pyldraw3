@@ -28,6 +28,19 @@ from ldraw.errors import (
     PartError,
 )
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.instruction_artifacts import (
+    instruction_manifest,
+    manifest_json,
+    write_instruction_manifest,
+    write_instruction_snapshots,
+)
+from ldraw.instructions import (
+    CameraState,
+    InstructionDocument,
+    InstructionIssue,
+    InstructionStep,
+    iter_instruction_issues,
+)
 from ldraw.model import read_model
 from ldraw.parts import CatalogEntry, Parts
 from ldraw.snippets import suggested_import
@@ -152,6 +165,84 @@ def build_parser() -> ArgumentParser:
         type=Path,
         default=Path(),
         help="Directory to write ldraw-stubs into (default: current directory).",
+    )
+
+    instructions_parser = subparsers.add_parser(
+        "instructions",
+        help="Inspect, validate, and export renderer-neutral instructions.",
+    )
+    instruction_subparsers = instructions_parser.add_subparsers(
+        dest="instructions_command",
+        metavar="subcommand",
+        required=True,
+    )
+    inspect_parser = instruction_subparsers.add_parser(
+        "inspect",
+        help="Print section-local instruction step summaries.",
+    )
+    inspect_parser.add_argument("file", type=Path, help="LDraw model file.")
+    inspect_parser.add_argument("--section", help="Inspect one reachable section.")
+    inspect_parser.add_argument(
+        "--parts",
+        action="store_true",
+        help="Show each step's added parts tray.",
+    )
+    instruction_validate_parser = instruction_subparsers.add_parser(
+        "validate",
+        help="Run LDraw and instruction-structure validation.",
+    )
+    instruction_validate_parser.add_argument(
+        "file",
+        type=Path,
+        help="LDraw model file.",
+    )
+    instruction_validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as errors.",
+    )
+    instruction_validate_parser.add_argument(
+        "--max-parts",
+        type=int,
+        default=None,
+        help="Warn when a step adds more than this many expanded parts.",
+    )
+    export_parser = instruction_subparsers.add_parser(
+        "export",
+        help="Write a schema-versioned JSON instruction manifest.",
+    )
+    export_parser.add_argument("file", type=Path, help="LDraw model file.")
+    export_parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Write to a file instead of stdout.",
+    )
+    export_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing manifest file.",
+    )
+    snapshots_parser = instruction_subparsers.add_parser(
+        "snapshots",
+        help="Write cumulative MPD/LDR snapshots and their manifest.",
+    )
+    snapshots_parser.add_argument("file", type=Path, help="LDraw model file.")
+    snapshots_parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output directory for the snapshot bundle.",
+    )
+    snapshots_parser.add_argument(
+        "--section",
+        help="Generate snapshots for one reachable section.",
+    )
+    snapshots_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate files owned by an existing pyldraw3 manifest.",
     )
 
     subparsers.add_parser("config", help="Print the current configuration.")
@@ -427,6 +518,182 @@ def stubs_command(*, out: Path) -> int:
     return 0
 
 
+def _instruction_document(
+    *,
+    file: Path,
+    parts: Parts,
+) -> InstructionDocument | None:
+    """Read an instruction document, printing user-facing parse errors."""
+    if not file.is_file():
+        print(f"{file}: not found", file=sys.stderr)
+        return None
+    try:
+        return read_model(file).instruction_document(parts=parts)
+    except (OSError, PartError, UnicodeDecodeError) as exc:
+        print(f"{file}: {exc}", file=sys.stderr)
+        return None
+
+
+def _rotation_label(step: InstructionStep) -> str:
+    if step.rotation is None:
+        return "-"
+    if step.rotation.angles is None:
+        return step.rotation.mode.value
+    angles = ",".join(f"{value:g}" for value in step.rotation.angles)
+    return f"{step.rotation.mode.value}({angles})"
+
+
+def instructions_inspect_command(
+    *,
+    file: Path,
+    section_name: str | None,
+    show_parts: bool,
+) -> int:
+    """Print one summary row per instruction step."""
+    if (parts := _load_parts()) is None:
+        return 1
+    if (document := _instruction_document(file=file, parts=parts)) is None:
+        return 1
+    try:
+        sections = (
+            document.sections
+            if section_name is None
+            else (document.section(section_name),)
+        )
+    except KeyError as exc:
+        print(exc.args[0], file=sys.stderr)
+        return 1
+    print(
+        "section  step  direct  expanded  cumulative  rotation  camera  "
+        "callouts  group  page  suppressed"
+    )
+    for section in sections:
+        for step in section.steps:
+            print(
+                f"{section.name}  {step.number:>4}  {len(step.added_pieces):>6}  "
+                f"{len(step.added_occurrences()):>8}  "
+                f"{len(step.cumulative_occurrences()):>10}  "
+                f"{_rotation_label(step):<12}  "
+                f"{'yes' if step.camera != CameraState() else '-':<6}  "
+                f"{len(step.callouts):>8}  "
+                f"{step.multi_step_group or '-':>5}  "
+                f"{'yes' if step.page_break_before else '-':>4}  "
+                f"{'yes' if step.suppressed else '-'}"
+            )
+            if show_parts:
+                tray = _format_bom_table(step.added_bill_of_materials(parts=parts))
+                print("\n".join(f"    {line}" for line in tray.splitlines()))
+    return 0
+
+
+def _print_instruction_issue(file: Path, issue: InstructionIssue) -> None:
+    line = "-" if issue.line_number is None else str(issue.line_number)
+    print(
+        f"{file}:{issue.section}:{line}: {issue.severity}: "
+        f"[{issue.code}] {issue.message}"
+    )
+
+
+def instructions_validate_command(
+    *,
+    file: Path,
+    strict: bool,
+    max_parts: int | None,
+) -> int:
+    """Run raw LDraw and semantic instruction validation."""
+    if max_parts is not None and max_parts < 0:
+        print("--max-parts must be zero or greater", file=sys.stderr)
+        return 1
+    if (parts := _load_parts()) is None:
+        return 1
+    if (document := _instruction_document(file=file, parts=parts)) is None:
+        return 1
+    try:
+        ldraw_issues = list(iter_ldr_issues(file, parts))
+        instruction_issues = list(
+            iter_instruction_issues(document, max_parts=max_parts)
+        )
+    except (OSError, PartError, UnicodeDecodeError) as exc:
+        print(f"{file}: {exc}", file=sys.stderr)
+        return 1
+    for issue in ldraw_issues:
+        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+    for issue in instruction_issues:
+        _print_instruction_issue(file, issue)
+    severities = [
+        *(issue.severity for issue in ldraw_issues),
+        *(issue.severity for issue in instruction_issues),
+    ]
+    errors = severities.count(Severity.ERROR)
+    warnings = severities.count(Severity.WARNING)
+    if not severities:
+        print(f"{file}: OK")
+        return 0
+    print(f"{file}: {errors} error(s), {warnings} warning(s)")
+    return 1 if errors or (strict and warnings) else 0
+
+
+def instructions_export_command(
+    *,
+    file: Path,
+    output: Path | None,
+    force: bool,
+) -> int:
+    """Write a deterministic instruction JSON manifest."""
+    if (parts := _load_parts()) is None:
+        return 1
+    if (document := _instruction_document(file=file, parts=parts)) is None:
+        return 1
+    try:
+        if output is None:
+            print(
+                manifest_json(instruction_manifest(document, parts=parts, source=file)),
+                end="",
+            )
+        else:
+            write_instruction_manifest(
+                document,
+                parts=parts,
+                output=output,
+                source=file,
+                force=force,
+            )
+            print(f"Wrote instruction manifest to {output}", file=sys.stderr)
+    except (OSError, PartError, ValueError) as exc:
+        print(f"Could not export instructions: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def instructions_snapshots_command(
+    *,
+    file: Path,
+    output: Path,
+    section_name: str | None,
+    force: bool,
+) -> int:
+    """Write paired cumulative MPD/LDR snapshots and their manifest."""
+    if (parts := _load_parts()) is None:
+        return 1
+    if (document := _instruction_document(file=file, parts=parts)) is None:
+        return 1
+    try:
+        manifest_path = write_instruction_snapshots(
+            document,
+            parts=parts,
+            output=output,
+            source=file,
+            section_name=section_name,
+            force=force,
+        )
+    except (OSError, KeyError, PartError, ValueError) as exc:
+        message = exc.args[0] if isinstance(exc, KeyError) else str(exc)
+        print(f"Could not write instruction snapshots: {message}", file=sys.stderr)
+        return 1
+    print(f"Wrote instruction snapshots and {manifest_path}", file=sys.stderr)
+    return 0
+
+
 def config_command() -> int:
     """Print the current pyldraw configuration as YAML."""
     print(yaml.dump(Config.load().to_dict()))
@@ -453,7 +720,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _dispatch(*, args: Namespace, parser: ArgumentParser) -> int:  # noqa: PLR0911 - one return per subcommand
+def _dispatch(  # noqa: C901, PLR0911 - one branch per subcommand
+    *,
+    args: Namespace,
+    parser: ArgumentParser,
+) -> int:
     """Dispatch parsed arguments to the matching subcommand."""
     match args.command:
         case "download":
@@ -474,6 +745,8 @@ def _dispatch(*, args: Namespace, parser: ArgumentParser) -> int:  # noqa: PLR09
             )
         case "stubs":
             return stubs_command(out=args.out)
+        case "instructions":
+            return _dispatch_instructions(args)
         case "config":
             return config_command()
         case "version":
@@ -481,6 +754,36 @@ def _dispatch(*, args: Namespace, parser: ArgumentParser) -> int:  # noqa: PLR09
         case _:
             parser.print_help()
             return 0
+
+
+def _dispatch_instructions(args: Namespace) -> int:
+    """Dispatch one nested instruction subcommand."""
+    match args.instructions_command:
+        case "inspect":
+            return instructions_inspect_command(
+                file=args.file,
+                section_name=args.section,
+                show_parts=args.parts,
+            )
+        case "validate":
+            return instructions_validate_command(
+                file=args.file,
+                strict=args.strict,
+                max_parts=args.max_parts,
+            )
+        case "export":
+            return instructions_export_command(
+                file=args.file,
+                output=args.output,
+                force=args.force,
+            )
+        case _:
+            return instructions_snapshots_command(
+                file=args.file,
+                output=args.out,
+                section_name=args.section,
+                force=args.force,
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

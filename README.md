@@ -17,6 +17,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - 🧱 **Complete LDraw Support**: Full compatibility with the LDraw standard format
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
+- 🧭 **Building Instructions**: Typed STEP/ROTSTEP, LPub3D semantics, validation, manifests, and MPD/LDR snapshots
 - 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/)
 
 ## Table of Contents
@@ -28,6 +29,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
   - [Examples](#examples)
   - [Basic Usage](#basic-usage)
   - [Reading and Writing Model Files](#reading-and-writing-model-files)
+  - [Building Instructions](#building-instructions)
   - [Part Geometry Queries](#part-geometry-queries)
   - [IDE Autocompletion and Type Checking](#ide-autocompletion-and-type-checking)
 - [Requirements](#requirements)
@@ -191,6 +193,51 @@ marker and `model.steps` returns the pieces grouped step by step. Header
 lines are managed through `model.set_header(description=..., name=...,
 author=..., ldraw_org=..., license=...)`.
 
+### Building Instructions
+
+Version 1.4 adds a semantic instruction layer without changing raw
+`Model.objects`, `Comment`, `MetaCommand`, or the legacy `Model.steps` view.
+Each reachable MPD model keeps its own section-local step sequence:
+
+```python
+from ldraw import InstructionBuilder, Model, Piece, RotationMode, Vector
+
+submodel = Model.from_pieces(
+    [Piece.place("3001", colour=16)],
+    name="module.ldr",
+)
+InstructionBuilder(submodel).step()
+
+model = Model(name="main.ldr")
+builder = InstructionBuilder(model)
+model.add_submodel(submodel, colour=4, position=Vector(20, 0, 0))
+builder.note("Source page 17")
+builder.rotation_step(0, 90, 0, mode=RotationMode.ADDITIVE)
+
+document = model.instruction_document()
+for section in document.sections:
+    for step in section.steps:
+        print(section.name, step.number, len(step.added_occurrences()))
+
+model.save("instructions.mpd")
+```
+
+The parser recognizes standard `STEP`, MLCad `ROTSTEP`, the supported
+structural/camera subset of modern and legacy LPub3D commands, and namespaced
+`!PYLDRAW` notes, highlights, and 3D arrows. Unsupported LPub3D directives
+remain attached to their original raw objects and round-trip losslessly.
+
+The instruction CLI inspects and validates structure, exports deterministic
+JSON, and creates cumulative MPD plus flattened LDR snapshots. It intentionally
+does not render PDF, image, HTML, or page layout:
+
+```bash
+ldraw instructions inspect instructions.mpd --parts
+ldraw instructions validate instructions.mpd --strict --max-parts 25
+ldraw instructions export instructions.mpd -o instructions.json
+ldraw instructions snapshots instructions.mpd --out snapshots
+```
+
 ### Part Geometry Queries
 
 `Parts` can answer placement questions directly from the library's part
@@ -283,6 +330,8 @@ positional arguments:
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
     stubs     Write a type-stub package for ldraw.library into your project.
+    instructions
+              Inspect, validate, and export renderer-neutral instructions.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
 
@@ -297,6 +346,7 @@ options:
 - `ldraw validate FILE [--strict]` - lint a file: malformed lines, unknown parts and colour codes are errors; suspect matrices, legacy dithered colours, and unknown meta-commands are warnings (`--strict` makes warnings fail; exit code 1 on errors)
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` - print a bill of materials counted by part and colour, submodels expanded
 - `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
+- `ldraw instructions inspect|validate|export|snapshots ...` - inspect semantic steps, validate instruction structure, export JSON, or write cumulative MPD/LDR snapshot bundles (requires a configured parts catalog)
 - `ldraw config` - print the current configuration as YAML
 - `ldraw version` - print the installed `pyldraw3` version
 
@@ -363,13 +413,16 @@ instead of the Zensical workflow artifact.
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `parts`, `validate`, `bom`, `stubs`, `config`, and `version` subcommands
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with catalog, validation, BOM, instruction, generation, and configuration commands
+- **Instruction Semantics** (`ldraw/instructions.py`): Sectioned STEP/ROTSTEP and LPub3D interpretation, authoring, inventory, and validation
+- **Instruction Artifacts** (`ldraw/instruction_artifacts.py`): Deterministic JSON manifests and cumulative MPD/LDR snapshots
 - **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules (with `.pyi` stubs)
 - **Import System** (`ldraw/imports.py`): Custom meta path hook for dynamic imports
 
 ### Key Classes
 
 - `Model` (`ldraw/model.py`) - Reads and writes whole `.ldr`/`.mpd` model files
+- `InstructionDocument` / `InstructionBuilder` - Read and author renderer-neutral building instructions
 - `Parts` - Manages parts catalog and loading
 - `Piece` - Represents individual LEGO pieces in models  
 - `Person` (`ldraw/figure.py`) - High-level minifigure construction

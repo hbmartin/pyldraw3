@@ -10,6 +10,7 @@ drop-in replacement for the unmaintained `pyldraw` library.
 - Pythonic model construction with `Piece`, `Group`, `Model`, and `Person`.
 - Dynamic `ldraw.library.*` modules generated from a downloaded LDraw library.
 - Catalog search, validation, bill-of-materials export, and type-stub helpers.
+- Sectioned STEP/ROTSTEP and LPub3D instruction semantics, manifests, and snapshots.
 - Geometry queries for bounding boxes and stud positions.
 
 ## Installation
@@ -137,6 +138,29 @@ model.save("my_model_out.ldr")
 
 Every parsed object has a `to_ldraw()` method, so parsed content round-trips
 back to LDraw text. Parse errors report the file and 1-based line number.
+
+## Building Instructions
+
+`Model.instruction_document()` interprets root and reachable submodels as
+independent instruction sections. `InstructionBuilder` authors portable
+STEP/ROTSTEP and supported LPub3D structures plus namespaced notes, arrows,
+and highlights:
+
+```python
+from ldraw import InstructionBuilder, Model, Piece
+
+model = Model(name="model.ldr", objects=[Piece.place("3001", colour=4)])
+builder = InstructionBuilder(model)
+builder.note("Attach the red brick")
+builder.step()
+
+for step in model.iter_instruction_steps():
+    print(step.number, step.added_bill_of_materials())
+```
+
+Use `ldraw instructions export` for JSON consumers or `ldraw instructions
+snapshots` for cumulative MPD and flattened LDR artifacts. Rendering and PDF
+page layout remain outside pyldraw3's scope.
 
 ## Next Steps
 
