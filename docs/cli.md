@@ -1,7 +1,8 @@
 # CLI Reference
 
 The `ldraw` executable downloads LDraw libraries, generates importable Python
-modules, queries parts, validates model files, and exports bills of materials.
+modules, queries parts, validates model files, exports bills of materials, and
+produces renderer-neutral instruction data.
 
 ```text
 usage: ldraw [-h] command ...
@@ -17,6 +18,8 @@ positional arguments:
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
     stubs     Write a type-stub package for ldraw.library into your project.
+    instructions
+              Inspect, validate, and export renderer-neutral instructions.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
 
@@ -43,6 +46,14 @@ options:
   materials counted by part and colour, with submodels expanded.
 - `ldraw stubs [--out PATH]` writes an `ldraw-stubs/` PEP 561 stub package for
   IDE autocompletion of generated `ldraw.library.*` imports.
+- `ldraw instructions inspect FILE [--section NAME] [--parts]` prints one row
+  per section-local step. `--parts` adds each step's parts tray.
+- `ldraw instructions validate FILE [--strict] [--max-parts N]` runs both the
+  ordinary LDraw linter and semantic instruction validation.
+- `ldraw instructions export FILE [-o MANIFEST] [--force]` writes manifest
+  schema v1 to stdout or a file.
+- `ldraw instructions snapshots FILE --out DIR [--section NAME] [--force]`
+  writes cumulative MPD and flattened LDR files plus `instructions.json`.
 - `ldraw config` prints the current configuration as YAML.
 - `ldraw version` prints the installed `pyldraw3` version.
 
@@ -154,6 +165,61 @@ for issue in issues:
 Passing `parts=None` (or omitting it) runs the parse, matrix, and
 meta-command checks but skips the unknown-part and unknown-colour checks,
 mirroring the CLI's behaviour when no library is available.
+
+## Instruction commands
+
+All four `ldraw instructions` commands require the configured parts catalog,
+because counts, descriptions, colours, and geometry bounds must be
+deterministic. If it is unavailable they print the existing `ldraw download`
+installation hint and exit 1.
+
+`inspect` reports direct placements, expanded additions, cumulative leaf
+counts, ROTSTEP, camera, callout/multi-step, page-break, and suppression state.
+Section selection is case-insensitive:
+
+```console
+$ ldraw instructions inspect model.mpd --section module.ldr --parts
+section  step  direct  expanded  cumulative  rotation  camera  callouts  group  page  suppressed
+module.ldr     1       2         2           2  -             -              0      -     -  -
+      qty  part         colour               description
+        2  3001         Red                  Brick  2 x  4
+```
+
+`validate` emits instruction diagnostics with section and source-line context.
+Errors always fail. Warnings (including missing explicit boundaries, orphan
+sections, and `--max-parts` overflow) fail only with `--strict`.
+
+Manifest schema v1 is snake_case and contains root-first reachable sections,
+source provenance, direct and expanded additions, cumulative count/BOM/bounds,
+ROTSTEP and LPub camera state, directives, callouts/groups, and suppression or
+page-break flags. Cumulative occurrences are deliberately represented only by
+aggregates so manifests do not grow quadratically.
+
+`snapshots` writes this layout by default:
+
+```text
+output/
+  instructions.json
+  001-main/
+    step-0001.mpd
+    step-0001.ldr
+  002-module/
+    step-0001.mpd
+    step-0001.ldr
+```
+
+MPDs preserve submodel references and include the transitive dependency
+closure. LDRs flatten `.ldr` submodels into section-local coordinates, retain
+`.dat` references, and write embedded `.dat` definitions as safe relative
+sidecars. Instruction directives live in the manifest rather than snapshot
+geometry. Suppressed steps still receive artifacts; page breaks do not create
+steps.
+
+Without `--force`, any collision fails. Forced regeneration trusts only paths
+listed in an existing pyldraw3-owned manifest, removes stale owned paths, and
+never deletes or overwrites unrelated files. Output is staged beside the
+destination before commit. These commands create data for renderers; they do
+not generate PDF, image, HTML, typography, or page layout.
 
 ## Development Commands
 

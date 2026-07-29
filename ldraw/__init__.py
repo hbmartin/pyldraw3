@@ -27,6 +27,17 @@ from ldraw.figure import Person
 from ldraw.generation import generate
 from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
+from ldraw.instructions import (
+    CameraState,
+    InstructionBuilder,
+    InstructionDocument,
+    InstructionIssue,
+    InstructionSection,
+    InstructionStep,
+    RotationMode,
+    RotationStep,
+    iter_instruction_issues,
+)
 from ldraw.model import Model, ModelOccurrence, parse_model, read_model
 from ldraw.model_summary import ModelSummary, SkippedGeometry, model_bounds
 from ldraw.part_geometry_types import BoundingBox, StudReference
@@ -52,10 +63,16 @@ from ldraw.validation import Severity, ValidationIssue, iter_ldr_issues
 __all__ = [
     "BomRow",
     "BoundingBox",
+    "CameraState",
     "CatalogEntry",
     "Colour",
     "Group",
     "Identity",
+    "InstructionBuilder",
+    "InstructionDocument",
+    "InstructionIssue",
+    "InstructionSection",
+    "InstructionStep",
     "LDrawPaths",
     "LDrawSession",
     "LDrawState",
@@ -73,6 +90,8 @@ __all__ = [
     "Piece",
     "ProgressEvent",
     "ProgressStage",
+    "RotationMode",
+    "RotationStep",
     "Severity",
     "SkippedGeometry",
     "StudReference",
@@ -85,6 +104,7 @@ __all__ = [
     "download",
     "ensure_library",
     "generate",
+    "iter_instruction_issues",
     "iter_ldr_issues",
     "model_bounds",
     "parse_model",

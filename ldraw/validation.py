@@ -40,6 +40,7 @@ KNOWN_META_COMMANDS = frozenset(
         ":",
         "THEME",
         "LPUB",
+        "PYLDRAW",
         "LEOCAD",
         "LDCAD",
         "STUDIO",

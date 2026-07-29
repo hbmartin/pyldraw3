@@ -13,6 +13,7 @@ from ldraw import (
     colour,
     figure,
     geometry,
+    instructions,
     model,
     model_summary,
     part_geometry,
@@ -27,10 +28,16 @@ from ldraw import (
 EXPECTED_ALL = [
     "BomRow",
     "BoundingBox",
+    "CameraState",
     "CatalogEntry",
     "Colour",
     "Group",
     "Identity",
+    "InstructionBuilder",
+    "InstructionDocument",
+    "InstructionIssue",
+    "InstructionSection",
+    "InstructionStep",
     "LDrawPaths",
     "LDrawSession",
     "LDrawState",
@@ -48,6 +55,8 @@ EXPECTED_ALL = [
     "Piece",
     "ProgressEvent",
     "ProgressStage",
+    "RotationMode",
+    "RotationStep",
     "Severity",
     "SkippedGeometry",
     "StudReference",
@@ -60,6 +69,7 @@ EXPECTED_ALL = [
     "download",
     "ensure_library",
     "generate",
+    "iter_instruction_issues",
     "iter_ldr_issues",
     "model_bounds",
     "parse_model",
@@ -104,6 +114,15 @@ def test_top_level_names_are_the_submodule_objects() -> None:
     assert ldraw.ValidationIssue is validation.ValidationIssue
     assert ldraw.Severity is validation.Severity
     assert ldraw.iter_ldr_issues is validation.iter_ldr_issues
+    assert ldraw.InstructionDocument is instructions.InstructionDocument
+    assert ldraw.InstructionSection is instructions.InstructionSection
+    assert ldraw.InstructionStep is instructions.InstructionStep
+    assert ldraw.InstructionBuilder is instructions.InstructionBuilder
+    assert ldraw.InstructionIssue is instructions.InstructionIssue
+    assert ldraw.CameraState is instructions.CameraState
+    assert ldraw.RotationStep is instructions.RotationStep
+    assert ldraw.RotationMode is instructions.RotationMode
+    assert ldraw.iter_instruction_issues is instructions.iter_instruction_issues
     assert ldraw.BoundingBox is part_geometry_types.BoundingBox
     assert ldraw.StudReference is part_geometry_types.StudReference
     assert part_geometry.BoundingBox is part_geometry_types.BoundingBox

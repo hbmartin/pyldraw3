@@ -27,6 +27,7 @@ library (`ldraw download --yes && ldraw generate --yes`) so that the
 | [`buggy.py`](https://github.com/hbmartin/pyldraw3/blob/main/examples/buggy.py) | Materials and a full vehicle. A space buggy/rover built from wheels, tyres, slopes, and a steering wheel using chrome, rubber, and metallic colours, driven by a seated minifig, on tiled baseplates. |
 | [`moon_landing.py`](https://github.com/hbmartin/pyldraw3/blob/main/examples/moon_landing.py) | A complete diorama with group duplication. An astronaut and a rover on a `Baseplate32X32WithCraters`; the rover `Group` is emitted once, then re-placed with a new position and orientation to appear twice, with a second seated figure added. |
 | [`mandelbrot.py`](https://github.com/hbmartin/pyldraw3/blob/main/examples/mandelbrot.py) | Algorithmic brick artwork. Renders the Mandelbrot set as a grid of `Brick1X1` pieces, mapping each cell's escape-iteration count to a colour — an example of computing a model rather than hand-placing it. |
+| [`instructions.py`](https://github.com/hbmartin/pyldraw3/blob/main/examples/instructions.py) | Semantic building instructions. Authors section-local steps, a callout, ROTSTEP, camera state, a note, a highlight, and an arrow, then emits a self-contained MPD. |
 
 ## Two construction styles
 

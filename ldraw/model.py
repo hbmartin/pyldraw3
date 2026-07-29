@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ldraw.bom import BomRow
     from ldraw.colour import Colour
     from ldraw.geometry import Matrix
+    from ldraw.instructions import InstructionDocument, InstructionStep, RotationMode
     from ldraw.parts import Parts
     from ldraw.pieces import Group
 
@@ -103,10 +104,11 @@ def _parse_objects(
     numbered_lines: Iterable[_NumberedLine],
     *,
     source: Path | str | None,
-) -> tuple[list[ParsedObject], dict[Piece, int]]:
+) -> tuple[list[ParsedObject], dict[Piece, int], dict[int, int]]:
     """Parse numbered lines, adding file and line context to errors."""
     objects: list[ParsedObject] = []
     source_lines: dict[Piece, int] = {}
+    object_source_lines: dict[int, int] = {}
     for number, line in numbered_lines:
         try:
             parsed = parse_ldraw_line(line)
@@ -118,9 +120,10 @@ def _parse_objects(
             raise
         if parsed is not None:
             objects.append(parsed)
+            object_source_lines[id(parsed)] = number
             if isinstance(parsed, Piece):
                 source_lines[parsed] = number
-    return objects, source_lines
+    return objects, source_lines, object_source_lines
 
 
 @dataclass(slots=True, eq=False)
@@ -136,6 +139,7 @@ class Model:
     objects: list[ParsedObject] = field(default_factory=list)
     submodels: dict[str, Model] = field(default_factory=dict)
     _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
+    _object_source_lines: dict[int, int] = field(default_factory=dict, repr=False)
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
         for obj in self.objects:
@@ -203,9 +207,11 @@ class Model:
             return self
         return self.submodels.get(key)
 
-    def source_line_for(self, piece: Piece) -> int | None:
-        """Return the parsed source line for this exact ``piece`` object."""
-        return self._source_lines.get(piece)
+    def source_line_for(self, obj: ParsedObject) -> int | None:
+        """Return the parsed source line for this exact object."""
+        if (line_number := self._object_source_lines.get(id(obj))) is not None:
+            return line_number
+        return self._source_lines.get(obj) if isinstance(obj, Piece) else None
 
     def add(self, *objects: ParsedObject) -> None:
         """Append parsed objects (pieces, comments, geometry) to the model."""
@@ -370,11 +376,51 @@ class Model:
             objects=submodel.objects,
             submodels=self.submodels,
             _source_lines=submodel._source_lines,  # noqa: SLF001 - same class
+            _object_source_lines=submodel._object_source_lines,  # noqa: SLF001
         )
 
     def add_step(self) -> None:
         """Append a ``0 STEP`` marker ending the current building step."""
         self.objects.append(Comment("STEP"))
+
+    def add_rotation_step(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        mode: RotationMode | str = "REL",
+    ) -> None:
+        """Append a canonical MLCad ``ROTSTEP`` instruction boundary."""
+        from ldraw.instructions import RotationMode  # noqa: PLC0415
+        from ldraw.serialization import format_ldraw_number  # noqa: PLC0415
+
+        rotation_mode = (
+            mode if isinstance(mode, RotationMode) else RotationMode(mode.upper())
+        )
+        if rotation_mode is RotationMode.END:
+            msg = "Use end_rotation_steps() for a ROTSTEP END boundary"
+            raise ValueError(msg)
+        values = " ".join(format_ldraw_number(value) for value in (x, y, z))
+        self.objects.append(Comment(f"ROTSTEP {values} {rotation_mode.value}"))
+
+    def end_rotation_steps(self) -> None:
+        """Append ``0 ROTSTEP END`` and restore the default instruction view."""
+        self.objects.append(Comment("ROTSTEP END"))
+
+    def instruction_document(
+        self,
+        *,
+        parts: Parts | None = None,
+    ) -> InstructionDocument:
+        """Interpret this model and its reachable submodels as instructions."""
+        from ldraw.instructions import InstructionDocument  # noqa: PLC0415
+
+        return InstructionDocument.from_model(self, parts=parts)
+
+    def iter_instruction_steps(self) -> Iterator[InstructionStep]:
+        """Yield this model section's semantic instruction steps."""
+        yield from self.instruction_document().root.steps
 
     @property
     def steps(self) -> list[list[Piece]]:
@@ -604,28 +650,45 @@ def parse_model(
     sections become its submodels, resolvable via ``Model.submodel_for``.
     """
     preamble, sections = _split_sections(text, source=source)
-    objects, source_lines = _parse_objects(preamble, source=source)
+    objects, source_lines, object_source_lines = _parse_objects(
+        preamble,
+        source=source,
+    )
     if not sections:
-        return Model(name=name, objects=objects, _source_lines=source_lines)
+        return Model(
+            name=name,
+            objects=objects,
+            _source_lines=source_lines,
+            _object_source_lines=object_source_lines,
+        )
     first, *rest = sections
-    first_objects, first_source_lines = _parse_objects(first.lines, source=source)
+    first_objects, first_source_lines, first_object_source_lines = _parse_objects(
+        first.lines,
+        source=source,
+    )
     root = Model(
         name=first.name,
         objects=[*objects, *first_objects],
         _source_lines={**source_lines, **first_source_lines},
+        _object_source_lines={
+            **object_source_lines,
+            **first_object_source_lines,
+        },
     )
     for section in rest:
         key = normalize_ref(section.name)
         if key == normalize_ref(root.name) or key in root.submodels:
             raise DuplicateSubmodelError(section.name)
-        section_objects, section_source_lines = _parse_objects(
-            section.lines,
-            source=source,
-        )
+        (
+            section_objects,
+            section_source_lines,
+            section_object_source_lines,
+        ) = _parse_objects(section.lines, source=source)
         root.submodels[key] = Model(
             name=section.name,
             objects=section_objects,
             _source_lines=section_source_lines,
+            _object_source_lines=section_object_source_lines,
         )
     return root
 

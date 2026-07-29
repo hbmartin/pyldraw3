@@ -258,6 +258,58 @@ whole document. Parse errors name the file and 1-based line number. For new
 code, `Piece.place("3005", colour=4)` is a keyword-first alternative to the
 positional `Piece` constructor.
 
+### Semantic Building Instructions
+
+Raw LDraw objects remain the source of truth. Call
+`model.instruction_document(parts=parts)` to layer typed instruction semantics
+over them. The resulting document lists the root first, then reachable
+non-`.dat` MPD sections in file order. Every section numbers its own steps;
+submodel steps are never merged into a fabricated global sequence.
+
+```python
+from ldraw import CameraState, InstructionBuilder, Model, Piece, RotationMode
+from ldraw.instructions import InstructionScope
+
+model = Model(name="main.ldr")
+builder = InstructionBuilder(model)
+
+model.add(Piece.place("3001", colour=4))
+builder.note("PDF page 1")
+builder.step()
+
+model.add(Piece.place("3005", colour=1))
+builder.set_camera(CameraState(fov=35), scope=InstructionScope.LOCAL)
+builder.rotation_step(0, 90, 0, mode=RotationMode.ADDITIVE)
+
+for step in model.iter_instruction_steps():
+    print(step.number, step.rotation, step.camera)
+    print(step.added_bill_of_materials())
+```
+
+`InstructionStep.added_occurrences()` and `cumulative_occurrences()` expand
+`.ldr` submodels explicitly while treating embedded `.dat` sections as part
+dependencies. Their BOM counterparts accept `expand_submodels=` and
+`respect_lpub=`. LPub `PLI`, `BOM`, and `PART BEGIN IGN` ranges affect the
+appropriate inventory views but never remove snapshot geometry.
+
+Balanced context managers make structural authoring exception-safe:
+
+```python
+from ldraw.instructions import CalloutMode, InventoryTarget
+
+with builder.callout(mode=CalloutMode.ROTATED):
+    model.add_submodel(module)
+
+with builder.multi_step(), builder.ignore(InventoryTarget.PLI):
+    model.add(Piece.place("3001"))
+    builder.step()
+```
+
+Use `iter_instruction_issues(document, max_parts=...)` for structured
+diagnostics. The instruction CLI adds catalog-backed inspection, combined
+LDraw/instruction validation, JSON export, and paired cumulative snapshots.
+It does not perform page layout or PDF/image rendering.
+
 ### Querying and Validating from the CLI
 
 The parts catalog and validator are available without writing Python:
@@ -267,6 +319,8 @@ ldraw parts search "cowboy"
 ldraw parts info 3629
 ldraw validate my_model.ldr
 ldraw bom my_model.mpd
+ldraw instructions inspect my_model.mpd --parts
+ldraw instructions validate my_model.mpd --strict
 ```
 
 `ldraw validate` reports errors for malformed lines, unknown parts, and unknown
