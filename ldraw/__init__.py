@@ -27,9 +27,28 @@ from ldraw.figure import Person
 from ldraw.generation import generate
 from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
-from ldraw.model import Model, ModelOccurrence, parse_model, read_model
+from ldraw.inspection import (
+    BoundsGap,
+    ModelInspection,
+    OccurrenceAttribution,
+    OccurrenceContact,
+    OccurrenceGeometry,
+    SkippedOccurrenceGeometry,
+    StudContact,
+    bounds_gap,
+    inspect_model,
+    occurrence_bounds,
+    transformed_bounds,
+)
+from ldraw.model import (
+    Model,
+    ModelOccurrence,
+    OccurrencePathItem,
+    parse_model,
+    read_model,
+)
 from ldraw.model_summary import ModelSummary, SkippedGeometry, model_bounds
-from ldraw.part_geometry_types import BoundingBox, StudReference
+from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.parts import (
     CatalogEntry,
     MinifigSection,
@@ -40,6 +59,13 @@ from ldraw.parts import (
 )
 from ldraw.pieces import Group, Piece
 from ldraw.progress import ProgressEvent, ProgressStage
+from ldraw.rendering import (
+    LeoCADRenderError,
+    RenderedView,
+    RenderView,
+    find_leocad,
+    render_leocad,
+)
 from ldraw.session import (
     LDrawPaths,
     LDrawSession,
@@ -52,6 +78,7 @@ from ldraw.validation import Severity, ValidationIssue, iter_ldr_issues
 __all__ = [
     "BomRow",
     "BoundingBox",
+    "BoundsGap",
     "CatalogEntry",
     "Colour",
     "Group",
@@ -60,12 +87,19 @@ __all__ = [
     "LDrawSession",
     "LDrawState",
     "LDrawStateReason",
+    "LeoCADRenderError",
     "Matrix",
     "MinifigSection",
     "Model",
+    "ModelInspection",
     "ModelOccurrence",
     "ModelSummary",
+    "OccurrenceAttribution",
+    "OccurrenceContact",
+    "OccurrenceGeometry",
+    "OccurrencePathItem",
     "PartCategory",
+    "PartGeometry",
     "PartReference",
     "PartReferenceKind",
     "Parts",
@@ -73,8 +107,12 @@ __all__ = [
     "Piece",
     "ProgressEvent",
     "ProgressStage",
+    "RenderView",
+    "RenderedView",
     "Severity",
     "SkippedGeometry",
+    "SkippedOccurrenceGeometry",
+    "StudContact",
     "StudReference",
     "ValidationIssue",
     "Vector",
@@ -82,13 +120,19 @@ __all__ = [
     "YAxis",
     "ZAxis",
     "bill_of_materials",
+    "bounds_gap",
     "download",
     "ensure_library",
+    "find_leocad",
     "generate",
+    "inspect_model",
     "iter_ldr_issues",
     "model_bounds",
+    "occurrence_bounds",
     "parse_model",
     "read_model",
+    "render_leocad",
+    "transformed_bounds",
 ]
 
 # Modern import hook registration: use an instance, not the class

@@ -13,6 +13,7 @@ from ldraw import (
     colour,
     figure,
     geometry,
+    inspection,
     model,
     model_summary,
     part_geometry,
@@ -20,6 +21,7 @@ from ldraw import (
     parts,
     pieces,
     progress,
+    rendering,
     session,
     validation,
 )
@@ -27,6 +29,7 @@ from ldraw import (
 EXPECTED_ALL = [
     "BomRow",
     "BoundingBox",
+    "BoundsGap",
     "CatalogEntry",
     "Colour",
     "Group",
@@ -35,12 +38,19 @@ EXPECTED_ALL = [
     "LDrawSession",
     "LDrawState",
     "LDrawStateReason",
+    "LeoCADRenderError",
     "Matrix",
     "MinifigSection",
     "Model",
+    "ModelInspection",
     "ModelOccurrence",
     "ModelSummary",
+    "OccurrenceAttribution",
+    "OccurrenceContact",
+    "OccurrenceGeometry",
+    "OccurrencePathItem",
     "PartCategory",
+    "PartGeometry",
     "PartReference",
     "PartReferenceKind",
     "Parts",
@@ -48,8 +58,12 @@ EXPECTED_ALL = [
     "Piece",
     "ProgressEvent",
     "ProgressStage",
+    "RenderView",
+    "RenderedView",
     "Severity",
     "SkippedGeometry",
+    "SkippedOccurrenceGeometry",
+    "StudContact",
     "StudReference",
     "ValidationIssue",
     "Vector",
@@ -57,13 +71,19 @@ EXPECTED_ALL = [
     "YAxis",
     "ZAxis",
     "bill_of_materials",
+    "bounds_gap",
     "download",
     "ensure_library",
+    "find_leocad",
     "generate",
+    "inspect_model",
     "iter_ldr_issues",
     "model_bounds",
+    "occurrence_bounds",
     "parse_model",
     "read_model",
+    "render_leocad",
+    "transformed_bounds",
 ]
 
 
@@ -98,16 +118,34 @@ def test_top_level_names_are_the_submodule_objects() -> None:
     assert ldraw.ProgressEvent is progress.ProgressEvent
     assert ldraw.ProgressStage is progress.ProgressStage
     assert ldraw.ModelOccurrence is model.ModelOccurrence
+    assert ldraw.OccurrencePathItem is model.OccurrencePathItem
     assert ldraw.ModelSummary is model_summary.ModelSummary
     assert ldraw.SkippedGeometry is model_summary.SkippedGeometry
     assert ldraw.model_bounds is model_summary.model_bounds
+    assert ldraw.ModelInspection is inspection.ModelInspection
+    assert ldraw.OccurrenceAttribution is inspection.OccurrenceAttribution
+    assert ldraw.OccurrenceContact is inspection.OccurrenceContact
+    assert ldraw.OccurrenceGeometry is inspection.OccurrenceGeometry
+    assert ldraw.SkippedOccurrenceGeometry is inspection.SkippedOccurrenceGeometry
+    assert ldraw.StudContact is inspection.StudContact
+    assert ldraw.bounds_gap is inspection.bounds_gap
+    assert ldraw.inspect_model is inspection.inspect_model
+    assert ldraw.occurrence_bounds is inspection.occurrence_bounds
+    assert ldraw.transformed_bounds is inspection.transformed_bounds
     assert ldraw.ValidationIssue is validation.ValidationIssue
     assert ldraw.Severity is validation.Severity
     assert ldraw.iter_ldr_issues is validation.iter_ldr_issues
     assert ldraw.BoundingBox is part_geometry_types.BoundingBox
+    assert ldraw.PartGeometry is part_geometry_types.PartGeometry
     assert ldraw.StudReference is part_geometry_types.StudReference
     assert part_geometry.BoundingBox is part_geometry_types.BoundingBox
+    assert part_geometry.PartGeometry is part_geometry_types.PartGeometry
     assert part_geometry.StudReference is part_geometry_types.StudReference
+    assert ldraw.LeoCADRenderError is rendering.LeoCADRenderError
+    assert ldraw.RenderView is rendering.RenderView
+    assert ldraw.RenderedView is rendering.RenderedView
+    assert ldraw.find_leocad is rendering.find_leocad
+    assert ldraw.render_leocad is rendering.render_leocad
 
 
 def test_part_geometry_modules_import_in_either_order() -> None:

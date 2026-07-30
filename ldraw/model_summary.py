@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ldraw.errors import PartError
+from ldraw.inspection import occurrence_bounds
 from ldraw.part_geometry_types import BoundingBox
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ class ModelSummary:
             colour_usage[_colour_key(occurrence.colour)] += 1
             origins.add(occurrence.position)
             try:
-                local_box = parts.bounding_box(occurrence.part_code)
+                world_box = occurrence_bounds(occurrence, parts)
             except PartError as error:
                 skipped.append(
                     SkippedGeometry(
@@ -66,8 +67,8 @@ class ModelSummary:
                     ),
                 )
                 continue
-            for corner in local_box.corners():
-                geometry.add(occurrence.position + occurrence.matrix * corner)
+            geometry.add(world_box.min)
+            geometry.add(world_box.max)
 
         return cls(
             bounds=geometry.box(),

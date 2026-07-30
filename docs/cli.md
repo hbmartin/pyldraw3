@@ -1,7 +1,8 @@
 # CLI Reference
 
 The `ldraw` executable downloads LDraw libraries, generates importable Python
-modules, queries parts, validates model files, and exports bills of materials.
+modules, queries parts, validates and inspects model files, renders named
+LeoCAD views, and exports bills of materials.
 
 ```text
 usage: ldraw [-h] command ...
@@ -16,6 +17,8 @@ positional arguments:
     parts     Query the parts catalog.
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
+    inspect   Inspect exact world bounds, source attribution, and contact gaps.
+    render    Render deterministic named camera views with LeoCAD.
     stubs     Write a type-stub package for ldraw.library into your project.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
@@ -35,12 +38,24 @@ options:
   or code substring. It exits with code 1 when nothing matches.
 - `ldraw parts info CODE` shows a part's description, category, file path, and
   the generated-library import to use.
+- `ldraw parts geometry CODE [--format table|json]` expands the part's complete
+  drawable subfile tree and reports local bounds, points, and stud metadata.
 - `ldraw validate FILE [--strict]` lints `.ldr`, `.mpd`, and `.dat` files.
   Malformed lines, unknown parts, and unknown colour codes are errors.
   Suspect matrices, legacy dithered colours, and unknown meta-commands are
   warnings. `--strict` makes warnings fail.
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` prints a bill of
   materials counted by part and colour, with submodels expanded.
+- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU]
+  [--chronological] [-o OUT]` reports exact transformed bounds for each leaf
+  occurrence, root-to-leaf submodel paths, `// PDF_PAGE NNN` attribution,
+  stud-to-part contacts, skipped catalog geometry, and nearest AABB
+  gaps. The gap report is a broad-phase contact diagnostic, not proof of a
+  legal LEGO connection.
+- `ldraw render FILE [--view NAME=LAT,LON ...] [--size WIDTHxHEIGHT]
+  [--output-dir DIR] [--prefix NAME] [--overwrite]` renders with LeoCAD.
+  Requested views are completed in temporary storage before any destination is
+  replaced, preventing a failed run from mixing old and new images.
 - `ldraw stubs [--out PATH]` writes an `ldraw-stubs/` PEP 561 stub package for
   IDE autocompletion of generated `ldraw.library.*` imports.
 - `ldraw config` prints the current configuration as YAML.

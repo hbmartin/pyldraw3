@@ -21,7 +21,7 @@ from ldraw.utils import camel, clean
 
 if TYPE_CHECKING:
     from ldraw.geometry import Matrix, Vector
-    from ldraw.part_geometry_types import BoundingBox, StudReference
+    from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
@@ -772,6 +772,18 @@ class Parts:
         from ldraw.part_geometry import part_bounding_box  # noqa: PLC0415
 
         return part_bounding_box(self, code)
+
+    def geometry(self, code: str) -> PartGeometry:
+        """Return expanded drawable points, bounds, and studs for a part.
+
+        Referenced primitives and subparts are recursively transformed into
+        the part's local coordinate system. Empty parts return a geometry
+        record with ``bounds=None``; unknown part codes raise
+        ``PartNotFoundError``.
+        """
+        from ldraw.part_geometry import part_geometry  # noqa: PLC0415
+
+        return part_geometry(self, code)
 
     def studs(self, code: str) -> tuple[StudReference, ...]:
         """All stud primitives a part places, in the part's own coordinates.

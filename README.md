@@ -204,16 +204,27 @@ parts = Parts.get("~/ldraw/parts.lst")
 box = parts.bounding_box("3001")     # axis-aligned, in LDU
 print(box.min, box.max, box.size)    # origin sits on the stud plane; +Y is down
 
+geometry = parts.geometry("3001")   # recursively expanded drawable vertices
+print(len(geometry.points), geometry.bounds)
+
 print(parts.stud_positions("3001"))  # centres of the 8 top studs
 
 for stud in parts.studs("3062b"):    # every stud primitive, tubes included
     print(stud.name, stud.description, stud.position, stud.is_top_stud)
 ```
 
-Boxes are composed from memoized per-subfile boxes, exact under the
-axis-aligned rotations that dominate the library. Stud queries expand stud
-group primitives down to individual `stud*` references; `is_top_stud`
-distinguishes upward connectors from underside tubes.
+Expanded points are memoized per subfile, so bounds remain exact after an
+arbitrary occurrence transform rather than being inferred from transformed
+local-box corners. Stud queries expand stud group primitives down to individual
+`stud*` references; `is_top_stud` distinguishes upward connectors from
+underside tubes.
+
+For reconstruction audits, `inspect_model(model, parts)` combines those points
+with expanded submodel occurrences. Each record includes exact world bounds,
+root-to-leaf model/reference paths, source lines/steps, and page attribution
+from `0 // PDF_PAGE NNN` comments. `inspection.stud_contacts()` reports
+stud-to-part AABB contacts, while `inspection.contact_gaps()` provides an
+explicit broad-phase check for isolated placements.
 
 ### IDE Autocompletion and Type Checking
 
@@ -282,6 +293,8 @@ positional arguments:
     parts     Query the parts catalog.
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
+    inspect   Inspect exact world bounds, source attribution, and contact gaps.
+    render    Render deterministic named camera views with LeoCAD.
     stubs     Write a type-stub package for ldraw.library into your project.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
@@ -294,8 +307,11 @@ options:
 - `ldraw generate [--yes] [--force]` - (re)generate `ldraw.library.*` from the currently configured release; `--force` regenerates even if already up to date
 - `ldraw parts search TERM [--limit N]` - search the catalog by description or code substring (exit code 1 when nothing matches)
 - `ldraw parts info CODE` - show a part's description, category, file path, and the generated-library import to use
+- `ldraw parts geometry CODE [--format table|json]` - show recursively expanded points, bounds, and stud metadata
 - `ldraw validate FILE [--strict]` - lint a file: malformed lines, unknown parts and colour codes are errors; suspect matrices, legacy dithered colours, and unknown meta-commands are warnings (`--strict` makes warnings fail; exit code 1 on errors)
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` - print a bill of materials counted by part and colour, submodels expanded
+- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU] [--chronological]` - report exact occurrence bounds, page/submodel attribution, stud connections, and nearest AABB gaps
+- `ldraw render FILE [--view NAME=LAT,LON ...] [--output-dir DIR] [--overwrite]` - render a transactional, predictably named LeoCAD view set
 - `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
 - `ldraw config` - print the current configuration as YAML
 - `ldraw version` - print the installed `pyldraw3` version
@@ -363,7 +379,7 @@ instead of the Zensical workflow artifact.
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface with `download`, `generate`, `parts`, `validate`, `bom`, `stubs`, `config`, and `version` subcommands
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with catalog, validation, inspection, rendering, export, and configuration subcommands
 - **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules (with `.pyi` stubs)
 - **Import System** (`ldraw/imports.py`): Custom meta path hook for dynamic imports
 

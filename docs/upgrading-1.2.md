@@ -227,10 +227,11 @@ summary.occurrence_count
 summary.skipped_geometry  # parts whose geometry couldn't be resolved
 ```
 
-- `bounds` is the true transformed extent — each part's bounding-box
-  corners are transformed by the occurrence's world matrix before folding,
-  so rotated parts are accounted for. `origin_bounds` is the cheaper
-  bounds of just the placement origins.
+- `bounds` is the true transformed extent — each part's recursively expanded
+  drawable points are transformed by the occurrence's world matrix before
+  folding, so oblique asymmetric parts do not inherit the empty corners of a
+  local AABB. `origin_bounds` is the cheaper bounds of just the placement
+  origins.
 - Parts whose geometry can't be resolved (a missing part, a part with no
   geometry) don't abort the summary — they're collected as
   `SkippedGeometry` records (`part`, `source_model`, `source_line`,

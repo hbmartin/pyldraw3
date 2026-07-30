@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from ldraw.geometry import Vector
 
-__all__ = ["BoundingBox", "StudReference"]
+__all__ = ["BoundingBox", "PartGeometry", "StudReference"]
 
 # Stud primitives whose description carries one of these markers connect
 # downwards (underside tubes and the like) or are drawing aids, not studs a
@@ -45,6 +45,29 @@ class BoundingBox:
 
 
 @dataclass(frozen=True, slots=True)
+class PartGeometry:
+    """Fully expanded drawable geometry for one catalogued part.
+
+    ``points`` contains the endpoints/vertices which determine the rendered
+    extent after recursively applying every referenced subfile transform.
+    Conditional-line control points are deliberately omitted because they do
+    not draw and may sit far outside the surface. ``bounds`` is ``None`` only
+    when the part and all of its resolvable children draw no geometry.
+    """
+
+    code: str
+    description: str
+    bounds: BoundingBox | None
+    points: tuple[Vector, ...]
+    studs: tuple[StudReference, ...]
+
+    @property
+    def top_studs(self) -> tuple[StudReference, ...]:
+        """Upward-facing connection studs in local part coordinates."""
+        return tuple(stud for stud in self.studs if stud.is_top_stud)
+
+
+@dataclass(frozen=True, slots=True)
 class StudReference:
     """A stud primitive placed by a part, in the part's own coordinates."""
 
@@ -60,6 +83,17 @@ class StudReference:
     up: Vector = field(default_factory=lambda: Vector(0, -1, 0))
     """Image of the stud's local up direction (0, -1, 0) under the placing
     transforms; unit length under rigid placements."""
+
+    @property
+    def is_receptacle(self) -> bool:
+        """Whether this primitive describes a tube/underside stud receiver."""
+        lowered = self.description.casefold()
+        return "tube" in lowered or "underside" in lowered
+
+    @property
+    def is_placeholder(self) -> bool:
+        """Whether this is a drawing placeholder rather than a connector."""
+        return "placeholder" in self.description.casefold()
 
     @property
     def is_top_stud(self) -> bool:

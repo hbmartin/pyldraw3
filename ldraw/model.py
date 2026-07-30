@@ -54,6 +54,16 @@ class _RawSection:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
+class OccurrencePathItem:
+    """One placement in the root-to-leaf path of a model occurrence."""
+
+    model: Model
+    piece: Piece
+    source_line: int | None
+    step: int | None
+
+
+@dataclass(frozen=True, slots=True, eq=False)
 class ModelOccurrence:
     """One placed leaf part occurrence in a model.
 
@@ -71,6 +81,7 @@ class ModelOccurrence:
     source_line: int | None
     step: int | None
     source_step: int | None
+    path: tuple[OccurrencePathItem, ...]
 
 
 def _split_sections(
@@ -420,6 +431,7 @@ class Model:
             inherited_colour=None,
             visiting=frozenset(),
             inherited_step=None,
+            path=(),
             expand_submodels=expand_submodels,
             include_steps=include_steps,
         )
@@ -526,6 +538,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     inherited_colour: Colour | None,
     visiting: frozenset[str],
     inherited_step: int | None,
+    path: tuple[OccurrencePathItem, ...],
     expand_submodels: bool,
     include_steps: bool,
 ) -> Iterator[ModelOccurrence]:
@@ -540,6 +553,15 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
         world_matrix = matrix * piece_matrix
         occurrence_step = inherited_step if inherited_step is not None else source_step
         colour = _effective_colour(piece.colour, inherited_colour)
+        occurrence_path = (
+            *path,
+            OccurrencePathItem(
+                model=model,
+                piece=piece,
+                source_line=model.source_line_for(piece),
+                step=source_step,
+            ),
+        )
         target = root.submodel_for(piece) if expand_submodels else None
         if target is not None:
             yield from _iter_model_occurrences(
@@ -550,6 +572,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
                 inherited_colour=colour,
                 visiting=visiting,
                 inherited_step=occurrence_step,
+                path=occurrence_path,
                 expand_submodels=expand_submodels,
                 include_steps=include_steps,
             )
@@ -565,6 +588,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
             source_line=model.source_line_for(piece),
             step=occurrence_step,
             source_step=source_step,
+            path=occurrence_path,
         )
 
 

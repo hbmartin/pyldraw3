@@ -17,7 +17,7 @@ from weakref import WeakKeyDictionary
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
 from ldraw.lines import Line, OptionalLine, Quadrilateral, Triangle
-from ldraw.part_geometry_types import BoundingBox, StudReference
+from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
@@ -26,6 +26,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ldraw")
 
 _STUD_PREFIX = "stud"
+
+__all__ = [
+    "BoundingBox",
+    "PartGeometry",
+    "StudReference",
+    "part_bounding_box",
+    "part_geometry",
+    "part_studs",
+]
 
 
 class _PartGeometryLibrary(Protocol):
@@ -42,6 +51,7 @@ class _LocalGeometry:
 
     description: str
     box: BoundingBox | None
+    points: tuple[Vector, ...]
     studs: tuple[StudReference, ...]
 
 
@@ -65,6 +75,23 @@ def part_bounding_box(parts: _PartGeometryLibrary, code: str) -> BoundingBox:
     if local.box is None:
         raise NoGeometryError(code)
     return local.box
+
+
+def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
+    """Return fully expanded local geometry for a catalogued part.
+
+    Unlike :func:`part_bounding_box`, this query succeeds for an empty part:
+    its ``bounds`` is ``None`` and ``points`` is empty. Unknown part codes
+    still raise ``PartNotFoundError`` through the underlying catalog.
+    """
+    local = _require_local(parts, code)
+    return PartGeometry(
+        code=code,
+        description=local.description,
+        bounds=local.box,
+        points=local.points,
+        studs=local.studs,
+    )
 
 
 def part_studs(parts: _PartGeometryLibrary, code: str) -> tuple[StudReference, ...]:
@@ -116,22 +143,26 @@ def _local_geometry(
         return None
 
     box = _BoxAccumulator()
+    points: list[Vector] = []
     studs: list[StudReference] = []
     for obj in objects:
         match obj:
             case Line() | Triangle() | Quadrilateral():
                 for point in obj.points:
                     box.add(point)
+                    points.append(point.copy())
             case OptionalLine():
                 # Points 3 and 4 only control visibility; they can sit far
                 # off the surface and must not stretch the box.
                 box.add(obj.point1)
                 box.add(obj.point2)
+                points.extend((obj.point1.copy(), obj.point2.copy()))
             case Piece():
                 _fold_child(
                     parts=parts,
                     piece=obj,
                     box=box,
+                    points=points,
                     studs=studs,
                     visiting=visiting | {key},
                 )
@@ -139,26 +170,29 @@ def _local_geometry(
     local = _LocalGeometry(
         description=part.description,
         box=box.box(),
+        points=tuple(points),
         studs=tuple(studs),
     )
     cache[key] = local
     return local
 
 
-def _fold_child(
+def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     *,
     parts: _PartGeometryLibrary,
     piece: Piece,
     box: _BoxAccumulator,
+    points: list[Vector],
     studs: list[StudReference],
     visiting: frozenset[str],
 ) -> None:
     local = _local_geometry(parts, piece.part, visiting)
     if local is None:
         return
-    if local.box is not None:
-        for corner in local.box.corners():
-            box.add(piece.position + piece.matrix * corner)
+    for point in local.points:
+        transformed = piece.position + piece.matrix * point
+        box.add(transformed)
+        points.append(transformed)
     stem = _local_key(piece.part).rpartition("/")[2]
     if stem.startswith(_STUD_PREFIX):
         studs.append(

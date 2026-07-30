@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ldraw.errors import NoGeometryError, PartNotFoundError
-from ldraw.geometry import Vector
+from ldraw.geometry import Identity, Vector, ZAxis
 from ldraw.model import Model
 from ldraw.model_summary import ModelSummary, model_bounds
 from ldraw.parts import PartReferenceKind, Parts
@@ -21,6 +21,7 @@ PARTS_LST = """\
 9007.dat                       Uppercase Ref
 9008.dat                       Sideways Stud Part
 9009.dat                       Rotated Stud Group
+9010.dat                       Asymmetric Triangle
 """
 
 FILES = {
@@ -61,6 +62,7 @@ FILES = {
     "parts/9009.dat": (
         "0 Rotated Stud Group\n1 16 0 0 0 1 0 0 0 0 -1 0 1 0 stug2.dat\n"
     ),
+    "parts/9010.dat": "0 Asymmetric Triangle\n3 16 0 0 0 10 0 0 0 20 0\n",
 }
 
 
@@ -91,6 +93,23 @@ def test_bounding_box_folds_geometry_subparts_and_primitives(
     assert box.max == Vector(20, 24, 10)
     assert box.size == Vector(40, 28, 20)
     assert "missing" in caplog.text.lower()
+
+
+def test_geometry_exposes_expanded_points_bounds_and_studs(
+    geometry_parts: Parts,
+) -> None:
+    geometry = geometry_parts.geometry("9001")
+
+    assert geometry.code == "9001"
+    assert geometry.description == "Test Brick"
+    assert geometry.bounds == geometry_parts.bounding_box("9001")
+    assert len(geometry.points) == 17
+    assert geometry.studs == geometry_parts.studs("9001")
+    assert geometry.top_studs == (geometry.studs[0],)
+
+    empty = geometry_parts.geometry("9002")
+    assert empty.bounds is None
+    assert empty.points == ()
 
 
 def test_studs_reports_kind_and_local_position(geometry_parts: Parts) -> None:
@@ -267,3 +286,25 @@ def test_empty_model_summary_has_no_bounds(geometry_parts: Parts) -> None:
     assert summary.origin_bounds is None
     assert summary.size_ldu is None
     assert summary.size_mm is None
+
+
+def test_model_summary_uses_expanded_points_for_exact_oblique_world_bounds(
+    geometry_parts: Parts,
+) -> None:
+    model = Model(
+        objects=[
+            Piece.place(
+                "9010",
+                matrix=Identity().rotate(45, ZAxis),
+            ),
+        ],
+    )
+
+    bounds = model_bounds(model, geometry_parts)
+
+    assert bounds is not None
+    assert bounds.min.x == pytest.approx(-14.142_135_62)
+    assert bounds.max.x == pytest.approx(7.071_067_81)
+    assert bounds.min.y == pytest.approx(0)
+    # Transforming local AABB corners would incorrectly produce 21.213 here.
+    assert bounds.max.y == pytest.approx(14.142_135_62)

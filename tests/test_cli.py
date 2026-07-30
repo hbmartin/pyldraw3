@@ -5,6 +5,7 @@ import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from ldraw.config import Config
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.errors import ConfigLoadError, CouldNotDetermineLatestVersionError
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.part_geometry_types import PartGeometry
 from ldraw.parts import CatalogEntry, MinifigSection, PartCategory
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -298,6 +300,51 @@ def test_parts_info_unknown_code_returns_one(
     assert "No part with code '9999'." in capsys.readouterr().err
 
 
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_geometry_json_reports_expanded_catalog_geometry(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "geometry", "3001", "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "3001"
+    assert payload["description"] == "Brick 2 x 4"
+    assert payload["point_count"] > 0
+    assert payload["bounds"]["min"] == [-40.0, 0.0, -20.0]
+    assert payload["top_stud_count"] == 8
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_geometry_table_and_unknown_part(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "geometry", "3001"]) == 0
+    assert "expanded points:" in capsys.readouterr().out
+
+    assert main(["parts", "geometry", "9999"]) == 1
+    assert "not found" in capsys.readouterr().err.lower()
+
+
+@patch("ldraw.cli._load_parts")
+def test_parts_geometry_table_handles_empty_geometry(
+    load_parts_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    load_parts_mock.return_value.geometry.return_value = PartGeometry(
+        code="empty",
+        description="Empty",
+        bounds=None,
+        points=(),
+        studs=(),
+    )
+
+    assert main(["parts", "geometry", "empty"]) == 0
+
+    assert "bounds: none" in capsys.readouterr().out
+
+
 @patch("ldraw.cli.Config.load")
 def test_parts_commands_without_library_return_one(
     config_load_mock: MagicMock,
@@ -311,6 +358,10 @@ def test_parts_commands_without_library_return_one(
 
     assert main(["parts", "search", "brick"]) == 1
     assert main(["parts", "info", "3001"]) == 1
+    assert main(["parts", "geometry", "3001"]) == 1
+    model = tmp_path / "model.ldr"
+    model.touch()
+    assert main(["inspect", str(model)]) == 1
 
     assert "run `ldraw download` first" in capsys.readouterr().err
 
@@ -493,10 +544,196 @@ def test_build_parser_parts_info() -> None:
     assert args.code == "3001"
 
 
+def test_build_parser_parts_geometry() -> None:
+    args = build_parser().parse_args(["parts", "geometry", "3001", "--format=json"])
+
+    assert args.parts_command == "geometry"
+    assert args.code == "3001"
+    assert args.format == "json"
+
+
 def test_build_parser_validate() -> None:
     args = build_parser().parse_args(["validate", "model.ldr"])
 
     assert args.file == Path("model.ldr")
+
+
+def test_build_parser_inspect_defaults() -> None:
+    args = build_parser().parse_args(["inspect", "model.mpd"])
+
+    assert args.file == Path("model.mpd")
+    assert args.gap_threshold == 5
+    assert not args.chronological
+    assert args.page_marker_prefix == "// PDF_PAGE "
+
+
+def test_build_parser_render_views() -> None:
+    args = build_parser().parse_args(
+        ["render", "model.mpd", "--view", "front=0,0", "--view", "rear=0,180"],
+    )
+
+    assert [view.name for view in args.view] == ["front", "rear"]
+    assert args.view[1].longitude == 180
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_json_includes_world_bounds_pages_and_contacts(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "0 // PDF_PAGE 007\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    assert main(["inspect", str(model), "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["occurrence_count"] == 1
+    assert payload["geometry_count"] == 1
+    assert payload["occurrences"][0]["installation_page"] == 7
+    assert payload["occurrences"][0]["source_page"] == 7
+    assert payload["occurrences"][0]["bounds"]["min"] == [-40.0, 0.0, -20.0]
+    assert payload["disconnected"] == []
+
+    report = tmp_path / "inspection.txt"
+    assert (
+        main(
+            [
+                "inspect",
+                str(model),
+                "--chronological",
+                "--output",
+                str(report),
+            ],
+        )
+        == 0
+    )
+    assert "world bounds:" in report.read_text(encoding="utf-8")
+    assert "chronological" in report.read_text(encoding="utf-8")
+
+
+def test_inspect_rejects_missing_file_and_negative_gap(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_path / "missing.mpd"
+    assert main(["inspect", str(missing)]) == 1
+    assert "not found" in capsys.readouterr().err
+
+    model = tmp_path / "model.mpd"
+    model.touch()
+    assert main(["inspect", str(model), "--gap-threshold=-1"]) == 1
+    assert "non-negative" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_reports_invalid_utf8_and_output_write_errors(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    invalid = tmp_path / "invalid.ldr"
+    invalid.write_bytes(b"\xff")
+    assert main(["inspect", str(invalid)]) == 1
+    assert "codec can't decode" in capsys.readouterr().err
+
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+    assert main(["inspect", str(model), "--output", str(tmp_path)]) == 1
+    assert "Could not write" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_json_serializes_stud_contacts(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "connected.ldr"
+    model.write_text(
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "1 4 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    assert main(["inspect", str(model), "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stud_contacts"]
+    assert payload["stud_contacts"][0]["stud_part"] == "3001"
+
+
+@patch("ldraw.cli.render_leocad")
+def test_render_command_passes_named_views_and_reports_outputs(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+    output = tmp_path / "renders" / "proof.rear.png"
+    render_mock.return_value = (SimpleNamespace(output=output),)
+
+    assert (
+        main(
+            [
+                "render",
+                str(model),
+                "--view",
+                "rear=0,180",
+                "--size",
+                "800x600",
+                "--output-dir",
+                str(output.parent),
+                "--prefix",
+                "proof",
+                "--overwrite",
+                "--xvfb",
+                "never",
+            ],
+        )
+        == 0
+    )
+
+    kwargs = render_mock.call_args.kwargs
+    assert kwargs["views"][0].name == "rear"
+    assert kwargs["width"] == 800
+    assert kwargs["height"] == 600
+    assert kwargs["overwrite"]
+    assert kwargs["use_xvfb"] is False
+    assert f"RENDERED: {output}" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.render_leocad")
+def test_render_command_reports_invalid_size_without_calling_renderer(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+
+    assert main(["render", str(model), "--size", "wide"]) == 1
+
+    render_mock.assert_not_called()
+    assert "bad size" in capsys.readouterr().err
+
+    assert main(["render", str(model), "--size=0x10"]) == 1
+    assert "positive" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("view", ["front", "front=north,0"])
+def test_render_parser_rejects_malformed_views(view: str) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        build_parser().parse_args(["render", "model.mpd", "--view", view])
+
+    assert excinfo.value.code == 2
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
