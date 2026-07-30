@@ -26,6 +26,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+    "pillow>=11.0",
     "platformdirs>=4.3.8",
     "pystache>=0.6.0",
     "progress>=1.6.1",
@@ -42,6 +43,7 @@ Changelog = "https://github.com/hbmartin/pyldraw3/releases"
 
 [project.scripts]
 ldraw = "ldraw.cli:main"
+ldraw-compare = "ldraw.visual_compare:main"
 
 [dependency-groups]
 dev = [
