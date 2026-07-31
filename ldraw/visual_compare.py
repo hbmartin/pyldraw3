@@ -33,6 +33,7 @@ DEFAULT_BACKGROUND_TOLERANCE = 24.0
 DEFAULT_SCALE_MIN = 0.65
 DEFAULT_SCALE_MAX = 1.45
 DEFAULT_SCALE_STEPS = 41
+DEFAULT_ALPHA_THRESHOLD = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,7 @@ class AlignmentConfig:
     max_scale: float = DEFAULT_SCALE_MAX
     scale_steps: int = DEFAULT_SCALE_STEPS
     background_tolerance: float = DEFAULT_BACKGROUND_TOLERANCE
-    alpha_threshold: int = 16
+    alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD
 
     def __post_init__(self) -> None:
         """Validate settings early so failed sweeps do not render images."""
@@ -55,6 +56,9 @@ class AlignmentConfig:
             raise ValueError(msg)
         if self.scale_steps < 1:
             msg = "scale_steps must be at least one"
+            raise ValueError(msg)
+        if self.scale_steps == 1 and self.min_scale != self.max_scale:
+            msg = "scale_steps=1 requires min_scale and max_scale to be equal"
             raise ValueError(msg)
         if self.background_tolerance < 0:
             msg = "background_tolerance must not be negative"
@@ -193,7 +197,7 @@ def foreground_mask(
     image: Image.Image,
     *,
     background_tolerance: float = DEFAULT_BACKGROUND_TOLERANCE,
-    alpha_threshold: int = 16,
+    alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD,
 ) -> Mask:
     """Extract foreground using useful alpha or distance from border colour.
 
@@ -228,8 +232,6 @@ def mask_box(mask: Mask) -> Box:
 
 def _scale_values(config: AlignmentConfig) -> NDArray[np.float64]:
     """Return inclusive candidate scales."""
-    if config.scale_steps == 1:
-        return np.asarray([config.min_scale], dtype=np.float64)
     return np.linspace(
         config.min_scale,
         config.max_scale,
@@ -245,19 +247,34 @@ def _resize_mask(mask: Mask, size: tuple[int, int]) -> Mask:
     return np.asarray(resized, dtype=np.uint8) > 0
 
 
-def _best_placement(reference: Mask, candidate: Mask) -> tuple[int, int, int]:
-    """Find the in-canvas translation with maximum silhouette intersection."""
+def _best_placement(
+    reference: Mask,
+    candidate: Mask,
+    *,
+    reference_fft: NDArray[np.complex128] | None = None,
+    transform_shape: tuple[int, int] | None = None,
+) -> tuple[int, int, int]:
+    """Find the in-canvas translation with maximum silhouette intersection.
+
+    ``reference_fft`` and ``transform_shape`` let a scale sweep reuse one
+    padded reference transform; the shape must cover the full linear
+    convolution of the reference with the largest candidate in the sweep.
+    """
     reference_height, reference_width = reference.shape
     candidate_height, candidate_width = candidate.shape
     if candidate_height > reference_height or candidate_width > reference_width:
         msg = "scaled candidate does not fit inside the reference canvas"
         raise ValueError(msg)
+    if (reference_fft is None) != (transform_shape is None):
+        msg = "reference_fft and transform_shape must be supplied together"
+        raise ValueError(msg)
 
-    convolution_shape = (
+    convolution_shape = transform_shape or (
         reference_height + candidate_height - 1,
         reference_width + candidate_width - 1,
     )
-    reference_fft = np.fft.rfft2(reference, s=convolution_shape)
+    if reference_fft is None:
+        reference_fft = np.fft.rfft2(reference, s=convolution_shape)
     candidate_fft = np.fft.rfft2(candidate[::-1, ::-1], s=convolution_shape)
     correlation = np.fft.irfft2(
         reference_fft * candidate_fft,
@@ -289,18 +306,34 @@ def register_silhouettes(
         msg = "reference image has no detectable foreground"
         raise ValueError(msg)
 
-    best: Alignment | None = None
+    reference_height, reference_width = reference_mask.shape
+    sizes: dict[tuple[int, int], float] = {}
     for scale_value in _scale_values(settings):
         scale = float(scale_value)
         scaled_width = max(1, round(cropped.shape[1] * scale))
         scaled_height = max(1, round(cropped.shape[0] * scale))
-        if (
-            scaled_width > reference_mask.shape[1]
-            or scaled_height > reference_mask.shape[0]
-        ):
+        if scaled_width > reference_width or scaled_height > reference_height:
             continue
+        sizes.setdefault((scaled_width, scaled_height), scale)
+    if not sizes:
+        msg = "no configured scale fits the candidate inside the reference canvas"
+        raise ValueError(msg)
+
+    transform_shape = (
+        reference_height + max(height for _, height in sizes) - 1,
+        reference_width + max(width for width, _ in sizes) - 1,
+    )
+    reference_fft = np.fft.rfft2(reference_mask, s=transform_shape)
+
+    best: Alignment | None = None
+    for (scaled_width, scaled_height), scale in sizes.items():
         scaled = _resize_mask(cropped, (scaled_width, scaled_height))
-        offset_x, offset_y, intersection = _best_placement(reference_mask, scaled)
+        offset_x, offset_y, intersection = _best_placement(
+            reference_mask,
+            scaled,
+            reference_fft=reference_fft,
+            transform_shape=transform_shape,
+        )
         candidate_area = int(scaled.sum())
         union = reference_area + candidate_area - intersection
         iou = intersection / union if union else 1.0
@@ -316,7 +349,7 @@ def register_silhouettes(
         if best is None or alignment.silhouette_iou > best.silhouette_iou:
             best = alignment
 
-    if best is None:
+    if best is None:  # unreachable: sizes is non-empty
         msg = "no configured scale fits the candidate inside the reference canvas"
         raise ValueError(msg)
     return best
@@ -436,7 +469,9 @@ def compare(
         candidate_mask,
     )
     region_metrics: dict[str, dict[str, float]] = {}
+    region_owners: dict[str, str] = {}
     for region in regions:
+        _claim_safe_name(region.name, region_owners, "region")
         box = region.resolve(reference.size)
         left, top, right, bottom = box
         region_metrics[region.name] = image_metrics(
@@ -512,9 +547,10 @@ def write_comparison_artifacts(
     difference.save(output_dir / "difference.png")
 
     region_outputs: dict[str, dict[str, str]] = {}
+    region_owners: dict[str, str] = {}
     for region in regions:
         box = region.resolve(result.reference.size)
-        safe_name = _safe_name(region.name)
+        safe_name = _claim_safe_name(region.name, region_owners, "region")
         paths = {
             "reference": f"regions/{safe_name}.reference.png",
             "aligned": f"regions/{safe_name}.aligned.png",
@@ -553,6 +589,20 @@ def _safe_name(value: str) -> str:
     """Return a stable conservative path segment."""
     safe = "".join(character if character.isalnum() else "-" for character in value)
     return safe.strip("-") or "item"
+
+
+def _claim_safe_name(name: str, owners: dict[str, str], kind: str) -> str:
+    """Sanitize ``name`` and reject names whose artifacts would collide."""
+    safe = _safe_name(name)
+    if (existing := owners.get(safe)) is not None:
+        msg = (
+            f"duplicate {kind} name: {name!r}"
+            if existing == name
+            else f"{kind} names {existing!r} and {name!r} both map to {safe!r}"
+        )
+        raise ValueError(msg)
+    owners[safe] = name
+    return safe
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -623,6 +673,39 @@ def rank_candidates(
     return rows
 
 
+def _grid_preflight(
+    model: Path,
+    cameras: Sequence[Camera],
+    size: tuple[int, int],
+    executable: str,
+    timeout_seconds: int,
+) -> str:
+    """Validate a grid render request and resolve the LeoCAD executable."""
+    if not model.is_file():
+        msg = f"model not found: {model}"
+        raise FileNotFoundError(msg)
+    if timeout_seconds <= 0:
+        msg = "timeout must be positive"
+        raise ValueError(msg)
+    key_owners: dict[str, Camera] = {}
+    for camera in cameras:
+        if (existing := key_owners.setdefault(camera.key, camera)) is not camera:
+            msg = (
+                f"cameras {existing} and {camera} share the file key "
+                f"{camera.key!r}; keep angles at least 0.01 degrees apart"
+            )
+            raise ValueError(msg)
+    resolved_executable = shutil.which(executable)
+    if resolved_executable is None:
+        msg = f"LeoCAD executable not found: {executable}"
+        raise FileNotFoundError(msg)
+    width, height = size
+    if width <= 0 or height <= 0:
+        msg = "render size must be positive"
+        raise ValueError(msg)
+    return resolved_executable
+
+
 def render_leocad_grid(  # noqa: PLR0913
     model: Path,
     output_dir: Path,
@@ -634,17 +717,14 @@ def render_leocad_grid(  # noqa: PLR0913
     timeout_seconds: int = 240,
 ) -> list[dict[str, object]]:
     """Render one PNG for each camera using LeoCAD's command-line mode."""
-    if not model.is_file():
-        msg = f"model not found: {model}"
-        raise FileNotFoundError(msg)
-    resolved_executable = shutil.which(executable)
-    if resolved_executable is None:
-        msg = f"LeoCAD executable not found: {executable}"
-        raise FileNotFoundError(msg)
+    resolved_executable = _grid_preflight(
+        model,
+        cameras,
+        size,
+        executable,
+        timeout_seconds,
+    )
     width, height = size
-    if width <= 0 or height <= 0:
-        msg = "render size must be positive"
-        raise ValueError(msg)
     output_dir.mkdir(parents=True, exist_ok=True)
     renders: list[dict[str, object]] = []
     for camera in cameras:
@@ -785,32 +865,39 @@ def _regions_from_json(value: object) -> list[Region]:
 
 
 def _config_from_mapping(value: object) -> AlignmentConfig:
-    """Parse alignment settings from a JSON object."""
+    """Parse and type-check alignment settings from a JSON object."""
     if value is None:
         return AlignmentConfig()
     if not isinstance(value, dict):
         msg = "alignment must be an object"
         raise TypeError(msg)
-    known = {
-        "min_scale",
-        "max_scale",
-        "scale_steps",
-        "background_tolerance",
-        "alpha_threshold",
+    defaults: dict[str, float | int] = {
+        "min_scale": DEFAULT_SCALE_MIN,
+        "max_scale": DEFAULT_SCALE_MAX,
+        "scale_steps": DEFAULT_SCALE_STEPS,
+        "background_tolerance": DEFAULT_BACKGROUND_TOLERANCE,
+        "alpha_threshold": DEFAULT_ALPHA_THRESHOLD,
     }
-    unknown = set(value) - known
+    unknown = set(value) - set(defaults)
     if unknown:
         msg = f"unknown alignment settings: {', '.join(sorted(unknown))}"
         raise ValueError(msg)
+    settings: dict[str, float | int] = {}
+    for name, default in defaults.items():
+        raw = value.get(name, default)
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            msg = f"alignment setting {name} must be a number"
+            raise TypeError(msg)
+        if name in {"scale_steps", "alpha_threshold"} and not isinstance(raw, int):
+            msg = f"alignment setting {name} must be an integer"
+            raise TypeError(msg)
+        settings[name] = raw
     return AlignmentConfig(
-        min_scale=cast("float", value.get("min_scale", DEFAULT_SCALE_MIN)),
-        max_scale=cast("float", value.get("max_scale", DEFAULT_SCALE_MAX)),
-        scale_steps=cast("int", value.get("scale_steps", DEFAULT_SCALE_STEPS)),
-        background_tolerance=cast(
-            "float",
-            value.get("background_tolerance", DEFAULT_BACKGROUND_TOLERANCE),
-        ),
-        alpha_threshold=cast("int", value.get("alpha_threshold", 16)),
+        min_scale=float(settings["min_scale"]),
+        max_scale=float(settings["max_scale"]),
+        scale_steps=int(settings["scale_steps"]),
+        background_tolerance=float(settings["background_tolerance"]),
+        alpha_threshold=int(settings["alpha_threshold"]),
     )
 
 
@@ -845,6 +932,7 @@ def build_report(manifest_path: Path, output_dir: Path) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report_views: list[dict[str, object]] = []
     all_metrics: list[dict[str, float]] = []
+    view_owners: dict[str, str] = {}
 
     for view_item in cast("list[object]", manifest["views"]):
         if not isinstance(view_item, dict):
@@ -861,10 +949,13 @@ def build_report(manifest_path: Path, output_dir: Path) -> dict[str, object]:
             raise ValueError(msg)
         reference_path = (manifest_dir / reference_value).resolve()
         regions = _regions_from_json(view_item.get("regions"))
+        safe_view = _claim_safe_name(name, view_owners, "view")
         view_rows: list[dict[str, object]] = []
+        candidate_owners: dict[str, str] = {}
         for label, candidate_value in _candidate_specs(candidates_value):
             candidate_path = (manifest_dir / candidate_value).resolve()
-            relative_dir = Path("views") / _safe_name(name) / _safe_name(label)
+            safe_label = _claim_safe_name(label, candidate_owners, "candidate")
+            relative_dir = Path("views") / safe_view / safe_label
             row = compare_paths(
                 reference_path,
                 candidate_path,
@@ -997,13 +1088,17 @@ def _add_alignment_arguments(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=DEFAULT_BACKGROUND_TOLERANCE,
     )
-    parser.add_argument("--alpha-threshold", type=int, default=16)
+    parser.add_argument(
+        "--alpha-threshold",
+        type=int,
+        default=DEFAULT_ALPHA_THRESHOLD,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
     """Create the command-line parser."""
     parser = argparse.ArgumentParser(
-        prog="visual_compare.py",
+        prog="visual-compare",
         description="Register and compare LDraw renders with raster references.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1047,6 +1142,12 @@ def _parser() -> argparse.ArgumentParser:
     grid_parser.add_argument("--leocad", default="leocad")
     grid_parser.add_argument("--skip-existing", action="store_true")
     grid_parser.add_argument("--columns", type=int, default=4)
+    grid_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=240,
+        help="per-render LeoCAD timeout in seconds",
+    )
     _add_alignment_arguments(grid_parser)
 
     report_parser = subparsers.add_parser(
@@ -1102,11 +1203,14 @@ def _run_camera_grid(args: argparse.Namespace) -> None:
         size=args.size,
         executable=args.leocad,
         skip_existing=args.skip_existing,
+        timeout_seconds=args.timeout,
     )
     payload: dict[str, object] = {
         "model": str(args.model.resolve()),
         "renders": renders,
     }
+    grid_json = args.output_dir / "camera-grid.json"
+    _write_json(grid_json, payload)
     if args.reference is not None:
         rows = rank_candidates(
             args.reference,
@@ -1125,7 +1229,7 @@ def _run_camera_grid(args: argparse.Namespace) -> None:
             args.output_dir / "camera-grid.png",
             columns=args.columns,
         )
-    _write_json(args.output_dir / "camera-grid.json", payload)
+        _write_json(grid_json, payload)
     print(f"rendered {len(renders)} camera views")
 
 
