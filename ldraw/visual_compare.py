@@ -139,6 +139,7 @@ class Comparison:
     alignment: Alignment
     metrics: dict[str, float]
     regions: dict[str, dict[str, float]] = field(default_factory=dict)
+    region_boxes: dict[str, Box] = field(default_factory=dict)
 
 
 def _angle_key(value: float) -> str:
@@ -355,16 +356,24 @@ def _refinement_candidates(
         )
         for width, height, scale in candidates
     ]
-    scores = _evaluate_scales(coarse_reference, source, coarse_candidates)
+    scores = _evaluate_scales(
+        reference=coarse_reference,
+        source=source,
+        candidates=coarse_candidates,
+    )
     if not any(result[3] > 0 for result in scores):
         return candidates
     ranked = sorted(
         range(len(scores)),
         key=lambda index: (-scores[index][3], index),
-    )[:_COARSE_TOP_SCALES]
+    )
+    # Collapsed coarse sizes produce exact score ties, so refine every
+    # candidate that ties a top score rather than only the first few indices.
+    top_scores = {scores[index][3] for index in ranked[:_COARSE_TOP_SCALES]}
     selected_indices = {
         nearby
-        for index in ranked
+        for index in range(len(scores))
+        if scores[index][3] in top_scores
         for nearby in range(
             max(0, index - _REFINE_SCALE_RADIUS),
             min(len(candidates), index + _REFINE_SCALE_RADIUS + 1),
@@ -403,8 +412,16 @@ def register_silhouettes(
         raise ValueError(msg)
 
     candidates = [(width, height, scale) for (width, height), scale in sizes.items()]
-    refined = _refinement_candidates(reference_mask, cropped, candidates)
-    results = _evaluate_scales(reference_mask, cropped, refined)
+    refined = _refinement_candidates(
+        reference=reference_mask,
+        source=cropped,
+        candidates=candidates,
+    )
+    results = _evaluate_scales(
+        reference=reference_mask,
+        source=cropped,
+        candidates=refined,
+    )
     candidate, offset_x, offset_y, iou = max(
         results,
         key=lambda result: result[3],
@@ -535,11 +552,13 @@ def compare(
         candidate_mask,
     )
     region_metrics: dict[str, dict[str, float]] = {}
+    region_boxes: dict[str, Box] = {}
     region_owners: dict[str, str] = {}
     for region in regions:
         _claim_safe_name(region.name, region_owners, "region")
         box = region.resolve(reference.size)
         left, top, right, bottom = box
+        region_boxes[region.name] = box
         region_metrics[region.name] = image_metrics(
             reference.crop(box),
             aligned_candidate.crop(box),
@@ -554,6 +573,7 @@ def compare(
         alignment=alignment,
         metrics=metrics,
         regions=region_metrics,
+        region_boxes=region_boxes,
     )
 
 
@@ -610,6 +630,17 @@ def write_comparison_artifacts(
     if {region.name for region, _ in prepared_regions} != set(result.regions):
         msg = "regions must match those used to create the comparison"
         raise ValueError(msg)
+    resolved_boxes: dict[str, Box] = {}
+    for region, _ in prepared_regions:
+        box = region.resolve(result.reference.size)
+        expected = result.region_boxes.get(region.name)
+        if expected is not None and expected != box:
+            msg = (
+                f"region {region.name!r} box does not match the comparison: "
+                f"expected {expected}, got {box}"
+            )
+            raise ValueError(msg)
+        resolved_boxes[region.name] = box
 
     output_dir.mkdir(parents=True, exist_ok=True)
     background = estimate_background(result.reference)
@@ -623,7 +654,7 @@ def write_comparison_artifacts(
 
     region_outputs: dict[str, dict[str, str]] = {}
     for region, safe_name in prepared_regions:
-        box = region.resolve(result.reference.size)
+        box = resolved_boxes[region.name]
         paths = {
             "reference": f"regions/{safe_name}.reference.png",
             "aligned": f"regions/{safe_name}.aligned.png",

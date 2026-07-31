@@ -24,6 +24,9 @@ from ldraw.progress import (
 )
 
 _RENDER_TIMEOUT_SECONDS = 240
+_RENDER_POLL_SECONDS = 0.05
+_CACHE_SCHEMA = "preview-cache-v2"
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class RenderBackend(StrEnum):
@@ -95,10 +98,20 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
     backend: RenderBackend | None = None,
     output: str | Path | None = None,
     cache_path: str | Path | None = None,
+    refresh: bool = False,
     on_progress: ProgressCallback | None = None,
     cancellation: CancellationToken | None = None,
 ) -> RenderResult:
-    """Render one view, using a content-addressed PNG cache when possible."""
+    """Render one view, using a content-addressed PNG cache when possible.
+
+    The cache key covers the top-level source bytes, the resolved renderer
+    executable path, and the full render command (backend, view angles, size,
+    and renderer options).  Files referenced by the source (submodels and
+    sidecar part files) and the parts-library state are NOT part of the key,
+    so edits to them do not invalidate cached previews; pass ``refresh=True``
+    to skip the cache read and force a re-render (the fresh image is still
+    written back to the cache).
+    """
     source_path = Path(source).expanduser().resolve()
     if not source_path.is_file():
         return _render_error_result(
@@ -134,18 +147,21 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
         cache_root, cached_path, requested_output = _render_paths(
             source=source_path,
             backend=selected,
+            executable=available[selected].executable,
             view=view,
             size=size,
             output=output,
             cache_path=cache_path,
         )
-        if cached := _cached_result(
-            source=source_path,
-            view=view,
-            size=size,
-            backend=selected,
-            cached_path=cached_path,
-            requested_output=requested_output,
+        if not refresh and (
+            cached := _cached_result(
+                source=source_path,
+                view=view,
+                size=size,
+                backend=selected,
+                cached_path=cached_path,
+                requested_output=requested_output,
+            )
         ):
             return cached
     except OSError as exc:
@@ -184,6 +200,7 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
     *,
     source: Path,
     backend: RenderBackend,
+    executable: Path | None,
     view: RenderView,
     size: tuple[int, int],
     output: str | Path | None,
@@ -195,9 +212,29 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
         else Path(get_cache_dir()) / "previews"
     )
     width, height = size
+    # The command with placeholder paths captures every render-relevant input:
+    # backend, resolved executable, view angles, size, and renderer options.
+    identity_command = _render_command(
+        backend=backend,
+        executable=executable,
+        source=Path("source"),
+        output=Path("output"),
+        view=view,
+        size=size,
+    )
+    identity = "\0".join(
+        (
+            _CACHE_SCHEMA,
+            backend.value,
+            view.value,
+            f"{width}x{height}",
+            str(executable),
+            *identity_command,
+        ),
+    )
     digest = hashlib.sha256()
     digest.update(source.read_bytes())
-    digest.update(f"\0{backend.value}\0{view.value}\0{width}x{height}".encode())
+    digest.update(f"\0{identity}".encode())
     cached_path = cache_root / f"{digest.hexdigest()}.png"
     requested_output = Path(output).expanduser() if output is not None else cached_path
     return cache_root, cached_path, requested_output
@@ -270,19 +307,14 @@ def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
             size=size,
         )
         completed = _run_renderer(command, cancellation=cancellation)
-        if (
-            completed.returncode != 0
-            or not temporary_path.is_file()
-            or not temporary_path.stat().st_size
-        ):
-            detail = (completed.stderr or completed.stdout or "").strip()
-            message = detail or "renderer exited without producing an image"
+        failure = _render_failure(completed=completed, image=temporary_path)
+        if failure is not None:
             return _render_error_result(
                 source=source,
                 view=view,
                 size=size,
                 backend=backend,
-                message=f"Preview rendering failed: {message}",
+                message=f"Preview rendering failed: {failure}",
                 offending_value=backend.value,
             )
         temporary_path.replace(cached_path)
@@ -312,18 +344,49 @@ def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
     except OperationCancelled:
         raise
     except (OSError, subprocess.SubprocessError) as exc:
+        message = f"Preview rendering failed: {exc}"
+        if isinstance(exc, subprocess.TimeoutExpired) and (
+            captured := _captured_process_output(exc)
+        ):
+            message = f"{message}\n{captured}"
         return _render_error_result(
             source=source,
             view=view,
             size=size,
             backend=backend,
-            message=f"Preview rendering failed: {exc}",
+            message=message,
             offending_value=backend.value,
             cause=exc,
         )
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def _render_failure(
+    *,
+    completed: subprocess.CompletedProcess[str],
+    image: Path,
+) -> str | None:
+    """Describe why a renderer run did not produce a usable PNG, if it failed."""
+    detail = (completed.stderr or completed.stdout or "").strip()
+    if completed.returncode != 0 or not image.is_file() or not image.stat().st_size:
+        return detail or "renderer exited without producing an image"
+    with image.open("rb") as stream:
+        signature = stream.read(len(_PNG_SIGNATURE))
+    if signature != _PNG_SIGNATURE:
+        reason = "renderer wrote a file that is not a PNG image"
+        return f"{reason}: {detail}" if detail else reason
+    return None
+
+
+def _captured_process_output(exc: subprocess.TimeoutExpired) -> str:
+    """Collect whatever text a stopped renderer wrote before it was killed."""
+    return "\n".join(
+        stripped
+        for stream in (exc.stderr, exc.output)
+        if isinstance(stream, str) and (stripped := stream.strip())
+    )
 
 
 def _render_error_result(  # noqa: PLR0913 - diagnostic context is explicit
@@ -408,32 +471,60 @@ def _run_renderer(
     *,
     cancellation: CancellationToken | None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a renderer, draining its pipes while honouring cancel and timeout.
+
+    ``communicate`` with a short timeout keeps both pipes drained between
+    cancellation checks, so chatty renderers can never fill an OS pipe buffer
+    and deadlock.  Partial output survives each timed-out ``communicate`` call
+    and is attached to the ``TimeoutExpired`` raised on the deadline.
+    """
     process = subprocess.Popen(  # noqa: S603
         command,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
     )
     deadline = time.monotonic() + _RENDER_TIMEOUT_SECONDS
-    while process.poll() is None:
+    while True:
         try:
             check_cancelled(cancellation)
         except OperationCancelled:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            _stop_renderer(process)
             raise
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             process.kill()
-            process.wait()
-            raise subprocess.TimeoutExpired(command, _RENDER_TIMEOUT_SECONDS)
-        time.sleep(0.05)
-    stdout, stderr = process.communicate()
-    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            stdout, stderr = process.communicate()
+            raise subprocess.TimeoutExpired(
+                cmd=command,
+                timeout=_RENDER_TIMEOUT_SECONDS,
+                output=stdout,
+                stderr=stderr,
+            )
+        try:
+            stdout, stderr = process.communicate(
+                timeout=min(_RENDER_POLL_SECONDS, remaining),
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=process.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+
+def _stop_renderer(process: subprocess.Popen[str]) -> None:
+    """Terminate a renderer, escalating to kill, and drain its pipes."""
+    process.terminate()
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
 
 
 __all__ = [
