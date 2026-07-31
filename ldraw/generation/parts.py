@@ -47,6 +47,7 @@ def recursive_gen_parts(
     sections: dict[tuple[str, ...], dict[str, str]],
     directory: Path,
     prefix: tuple[str, ...],
+    *,
     cancellation: CancellationToken | None = None,
 ) -> None:
     """Recursively generate parts modules for nested part categories."""

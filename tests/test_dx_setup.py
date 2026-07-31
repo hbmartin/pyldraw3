@@ -141,6 +141,48 @@ def test_discover_libraries_uses_config_and_cache_defaults(
     assert {item.ldraw_path for item in discovered} >= {configured, cached}
 
 
+def test_discover_libraries_tolerates_corrupt_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "config.yml"
+    config_file.write_text("ldraw_library_path: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr("ldraw.config.CONFIG_FILE", config_file)
+    cache = tmp_path / "cache"
+    cached = _write_library(cache / "cached")
+    monkeypatch.setattr("ldraw.library_setup.get_cache_dir", lambda: cache)
+
+    discovered = discover_libraries()
+
+    assert cached in {item.ldraw_path for item in discovered}
+
+
+def test_inspect_library_classifies_install_root_named_ldraw(tmp_path: Path) -> None:
+    root = tmp_path / "ldraw"
+    ldraw_path = _write_library(root)
+
+    inspection = inspect_library(root)
+
+    assert inspection.path == root
+    assert inspection.ldraw_path == ldraw_path
+    assert inspection.valid is True
+
+
+def test_inspect_library_classifies_data_directory_named_ldraw(
+    tmp_path: Path,
+) -> None:
+    direct = tmp_path / "install" / "ldraw"
+    (direct / "parts").mkdir(parents=True)
+    (direct / "p").mkdir()
+    (direct / "ldconfig.ldr").write_text("0 colours\n", encoding="utf-8")
+
+    inspection = inspect_library(direct)
+
+    assert inspection.path == direct.parent
+    assert inspection.ldraw_path == direct
+    assert inspection.missing_components == ("parts.lst",)
+
+
 def test_download_plans_cover_integrity_and_network_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,7 +257,7 @@ def test_download_plan_reports_bad_archive_member(
             return "parts/bad.dat"
 
     monkeypatch.setattr(
-        "ldraw.library_setup.zipfile.ZipFile",
+        "ldraw.downloads.zipfile.ZipFile",
         lambda path: CorruptArchive(),
     )
     monkeypatch.setattr(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -76,6 +77,42 @@ def library_fingerprint(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryFingerprint:
+    """Structured fields of a serialized ``library_fingerprint`` value."""
+
+    schema_version: str
+    parts_lst_md5: str
+    ldconfig_md5: str
+    tree_fingerprint: str
+
+
+_FINGERPRINT_LINE_COUNT = 4
+
+
+def parse_library_fingerprint(fingerprint: str) -> LibraryFingerprint:
+    """Parse the 4-line ``library_fingerprint`` serialization.
+
+    Raises ``ValueError`` on malformed input so callers never index-parse
+    the format themselves.
+    """
+    lines = fingerprint.splitlines()
+    if len(lines) != _FINGERPRINT_LINE_COUNT or not lines[1] or not lines[3]:
+        message = (
+            "malformed library fingerprint: expected"
+            f" {_FINGERPRINT_LINE_COUNT} lines (schema version, parts.lst"
+            " digest, ldconfig digest, tree fingerprint),"
+            f" got {len(lines)} lines"
+        )
+        raise ValueError(message)
+    return LibraryFingerprint(
+        schema_version=lines[0],
+        parts_lst_md5=lines[1],
+        ldconfig_md5=lines[2],
+        tree_fingerprint=lines[3],
+    )
+
+
 def generate(
     config: Config,
     *,
@@ -94,7 +131,11 @@ def generate(
     hash_path = generation_hash_path(config.generated_path)
     library_path = Path(config.ldraw_library_path)
     parts_lst = library_path / "ldraw" / "parts.lst"
-    fingerprint = fingerprint or library_fingerprint(parts_lst)
+    fingerprint = fingerprint or library_fingerprint(
+        parts_lst,
+        on_progress=on_progress,
+        cancellation=cancellation,
+    )
 
     if hash_path.exists() and hash_path.read_text() == fingerprint and not force:
         logger.info(
@@ -118,10 +159,10 @@ def generate(
     except OSError as exc:
         raise UnwritableOutputError(str(library_path_out)) from exc
 
-    fingerprint_lines = fingerprint.splitlines()
+    fields = parse_library_fingerprint(fingerprint)
     catalog_snapshot = CatalogFingerprint(
-        parts_lst_md5=fingerprint_lines[1],
-        tree_fingerprint=fingerprint_lines[3],
+        parts_lst_md5=fields.parts_lst_md5,
+        tree_fingerprint=fields.tree_fingerprint,
         generation_fingerprint=fingerprint,
     )
     parts = load_parts(

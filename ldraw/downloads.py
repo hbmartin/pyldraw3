@@ -1,9 +1,11 @@
 """LDraw library file download and extraction functionality."""
 
+import json
 import logging
 import re
 import shutil
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import requests
@@ -33,6 +35,33 @@ cache_ldraw = Path(get_cache_dir())
 _PROGRESS_BYTE_STEP = 1_048_576
 
 _REQUEST_TIMEOUT_SECONDS = 30
+
+_HTTP_PARTIAL_CONTENT = 206
+_HTTP_RANGE_NOT_SATISFIABLE = 416
+
+# ``Content-Range: bytes <start>-<end>/<complete or *>`` on a 206 response.
+_CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(?:\d+|\*)")
+# ``Content-Range: bytes */<complete>`` on a 416 response.
+_CONTENT_RANGE_UNSATISFIED_RE = re.compile(r"bytes\s+\*/(\d+)")
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveIntegrity:
+    """Result of validating a cached ZIP archive."""
+
+    valid: bool
+    bad_member: str | None = None
+    error: Exception | None = None
+
+
+def check_archive_integrity(archive_path: Path) -> ArchiveIntegrity:
+    """Validate a ZIP archive by CRC-testing every member."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            bad_member = archive.testzip()
+    except (OSError, zipfile.BadZipFile) as exc:
+        return ArchiveIntegrity(valid=False, error=exc)
+    return ArchiveIntegrity(valid=bad_member is None, bad_member=bad_member)
 
 
 def _validate_version(version: str) -> None:
@@ -191,29 +220,121 @@ def unpack_version(
             path=destination,
         ),
     )
-    with zipfile.ZipFile(version_zip, "r") as zip_ref:
-        destination.mkdir(parents=True, exist_ok=True)
-        _validate_zip_members(zip_ref, destination)
-        members = zip_ref.infolist()
-        total = len(members)
-        for current, member in enumerate(members, start=1):
-            check_cancelled(cancellation)
-            zip_ref.extract(member, destination)
-            emit_progress(
-                on_progress,
-                ProgressEvent(
-                    stage=ProgressStage.UNPACK,
-                    message=f"Unpacking {version_zip.name}",
-                    current=current,
-                    total=total,
-                    path=destination,
-                    unit=ProgressUnit.FILES,
-                ),
-            )
+    try:
+        with zipfile.ZipFile(version_zip, "r") as zip_ref:
+            destination.mkdir(parents=True, exist_ok=True)
+            _validate_zip_members(zip_ref, destination)
+            members = zip_ref.infolist()
+            total = len(members)
+            for current, member in enumerate(members, start=1):
+                check_cancelled(cancellation)
+                zip_ref.extract(member=member, path=destination)
+                if on_progress is not None:
+                    on_progress(
+                        ProgressEvent(
+                            stage=ProgressStage.UNPACK,
+                            message=f"Unpacking {version_zip.name}",
+                            current=current,
+                            total=total,
+                            path=destination,
+                            unit=ProgressUnit.FILES,
+                        ),
+                    )
+    except zipfile.BadZipFile:
+        # Discard the corrupt archive so the next run re-downloads it
+        # instead of failing on the same cached bytes forever.
+        version_zip.unlink(missing_ok=True)
+        raise
     version_zip.unlink()
     _normalize_tree(destination)
 
     return destination
+
+
+def _sidecar_path(partial: Path) -> Path:
+    """Return the resume-validator sidecar path for a ``.part`` file."""
+    return partial.with_name(f"{partial.name}.meta")
+
+
+def _discard_partial(partial: Path) -> None:
+    """Remove a partial download and its resume-validator sidecar."""
+    partial.unlink(missing_ok=True)
+    _sidecar_path(partial).unlink(missing_ok=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _ResumeValidator:
+    """Freshness validator persisted next to a resumable ``.part`` file."""
+
+    etag: str | None = None
+    last_modified: str | None = None
+    total: int | None = None
+
+    @property
+    def header_value(self) -> str | None:
+        """Value to send as ``If-Range`` when resuming, or None."""
+        return self.etag or self.last_modified
+
+
+def _read_resume_validator(partial: Path) -> _ResumeValidator | None:
+    try:
+        raw = json.loads(_sidecar_path(partial).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    etag = raw.get("etag")
+    last_modified = raw.get("last_modified")
+    total = raw.get("total")
+    return _ResumeValidator(
+        etag=etag if isinstance(etag, str) else None,
+        last_modified=last_modified if isinstance(last_modified, str) else None,
+        total=total if isinstance(total, int) else None,
+    )
+
+
+def _write_resume_validator(*, partial: Path, response: requests.Response) -> None:
+    """Persist the response's freshness validator, or clear a stale one.
+
+    Weak ETags are ignored: ``If-Range`` requires a strong validator.
+    """
+    sidecar = _sidecar_path(partial)
+    etag = response.headers.get("etag")
+    if not isinstance(etag, str) or etag.startswith("W/"):
+        etag = None
+    last_modified = response.headers.get("last-modified")
+    if not isinstance(last_modified, str):
+        last_modified = None
+    if etag is None and last_modified is None:
+        sidecar.unlink(missing_ok=True)
+        return
+    total: int | None = None
+    raw_length = response.headers.get("content-length")
+    if isinstance(raw_length, str):
+        try:
+            total = int(raw_length)
+        except ValueError:
+            total = None
+    payload = {"etag": etag, "last_modified": last_modified, "total": total}
+    try:
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        # Best-effort: without a sidecar the next run simply restarts.
+        sidecar.unlink(missing_ok=True)
+
+
+def _content_range_start(header: str | None) -> int | None:
+    if not isinstance(header, str):
+        return None
+    match = _CONTENT_RANGE_RE.fullmatch(header.strip())
+    return int(match.group(1)) if match else None
+
+
+def _content_range_complete_size(header: str | None) -> int | None:
+    if not isinstance(header, str):
+        return None
+    match = _CONTENT_RANGE_UNSATISFIED_RE.fullmatch(header.strip())
+    return int(match.group(1)) if match else None
 
 
 def _download(  # noqa: PLR0913 - streaming state and controls are explicit
@@ -230,7 +351,10 @@ def _download(  # noqa: PLR0913 - streaming state and controls are explicit
 
     The body is written to a sibling ``.part`` file and renamed into place only
     once it is fully received, so an interrupted download is never cached as a
-    complete file.
+    complete file. A partial is only resumed when its stored
+    ETag/Last-Modified validator still matches the remote file (sent as
+    ``If-Range``); otherwise the partial is discarded and the download
+    restarts from scratch, so two releases are never spliced together.
     """
     cache_ldraw.mkdir(parents=True, exist_ok=True)
     retrieved = cache_ldraw / filename
@@ -248,18 +372,94 @@ def _download(  # noqa: PLR0913 - streaming state and controls are explicit
         return retrieved
 
     partial = retrieved.with_name(f"{retrieved.name}.part")
+    for _attempt in range(2):
+        if _transfer(
+            url=url,
+            filename=filename,
+            partial=partial,
+            retrieved=retrieved,
+            chunk_size=chunk_size,
+            show_progress=show_progress,
+            on_progress=on_progress,
+            resume=resume,
+            cancellation=cancellation,
+        ):
+            break
+    else:
+        message = f"Could not download {url}: restarted transfer did not complete"
+        raise requests.HTTPError(message)
+    partial.replace(retrieved)
+    _sidecar_path(partial).unlink(missing_ok=True)
+    return retrieved
+
+
+def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
+    *,
+    url: str,
+    filename: str,
+    partial: Path,
+    retrieved: Path,
+    chunk_size: int,
+    show_progress: bool,
+    on_progress: ProgressCallback | None,
+    resume: bool,
+    cancellation: CancellationToken | None,
+) -> bool:
+    """Run one download attempt into ``partial``.
+
+    Returns True when ``partial`` holds the complete body, False when the
+    attempt discarded an unusable partial and the caller should restart.
+    """
     offset = partial.stat().st_size if resume and partial.is_file() else 0
-    request_headers = {"Range": f"bytes={offset}-"} if offset else None
+    validator = _read_resume_validator(partial) if offset else None
+    if offset and (validator is None or validator.header_value is None):
+        # Without a stored freshness validator a partial cannot be safely
+        # resumed against a possibly changed remote file; start over.
+        _discard_partial(partial)
+        offset = 0
+        validator = None
+    request_headers: dict[str, str] | None = None
+    if offset and validator is not None and validator.header_value is not None:
+        request_headers = {
+            "Range": f"bytes={offset}-",
+            "If-Range": validator.header_value,
+        }
     with requests.get(
         url=url,
         stream=True,
         timeout=_REQUEST_TIMEOUT_SECONDS,
         headers=request_headers,
     ) as response:
+        if response.status_code == _HTTP_RANGE_NOT_SATISFIABLE:
+            complete_size = _content_range_complete_size(
+                response.headers.get("content-range"),
+            )
+            stored_total = validator.total if validator is not None else None
+            if offset and offset in {stored_total, complete_size}:
+                # The validator matched and the partial already holds the
+                # complete, still-current file: finalize it as-is.
+                return True
+            _discard_partial(partial)
+            return False
         response.raise_for_status()
-        accepted_resume = offset > 0 and response.status_code == 206
+        accepted_resume = offset > 0 and response.status_code == _HTTP_PARTIAL_CONTENT
+        if (
+            accepted_resume
+            and _content_range_start(
+                response.headers.get("content-range"),
+            )
+            != offset
+        ):
+            # The server resumed from a different position than the local
+            # partial ends at; appending would corrupt the archive.
+            _discard_partial(partial)
+            return False
         if offset and not accepted_resume:
+            # A 200 response to a Range request carries the full body:
+            # write from scratch (the partial is truncated below).
             offset = 0
+        if not accepted_resume:
+            _write_resume_validator(partial=partial, response=response)
         remaining = int(response.headers.get("content-length", 0))
         total = remaining + offset if accepted_resume else remaining
         _stream_download(
@@ -277,8 +477,7 @@ def _download(  # noqa: PLR0913 - streaming state and controls are explicit
             total=total,
             cancellation=cancellation,
         )
-    partial.replace(retrieved)
-    return retrieved
+    return True
 
 
 def _stream_download(  # noqa: PLR0913 - transfer state is explicit
@@ -339,7 +538,7 @@ def _stream_download(  # noqa: PLR0913 - transfer state is explicit
             emit_download(current, force=True)
     except BaseException:
         if not resume:
-            partial.unlink(missing_ok=True)
+            _discard_partial(partial)
         raise
 
 
@@ -372,6 +571,15 @@ def download(
         logger.info(
             "Discarding cached %s: the complete release is a moving target",
             cached,
+        )
+        cached.unlink()
+    elif cached.exists() and not (integrity := check_archive_integrity(cached)).valid:
+        # A corrupt cached archive would otherwise fail identically on
+        # every run; discard it and download again.
+        logger.warning(
+            "Discarding corrupt cached archive %s: %s",
+            cached,
+            integrity.bad_member or integrity.error,
         )
         cached.unlink()
     retrieved = _download(

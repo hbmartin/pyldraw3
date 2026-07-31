@@ -651,6 +651,19 @@ class Parts:
         """Clear the memoized Parts instances."""
         _parts_for_stat.cache_clear()
 
+    @classmethod
+    def fresh(cls, parts_lst: str | Path) -> Parts:
+        """Return a freshly constructed Parts, replacing the memoized one.
+
+        ``get`` memoizes on the ``parts.lst`` stat key, so an in-place
+        ``.dat`` header edit can leave a memoized instance holding a stale
+        categorization. Rebuild paths call this to guarantee a genuinely
+        fresh categorization; the memo is repopulated with the fresh
+        instance.
+        """
+        cls.clear_cache()
+        return cls.get(parts_lst)
+
     def __init__(self, parts_lst: str | Path) -> None:
         logger.debug("reading parts %s", parts_lst)
         self.path = Path(parts_lst)
@@ -858,17 +871,19 @@ class Parts:
                     code,
                     description,
                 )
-                emit_progress(
-                    on_progress,
-                    ProgressEvent(
-                        stage=ProgressStage.INDEX_REBUILD,
-                        message="Classifying parts",
-                        current=current,
-                        total=total,
-                        path=self.path,
-                        unit=ProgressUnit.PARTS,
-                    ),
-                )
+                # Only build events when a callback is registered: this
+                # loop runs for every part in the library.
+                if on_progress is not None:
+                    on_progress(
+                        ProgressEvent(
+                            stage=ProgressStage.INDEX_REBUILD,
+                            message="Classifying parts",
+                            current=current,
+                            total=total,
+                            path=self.path,
+                            unit=ProgressUnit.PARTS,
+                        ),
+                    )
                 continue
             self.by_code_name[(code, description)] = part
             category = PartCategory.from_label(part_category)
@@ -897,17 +912,17 @@ class Parts:
                     metadata=part.metadata,
                 ),
             )
-            emit_progress(
-                on_progress,
-                ProgressEvent(
-                    stage=ProgressStage.INDEX_REBUILD,
-                    message="Classifying parts",
-                    current=current,
-                    total=total,
-                    path=self.path,
-                    unit=ProgressUnit.PARTS,
-                ),
-            )
+            if on_progress is not None:
+                on_progress(
+                    ProgressEvent(
+                        stage=ProgressStage.INDEX_REBUILD,
+                        message="Classifying parts",
+                        current=current,
+                        total=total,
+                        path=self.path,
+                        unit=ProgressUnit.PARTS,
+                    ),
+                )
 
     def section_find(self, pieces: list[str]) -> tuple[str, str]:
         """Return code and description from a parts.lst split line.

@@ -37,6 +37,7 @@ def entry_key(entry: CatalogEntry) -> tuple[object, ...]:
         entry.minifig_section,
         str(entry.part.path) if entry.part is not None else None,
         entry.keywords,
+        entry.metadata,
     )
 
 
@@ -180,6 +181,52 @@ def test_load_catalog_corrupt_file_returns_none(tmp_path) -> None:
 
     assert (
         load_catalog(db_path, md5="x", library_root=LIBRARY_ROOT, tree_fingerprint="t")
+        is None
+    )
+
+
+def test_load_catalog_corrupt_metadata_json_triggers_rebuild(
+    tmp_path: Path,
+    slow_catalog: PartsCatalog,
+) -> None:
+    """Truncated metadata_json in an existing index must force a rebuild."""
+    db_path = tmp_path / "catalog.sqlite"
+    md5 = parts_lst_md5(PARTS_LST)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute("""UPDATE parts SET metadata_json = '{"truncated'""")
+
+    assert (
+        load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT, tree_fingerprint=TREE)
+        is None
+    )
+
+
+def test_load_catalog_invalid_metadata_shape_triggers_rebuild(
+    tmp_path: Path,
+    slow_catalog: PartsCatalog,
+) -> None:
+    """Valid JSON with an invalid metadata shape must also force a rebuild."""
+    db_path = tmp_path / "catalog.sqlite"
+    md5 = parts_lst_md5(PARTS_LST)
+    save_catalog(
+        db_path,
+        md5=md5,
+        catalog=slow_catalog,
+        library_root=LIBRARY_ROOT,
+        tree_fingerprint=TREE,
+    )
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute("""UPDATE parts SET metadata_json = '{"preview": {}}'""")
+
+    assert (
+        load_catalog(db_path, md5=md5, library_root=LIBRARY_ROOT, tree_fingerprint=TREE)
         is None
     )
 
