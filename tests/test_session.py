@@ -16,10 +16,15 @@ from ldraw.catalog import (
 )
 from ldraw.catalog import save_catalog as catalog_save_catalog
 from ldraw.config import Config
-from ldraw.generation import library_fingerprint
-from ldraw.generation.exceptions import UnwritableOutputError
-from ldraw.parts import Parts
-from ldraw.progress import ProgressEvent, ProgressStage
+from ldraw.diagnostics import DiagnosticCode
+from ldraw.generation import library_fingerprint, parse_library_fingerprint
+from ldraw.generation.exceptions import (
+    GeneratedModuleSyntaxError,
+    UnwritableOutputError,
+)
+from ldraw.operations import CancellationToken, OperationCancelled
+from ldraw.parts import PartCategory, Parts
+from ldraw.progress import ProgressEvent, ProgressStage, ProgressUnit
 from ldraw.session import (
     CatalogBuildOutcome,
     LDrawCapability,
@@ -546,3 +551,294 @@ def test_ensure_library_wraps_forced_generation_failure(
 
     with pytest.raises(RuntimeError, match="unwritable"):
         ensure_library(config, force_generate=True)
+
+
+def test_operation_cancelled_is_not_a_runtime_error() -> None:
+    assert issubclass(OperationCancelled, Exception)
+    assert not issubclass(OperationCancelled, RuntimeError)
+    token = CancellationToken()
+    token.cancel()
+    with pytest.raises(OperationCancelled):
+        token.raise_if_cancelled()
+
+
+def test_state_rejects_empty_capabilities_and_accepts_generators(
+    tmp_path: Path,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(tmp_path / "generated"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="at least one"):
+        session.state(capabilities=())
+
+    state = session.state(
+        capabilities=(capability for capability in (LDrawCapability.CATALOG,)),
+    )
+    assert state.capabilities == frozenset({LDrawCapability.CATALOG})
+
+
+def test_prepare_catalog_reports_rebuilt_and_state_transition(tmp_path: Path) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(tmp_path / "generated"),
+        ),
+    )
+
+    result = session.prepare_catalog()
+
+    assert result.complete is True
+    assert result.report.outcome is CatalogBuildOutcome.REBUILT
+    assert result.report.persisted is True
+    assert result.report.entry_count == 1
+    assert result.initial_state.needs_index_rebuild is True
+    assert result.initial_state.ready is False
+    assert result.final_state.ready is True
+    assert result.initial_state.capabilities == frozenset({LDrawCapability.CATALOG})
+    assert result.final_state.capabilities == frozenset({LDrawCapability.CATALOG})
+
+
+def test_prepare_catalog_rebuild_recategorizes_after_in_place_dat_edit(
+    tmp_path: Path,
+) -> None:
+    """An in-place .dat header edit must never persist a stale catalog."""
+    parts_lst = write_minimal_library(tmp_path / "library")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(tmp_path / "generated"),
+        ),
+    )
+    first = session.prepare_catalog()
+    assert first.parts is not None
+    assert first.parts.get_entry_by_code("3001").category is PartCategory.BRICK
+
+    dat = parts_lst.parent / "parts" / "3001.dat"
+    dat.write_text(dat.read_text().replace("!CATEGORY Brick", "!CATEGORY Tile"))
+
+    second = session.prepare_catalog()
+
+    assert second.report.outcome is CatalogBuildOutcome.REBUILT
+    assert second.report.persisted is True
+    assert second.parts is not None
+    assert second.parts.get_entry_by_code("3001").category is PartCategory.TILE
+    with closing(sqlite3.connect(session.paths.catalog_db)) as connection:
+        row = connection.execute(
+            "SELECT category FROM parts WHERE code = '3001'",
+        ).fetchone()
+    assert row == (PartCategory.TILE.value,)
+
+
+def test_rebuild_index_force_recategorizes_after_in_place_dat_edit(
+    tmp_path: Path,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(tmp_path / "generated"),
+        ),
+    )
+    assert session.load().get_entry_by_code("3001").category is PartCategory.BRICK
+
+    dat = parts_lst.parent / "parts" / "3001.dat"
+    dat.write_text(dat.read_text().replace("!CATEGORY Brick", "!CATEGORY Tile"))
+
+    parts = session.rebuild_index(force=True)
+
+    assert parts.get_entry_by_code("3001").category is PartCategory.TILE
+    with closing(sqlite3.connect(session.paths.catalog_db)) as connection:
+        row = connection.execute(
+            "SELECT category FROM parts WHERE code = '3001'",
+        ).fetchone()
+    assert row == (PartCategory.TILE.value,)
+
+
+def test_prepare_catalog_cancel_between_save_and_replace_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+    token = CancellationToken()
+
+    def cancelling_save(db_path: Path, **_kwargs: object) -> None:
+        db_path.write_text("catalog data")
+        token.cancel()
+
+    monkeypatch.setattr("ldraw.session.save_catalog", cancelling_save)
+
+    with pytest.raises(OperationCancelled):
+        session.prepare_catalog(cancellation=token)
+
+    assert not (generated_path / "catalog.sqlite").exists()
+    assert list(generated_path.glob(".catalog.sqlite.*.tmp")) == []
+
+
+def test_prepare_catalog_reports_generator_bug_and_failure_done_event(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    config = Config(
+        ldraw_library_path=str(parts_lst.parents[1]),
+        generated_path=str(tmp_path / "generated"),
+    )
+    error = GeneratedModuleSyntaxError(str(tmp_path / "generated" / "broken.py"))
+
+    def failing_generate(**_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr("ldraw.session.generate_library", failing_generate)
+    events: list[ProgressEvent] = []
+
+    result = LDrawSession(config).prepare_catalog(
+        capabilities=(LDrawCapability.GENERATED_MODULES,),
+        on_progress=events.append,
+    )
+
+    assert result.complete is False
+    assert result.diagnostics[0].code is DiagnosticCode.GENERATION_FAILED
+    assert "does not compile" in result.diagnostics[0].message
+    assert events[-1].stage is ProgressStage.DONE
+    assert events[-1].message == "LDraw data preparation failed"
+
+
+def test_prepare_catalog_missing_library_emits_terminal_done_event(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing"),
+        generated_path=str(tmp_path / "generated"),
+    )
+    events: list[ProgressEvent] = []
+
+    result = LDrawSession(config).prepare_catalog(on_progress=events.append)
+
+    assert result.parts is None
+    assert events
+    assert events[-1].stage is ProgressStage.DONE
+    assert "missing" in events[-1].message
+
+
+def test_prepare_catalog_rebuilds_when_fresh_index_read_fails(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A fresh-looking index that fails to load must be rebuilt, not faked."""
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    write_fresh_index(parts_lst, generated_path)
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+    monkeypatch.setattr("ldraw.session.load_catalog", lambda *_args, **_kwargs: None)
+
+    result = session.prepare_catalog()
+
+    assert result.initial_state.needs_index_rebuild is False
+    assert result.report.outcome is CatalogBuildOutcome.REBUILT
+    assert result.report.persisted is True
+    assert result.parts is not None
+    assert result.report.entry_count == 1
+
+
+def test_ensure_library_walks_parts_tree_once(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    write_fresh_index(parts_lst, generated_path)
+    write_fresh_generation(parts_lst, generated_path)
+    config = Config(
+        ldraw_library_path=str(parts_lst.parents[1]),
+        generated_path=str(generated_path),
+    )
+    expected_generation_fingerprint = library_fingerprint(parts_lst)
+    monkeypatch.setattr("ldraw.session.LibraryImporter.set_config", lambda _cfg: None)
+
+    import ldraw.catalog
+
+    original = ldraw.catalog.parts_tree_fingerprint
+    calls = {"count": 0}
+
+    def counting(ldraw_dir: Path, **kwargs: object) -> str:
+        calls["count"] += 1
+        return original(ldraw_dir, **kwargs)
+
+    monkeypatch.setattr("ldraw.catalog.parts_tree_fingerprint", counting)
+    monkeypatch.setattr("ldraw.generation.parts_tree_fingerprint", counting)
+    forced_fingerprints: list[str | None] = []
+
+    def fake_generate(
+        *,
+        config: Config,
+        force: bool,
+        on_progress: object,
+        fingerprint: str | None,
+        cancellation: object,
+    ) -> None:
+        forced_fingerprints.append(fingerprint)
+
+    monkeypatch.setattr("ldraw.session.generate_library", fake_generate)
+
+    ensure_library(config, force_generate=True)
+
+    assert calls["count"] == 1
+    assert forced_fingerprints == [expected_generation_fingerprint]
+
+
+def test_progress_event_determinate_and_units() -> None:
+    determinate = ProgressEvent(
+        stage=ProgressStage.DOWNLOAD,
+        message="Downloading",
+        current=1,
+        total=2,
+        unit=ProgressUnit.BYTES,
+    )
+    assert determinate.determinate is True
+    assert ProgressEvent(stage=ProgressStage.DONE, message="done").determinate is False
+    missing_unit = ProgressEvent(
+        stage=ProgressStage.DOWNLOAD,
+        message="Downloading",
+        current=1,
+        total=2,
+    )
+    assert missing_unit.determinate is False
+    assert [unit.value for unit in ProgressUnit] == [
+        "bytes",
+        "files",
+        "parts",
+        "steps",
+        "views",
+    ]
+
+
+def test_parse_library_fingerprint_round_trips_and_rejects_malformed(
+    tmp_path: Path,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    serialized = library_fingerprint(parts_lst)
+
+    fields = parse_library_fingerprint(serialized)
+
+    assert fields.parts_lst_md5 == parts_lst_md5(parts_lst)
+    assert fields.tree_fingerprint == parts_tree_fingerprint(parts_lst.parent)
+    with pytest.raises(ValueError, match="malformed library fingerprint"):
+        parse_library_fingerprint("only-one-line")

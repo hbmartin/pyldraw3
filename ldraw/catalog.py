@@ -61,6 +61,10 @@ CREATE TABLE parts (
 
 _KEYWORDS_SEPARATOR = "\t"
 
+# Rows inserted per executemany batch while saving the index; also the
+# granularity of progress events and cancellation checks during a save.
+_SAVE_CHUNK_SIZE = 512
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogFingerprint:
@@ -122,17 +126,19 @@ def parts_tree_fingerprint(
             f"{relative_path}\0{stat_result.st_size}\0{stat_result.st_mtime_ns}\n"
         )
         digest.update(metadata.encode())
-        emit_progress(
-            on_progress,
-            ProgressEvent(
-                stage=ProgressStage.FINGERPRINT,
-                message="Fingerprinting parts library",
-                current=current,
-                total=total,
-                path=ldraw_dir,
-                unit=ProgressUnit.FILES,
-            ),
-        )
+        # Only build events when a callback is registered: this walk covers
+        # every file in the parts trees on every load.
+        if on_progress is not None:
+            on_progress(
+                ProgressEvent(
+                    stage=ProgressStage.FINGERPRINT,
+                    message="Fingerprinting parts library",
+                    current=current,
+                    total=total,
+                    path=ldraw_dir,
+                    unit=ProgressUnit.FILES,
+                ),
+            )
     return digest.hexdigest()
 
 
@@ -187,6 +193,25 @@ def _entry_from_row(
         metadata=(
             PartMetadata.from_dict(json.loads(metadata))
             if metadata is not None
+            else None
+        ),
+    )
+
+
+def _entry_row(
+    entry: CatalogEntry,
+    library_root: Path,
+) -> tuple[str, str, str, str | None, str | None, str, str | None]:
+    return (
+        entry.code,
+        entry.description,
+        entry.category.value,
+        (entry.minifig_section.value if entry.minifig_section is not None else None),
+        _stored_path(entry.part, library_root),
+        _KEYWORDS_SEPARATOR.join(entry.keywords),
+        (
+            json.dumps(entry.metadata.to_dict(), separators=(",", ":"))
+            if entry.metadata is not None
             else None
         ),
     )
@@ -269,17 +294,19 @@ def load_catalog(  # noqa: PLR0913 - explicit index inputs and operation control
         for current, row in enumerate(rows, start=1):
             check_cancelled(cancellation)
             catalog.add(_entry_from_row(row, library_root))
-            emit_progress(
-                on_progress,
-                ProgressEvent(
-                    stage=ProgressStage.INDEX_LOAD,
-                    message="Loading parts catalog index",
-                    current=current,
-                    total=total,
-                    path=db_path,
-                    unit=ProgressUnit.PARTS,
-                ),
-            )
+            # Only build events when a callback is registered: this loop
+            # runs for every indexed part on every load.
+            if on_progress is not None:
+                on_progress(
+                    ProgressEvent(
+                        stage=ProgressStage.INDEX_LOAD,
+                        message="Loading parts catalog index",
+                        current=current,
+                        total=total,
+                        path=db_path,
+                        unit=ProgressUnit.PARTS,
+                    ),
+                )
     except (KeyError, TypeError, ValueError):
         return None
     return catalog
@@ -295,7 +322,12 @@ def save_catalog(  # noqa: PLR0913 - explicit index inputs and operation control
     on_progress: ProgressCallback | None = None,
     cancellation: CancellationToken | None = None,
 ) -> None:
-    """Write the catalog to the index in a single transaction.
+    """Write the catalog to the index on one connection.
+
+    The ``PRAGMA`` and ``DROP``/``CREATE`` statements run in sqlite3's
+    autocommit mode; the row inserts share one implicit transaction that
+    commits on success. Callers needing atomic replacement of a live index
+    should write to a temporary path and rename it into place.
 
     Raises OSError or sqlite3.Error on failure; persisting is best-effort,
     so callers are expected to swallow those.
@@ -334,39 +366,24 @@ def save_catalog(  # noqa: PLR0913 - explicit index inputs and operation control
                 "INSERT INTO parts (code, description, category, minifig_section,"
                 " path, keywords, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)"
             )
-            for current, entry in enumerate(entries, start=1):
+            for start in range(0, total, _SAVE_CHUNK_SIZE):
                 check_cancelled(cancellation)
-                connection.execute(
+                chunk = entries[start : start + _SAVE_CHUNK_SIZE]
+                connection.executemany(
                     statement,
-                    (
-                        entry.code,
-                        entry.description,
-                        entry.category.value,
-                        (
-                            entry.minifig_section.value
-                            if entry.minifig_section is not None
-                            else None
-                        ),
-                        _stored_path(entry.part, library_root),
-                        _KEYWORDS_SEPARATOR.join(entry.keywords),
-                        (
-                            json.dumps(entry.metadata.to_dict(), separators=(",", ":"))
-                            if entry.metadata is not None
-                            else None
-                        ),
-                    ),
+                    [_entry_row(entry, library_root) for entry in chunk],
                 )
-                emit_progress(
-                    on_progress,
-                    ProgressEvent(
-                        stage=ProgressStage.INDEX_REBUILD,
-                        message="Writing parts catalog index",
-                        current=current,
-                        total=total,
-                        path=db_path,
-                        unit=ProgressUnit.PARTS,
-                    ),
-                )
+                if on_progress is not None:
+                    on_progress(
+                        ProgressEvent(
+                            stage=ProgressStage.INDEX_REBUILD,
+                            message="Writing parts catalog index",
+                            current=min(start + _SAVE_CHUNK_SIZE, total),
+                            total=total,
+                            path=db_path,
+                            unit=ProgressUnit.PARTS,
+                        ),
+                    )
     finally:
         connection.close()
 
@@ -406,10 +423,15 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
         on_progress=on_progress,
         cancellation=cancellation,
     )
-    parts = Parts.get(parts_lst_path)
     if catalog is not None:
+        parts = Parts.get(parts_lst_path)
         parts.adopt_catalog(catalog)
         return parts
+    # The index is stale or unusable. A memoized instance may still hold a
+    # categorization from before an in-place ``.dat`` edit (the memo is
+    # keyed on the ``parts.lst`` stat, which such edits leave unchanged),
+    # so a rebuild that will persist must categorize from a fresh instance.
+    parts = Parts.fresh(parts_lst_path) if build_index else Parts.get(parts_lst_path)
     if build_index:
         try:
             catalog = parts.build_catalog(

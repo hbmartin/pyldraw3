@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import zipfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,8 +13,14 @@ from ldraw.config import Config
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
-from ldraw.downloads import ARCHIVE_URL, COMPLETE_VERSION, LDRAW_URL, VERSION_RE
-from ldraw.errors import CouldNotDetermineLatestVersionError
+from ldraw.downloads import (
+    ARCHIVE_URL,
+    COMPLETE_VERSION,
+    LDRAW_URL,
+    VERSION_RE,
+    check_archive_integrity,
+)
+from ldraw.errors import ConfigLoadError, CouldNotDetermineLatestVersionError
 from ldraw.operations import CancellationToken, check_cancelled
 from ldraw.progress import (
     ProgressCallback,
@@ -98,9 +104,18 @@ class DownloadPlan:
 
 
 def _ldraw_path(path: Path) -> tuple[Path, Path]:
-    """Return (installation root, ldraw data directory) for either form."""
+    """Return (installation root, ldraw data directory) for either form.
+
+    Checks the actual layout before the name heuristic so an install root
+    that itself happens to be named ``ldraw`` (data in ``<path>/ldraw``)
+    is still classified as a root.
+    """
     expanded = path.expanduser()
-    if (expanded / "parts.lst").is_file() or expanded.name.casefold() == "ldraw":
+    if (expanded / "parts.lst").is_file():
+        return expanded.parent, expanded
+    if (expanded / "ldraw").is_dir():
+        return expanded, expanded / "ldraw"
+    if (expanded / "parts").is_dir() or expanded.name.casefold() == "ldraw":
         return expanded.parent, expanded
     return expanded, expanded / "ldraw"
 
@@ -172,7 +187,10 @@ def discover_libraries(
     if paths is not None:
         candidates.extend(Path(path) for path in paths)
     else:
-        candidates.append(Path(Config.load().ldraw_library_path))
+        # An unreadable or malformed config simply contributes no
+        # configured candidate; cache and system paths still apply.
+        with suppress(ConfigLoadError):
+            candidates.append(Path(Config.load().ldraw_library_path))
         cache = Path(get_cache_dir())
         if cache.is_dir():
             candidates.extend(path for path in cache.iterdir() if path.is_dir())
@@ -248,31 +266,28 @@ def plan_download(
     archive_valid: bool | None = None
     diagnostics: list[Diagnostic] = []
     if archive_path.is_file():
-        try:
-            with zipfile.ZipFile(archive_path) as archive:
-                bad_member = archive.testzip()
-                archive_valid = bad_member is None
-                if bad_member is not None:
-                    diagnostics.append(
-                        Diagnostic(
-                            line_number=None,
-                            message=f"Corrupt cached archive member: {bad_member}",
-                            severity=Severity.ERROR,
-                            code=DiagnosticCode.DOWNLOAD_INTEGRITY_FAILED,
-                            path=archive_path,
-                            offending_value=bad_member,
-                        ),
-                    )
-        except (OSError, zipfile.BadZipFile) as exc:
-            archive_valid = False
+        integrity = check_archive_integrity(archive_path)
+        archive_valid = integrity.valid
+        if integrity.bad_member is not None:
             diagnostics.append(
                 Diagnostic(
                     line_number=None,
-                    message=f"Cached archive is corrupt: {exc}",
+                    message=f"Corrupt cached archive member: {integrity.bad_member}",
                     severity=Severity.ERROR,
                     code=DiagnosticCode.DOWNLOAD_INTEGRITY_FAILED,
                     path=archive_path,
-                    cause=exc,
+                    offending_value=integrity.bad_member,
+                ),
+            )
+        elif integrity.error is not None:
+            diagnostics.append(
+                Diagnostic(
+                    line_number=None,
+                    message=f"Cached archive is corrupt: {integrity.error}",
+                    severity=Severity.ERROR,
+                    code=DiagnosticCode.DOWNLOAD_INTEGRITY_FAILED,
+                    path=archive_path,
+                    cause=integrity.error,
                 ),
             )
     size: int | None = None
