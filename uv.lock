@@ -723,12 +723,16 @@ version = "1.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
-    { name = "pillow" },
     { name = "platformdirs" },
     { name = "progress" },
     { name = "pystache" },
     { name = "pyyaml" },
     { name = "requests" },
+]
+
+[package.optional-dependencies]
+visual-compare = [
+    { name = "pillow" },
 ]
 
 [package.dev-dependencies]
@@ -737,6 +741,7 @@ dev = [
     { name = "hypothesis" },
     { name = "lizard" },
     { name = "memory-profiler" },
+    { name = "pillow" },
     { name = "psutil" },
     { name = "pyrefly" },
     { name = "pyroma" },
@@ -754,13 +759,14 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
-    { name = "pillow", specifier = ">=11.0" },
+    { name = "pillow", marker = "extra == 'visual-compare'", specifier = ">=11.0" },
     { name = "platformdirs", specifier = ">=4.3.8" },
     { name = "progress", specifier = ">=1.6.1" },
     { name = "pystache", specifier = ">=0.6.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "requests", specifier = ">=2.32.4" },
 ]
+provides-extras = ["visual-compare"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -768,6 +774,7 @@ dev = [
     { name = "hypothesis", specifier = ">=6.130" },
     { name = "lizard", specifier = ">=1.23.0" },
     { name = "memory-profiler", specifier = ">=0.61.0" },
+    { name = "pillow", specifier = ">=11.0" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyrefly", specifier = ">=0.55.0" },
     { name = "pyroma", specifier = ">=5.0.1" },

@@ -1003,7 +1003,7 @@ def _add_alignment_arguments(parser: argparse.ArgumentParser) -> None:
 def _parser() -> argparse.ArgumentParser:
     """Create the command-line parser."""
     parser = argparse.ArgumentParser(
-        prog="ldraw-compare",
+        prog="visual_compare.py",
         description="Register and compare LDraw renders with raster references.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

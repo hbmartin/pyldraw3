@@ -1,9 +1,14 @@
 """Tests for raster registration and visual-comparison reporting."""
 
 import argparse
+import builtins
+import importlib.util
 import json
 import subprocess
+import tomllib
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
@@ -34,6 +39,23 @@ from ldraw.visual_compare import (
     write_contact_sheet,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_visual_compare_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "visual_compare_script",
+        PROJECT_ROOT / "scripts" / "visual_compare.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def _model_image(
     *,
@@ -60,6 +82,46 @@ def _model_image(
 def _save_model(path: Path, **kwargs) -> Path:
     _model_image(**kwargs).save(path)
     return path
+
+
+def test_visual_comparison_dependency_and_command_are_optional() -> None:
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+
+    assert all(
+        not dependency.casefold().startswith("pillow")
+        for dependency in project["project"]["dependencies"]
+    )
+    assert project["project"]["optional-dependencies"]["visual-compare"] == [
+        "pillow>=11.0",
+    ]
+    assert "ldraw-compare" not in project["project"]["scripts"]
+    assert "pillow>=11.0" in project["dependency-groups"]["dev"]
+
+
+def test_repository_script_explains_missing_optional_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script = _load_visual_compare_script()
+    real_import = builtins.__import__
+
+    def missing_pillow(
+        name: str,
+        globals_: dict[str, object] | None = None,
+        locals_: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> ModuleType:
+        if name == "ldraw.visual_compare":
+            message = "No module named 'PIL'"
+            raise ModuleNotFoundError(message, name="PIL")
+        importer = real_import
+        return importer(name, globals_, locals_, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", missing_pillow)
+
+    assert cast("Callable[[list[str]], int]", script.main)([]) == 1
+    assert "pyldraw3[visual-compare]" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

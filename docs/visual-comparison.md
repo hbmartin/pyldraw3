@@ -1,8 +1,9 @@
 # Visual comparison
 
-`ldraw-compare` registers LDraw or LeoCAD renders against raster reference
-images. It is intended for camera selection and repeatable visual regression
-work: it does not modify the model or the program that generated it.
+The optional visual-comparison tool registers LDraw or LeoCAD renders against
+raster reference images. It is intended for camera selection and repeatable
+visual regression work: it does not modify the model or the program that
+generated it.
 
 The comparison pipeline estimates the flat background from the image border
 (or uses PNG alpha), extracts both silhouettes, and searches a configurable
@@ -10,19 +11,21 @@ scale range. For every scale it finds the translation with the largest
 silhouette overlap, then selects the registration with the highest intersection
 over union (IoU).
 
-Install the project dependencies before running the commands:
+Pillow and the visual-comparison tool are not part of the base installation.
+Install the `visual-compare` extra before running it:
 
 ```console
-uv sync
+pip install "pyldraw3[visual-compare]"
 ```
 
-The installed command is `uv run ldraw-compare`. The equivalent repository
-script is `uv run python scripts/visual_compare.py`.
+From a repository checkout, use `uv sync --extra visual-compare`. Run the tool
+as `python -m ldraw.visual_compare`, or use the equivalent repository script
+`python scripts/visual_compare.py`.
 
 ## Compare one view
 
 ```console
-uv run ldraw-compare compare \
+uv run --extra visual-compare python scripts/visual_compare.py compare \
   references/front.png renders/scout.front.png \
   --output-dir comparison/front \
   --min-scale 0.75 --max-scale 1.30 --scale-steps 56
@@ -54,7 +57,8 @@ are being mistaken for foreground.
 Rank any set of PNGs independently of the renderer that created them:
 
 ```console
-uv run ldraw-compare rank references/front.png renders/camera-*.png \
+uv run --extra visual-compare python scripts/visual_compare.py rank \
+  references/front.png renders/camera-*.png \
   --output-dir comparison/front-cameras --columns 5
 ```
 
@@ -66,7 +70,7 @@ a contact sheet ordered by silhouette IoU, with RGB MAE breaking ties.
 LeoCAD must be on `PATH`, or supplied with `--leocad`:
 
 ```console
-uv run ldraw-compare camera-grid model.mpd \
+uv run --extra visual-compare python scripts/visual_compare.py camera-grid model.mpd \
   --reference references/front.png \
   --output-dir comparison/camera-grid \
   --latitudes 10,20,30,40 \
@@ -102,7 +106,8 @@ For a single comparison, pass a JSON list with named regions. Boxes are
 ```
 
 ```console
-uv run ldraw-compare compare reference.png render.png \
+uv run --extra visual-compare python scripts/visual_compare.py compare \
+  reference.png render.png \
   --output-dir comparison --regions regions.json
 ```
 
@@ -144,7 +149,8 @@ view. Paths are relative to the manifest:
 ```
 
 ```console
-uv run ldraw-compare report comparison-manifest.json \
+uv run --extra visual-compare python scripts/visual_compare.py report \
+  comparison-manifest.json \
   --output-dir comparison/report
 ```
 
