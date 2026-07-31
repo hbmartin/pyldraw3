@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import tempfile
@@ -89,18 +88,18 @@ def write_instruction_manifest(
         raise FileExistsError(msg)
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest = instruction_manifest(document, parts=parts, source=source)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output.name}.",
-        dir=output.parent,
-        text=True,
+    temporary_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output.name}.",
+            dir=output.parent,
+        )
     )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
+    temporary = temporary_dir / output.name
     try:
         temporary.write_text(manifest_json(manifest), encoding="utf-8")
         temporary.replace(output)
     finally:
-        temporary.unlink(missing_ok=True)
+        shutil.rmtree(temporary_dir, ignore_errors=True)
 
 
 def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explicit
@@ -231,7 +230,7 @@ def _step_manifest(
                 piece,
                 parts=parts,
                 source_section=step.section_name,
-                source_line=step._model.source_line_for(piece),  # noqa: SLF001
+                source_line=step.source_line_for(piece),
             )
             for piece in step.added_pieces
         ],
@@ -415,7 +414,7 @@ def _write_snapshot_mpd(
     step: InstructionStep,
     path: Path,
 ) -> None:
-    root_objects = _snapshot_objects(step._cumulative_objects)  # noqa: SLF001
+    root_objects = _snapshot_objects(step.cumulative_objects)
     dependencies = _dependency_closure(document.model, root_objects)
     sections = [(section.name, root_objects)] + [
         (dependency.name, _snapshot_objects(dependency.objects))
@@ -446,7 +445,7 @@ def _write_snapshot_ldr(
         _flatten_objects(
             root=document.model,
             model=section.model,
-            objects=_snapshot_objects(step._cumulative_objects),  # noqa: SLF001
+            objects=_snapshot_objects(step.cumulative_objects),
             position=Vector(0, 0, 0),
             matrix=Identity(),
             inherited_colour=None,
@@ -466,10 +465,12 @@ def _write_snapshot_ldr(
     ).items():
         relative = _safe_reference_path(name)
         destination = path.parent / relative
+        sidecars.append(destination.relative_to(path.parents[1]).as_posix())
+        if destination.exists():
+            continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(obj.to_ldraw() for obj in _snapshot_objects(model.objects))
         destination.write_text(f"{text}\n" if text else "", encoding="utf-8")
-        sidecars.append(destination.relative_to(path.parents[1]).as_posix())
     return sidecars
 
 

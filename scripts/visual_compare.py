@@ -11,7 +11,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from ldraw.visual_compare import main as visual_compare_main  # noqa: PLC0415
     except ModuleNotFoundError as exc:
-        if exc.name != "PIL":
+        if (exc.name or "").partition(".")[0] != "PIL":
             raise
         print(
             "error: visual comparison requires Pillow; install "

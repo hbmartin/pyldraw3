@@ -36,6 +36,7 @@ from ldraw.visual_compare import (
     rank_candidates,
     register_silhouettes,
     render_leocad_grid,
+    write_comparison_artifacts,
     write_contact_sheet,
 )
 
@@ -101,9 +102,11 @@ def test_visual_comparison_dependency_and_command_are_optional() -> None:
     )
 
 
+@pytest.mark.parametrize("missing_name", ["PIL", "PIL.Image"])
 def test_repository_script_explains_missing_optional_dependency(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    missing_name: str,
 ) -> None:
     script = _load_visual_compare_script()
     real_import = builtins.__import__
@@ -116,8 +119,8 @@ def test_repository_script_explains_missing_optional_dependency(
         level: int = 0,
     ) -> ModuleType:
         if name == "ldraw.visual_compare":
-            message = "No module named 'PIL'"
-            raise ModuleNotFoundError(message, name="PIL")
+            message = f"No module named {missing_name!r}"
+            raise ModuleNotFoundError(message, name=missing_name)
         importer = real_import
         return importer(name, globals_, locals_, fromlist, level)
 
@@ -255,6 +258,30 @@ def test_registration_sweep_matches_or_beats_single_scale() -> None:
     assert 1.5 <= swept.scale <= 2.5
 
 
+def test_coarse_registration_matches_the_exhaustive_full_resolution_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = _model_image()
+    candidate = _model_image(size=(70, 70), scale=0.5)
+    reference_mask = foreground_mask(reference)
+    candidate_mask = foreground_mask(candidate)
+    config = AlignmentConfig(min_scale=1.0, max_scale=2.5, scale_steps=16)
+    exhaustive = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=config,
+    )
+    monkeypatch.setattr(visual_compare, "_COARSE_MAX_DIMENSION", 32)
+
+    alignment = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=config,
+    )
+
+    assert alignment == exhaustive
+
+
 def test_registration_rejects_empty_or_oversized_candidates() -> None:
     reference = np.ones((20, 20), dtype=np.bool_)
     with pytest.raises(ValueError, match="no detectable foreground"):
@@ -319,6 +346,24 @@ def test_colliding_or_duplicate_region_names_are_rejected() -> None:
     ]
     with pytest.raises(ValueError, match="duplicate region name"):
         compare(reference, candidate, config=config, regions=duplicated)
+
+
+def test_artifact_regions_must_match_the_comparison(tmp_path: Path) -> None:
+    reference = _model_image()
+    candidate = _model_image()
+    config = AlignmentConfig(min_scale=1, max_scale=1, scale_steps=1)
+    result = compare(
+        reference,
+        candidate,
+        config=config,
+        regions=[Region("cab", (0.2, 0.1, 0.5, 0.5))],
+    )
+    output = tmp_path / "mismatch"
+
+    with pytest.raises(ValueError, match="regions must match"):
+        write_comparison_artifacts(result, output)
+
+    assert not output.exists()
 
 
 def test_image_metrics_handles_empty_and_disjoint_masks() -> None:
@@ -480,6 +525,8 @@ def test_manifest_value_parsers_cover_validation() -> None:
         )
     with pytest.raises(TypeError, match="alignment"):
         visual_compare._config_from_mapping([])  # noqa: SLF001
+    with pytest.raises(TypeError, match="setting names"):
+        visual_compare._config_from_mapping({1: 2})  # type: ignore[dict-item]  # noqa: SLF001
     with pytest.raises(ValueError, match="unknown alignment"):
         visual_compare._config_from_mapping({"unknown": 1})  # noqa: SLF001
     with pytest.raises(TypeError, match="must be a number"):

@@ -1,6 +1,7 @@
 """Tests for instruction manifests and cumulative snapshot bundles."""
 
 import json
+import stat
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,14 @@ from ldraw.parts import Parts
 
 TESTS_DIR = Path(__file__).resolve().parent
 PARTS = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
+
+
+def _file_contents(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def _piece(
@@ -71,7 +80,12 @@ def test_manifest_v1_is_deterministic_and_avoids_cumulative_occurrence_lists() -
     encoded = manifest_json(manifest)
     reparsed = json.loads(encoded)
 
-    assert manifest_json(manifest) == encoded
+    repeated = instruction_manifest(
+        _artifact_model().instruction_document(parts=PARTS),
+        parts=PARTS,
+        source="source.mpd",
+    )
+    assert manifest_json(repeated) == encoded
     assert reparsed["schema_version"] == 1
     assert reparsed["generator"]["name"] == "pyldraw3"
     assert reparsed["source"] == "source.mpd"
@@ -103,6 +117,8 @@ def test_write_standalone_manifest_is_atomic_and_collision_safe(
     model = _artifact_model()
     document = model.instruction_document(parts=PARTS)
     output = tmp_path / "nested" / "manifest.json"
+    ordinary = tmp_path / "ordinary.json"
+    ordinary.write_text("{}\n", encoding="utf-8")
 
     write_instruction_manifest(
         document,
@@ -123,14 +139,25 @@ def test_write_standalone_manifest_is_atomic_and_collision_safe(
     assert json.loads(output.read_text(encoding="utf-8"))["schema_version"] == 1
     assert first.endswith("\n")
     assert list(output.parent.glob(".manifest.json.*")) == []
+    assert stat.S_IMODE(output.stat().st_mode) == stat.S_IMODE(ordinary.stat().st_mode)
 
 
 def test_snapshots_write_dual_parseable_formats_and_embedded_dat_sidecars(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _artifact_model()
     document = model.instruction_document(parts=PARTS)
     output = tmp_path / "bundle"
+    dat_writes: list[Path] = []
+    original_write_text = Path.write_text
+
+    def track_dat_writes(path: Path, text: str, **kwargs: object) -> int:
+        if path.suffix.casefold() == ".dat":
+            dat_writes.append(path)
+        return original_write_text(path, text, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", track_dat_writes)
 
     manifest_path = write_instruction_snapshots(
         document,
@@ -192,6 +219,7 @@ def test_snapshots_write_dual_parseable_formats_and_embedded_dat_sidecars(
     assert "!LPUB" not in mpd_text
     assert "!PYLDRAW" not in mpd_text
     assert ldr_text.startswith("1 2 15 0 0")
+    assert len(dat_writes) == len(set(dat_writes))
 
 
 def test_section_selection_uses_one_numbered_directory(tmp_path: Path) -> None:
@@ -253,7 +281,7 @@ def test_force_rolls_back_the_complete_bundle_when_the_final_swap_fails(
         parts=PARTS,
         output=output,
     )
-    original_manifest = (output / MANIFEST_NAME).read_text(encoding="utf-8")
+    original_files = _file_contents(output)
     original_replace = Path.replace
 
     def fail_stage_swap(path: Path, target: Path) -> Path:
@@ -271,7 +299,7 @@ def test_force_rolls_back_the_complete_bundle_when_the_final_swap_fails(
             force=True,
         )
 
-    assert (output / MANIFEST_NAME).read_text(encoding="utf-8") == original_manifest
+    assert _file_contents(output) == original_files
     assert not list(tmp_path.glob(".bundle-backup-*"))
     assert not list(tmp_path.glob(".bundle-*"))
 

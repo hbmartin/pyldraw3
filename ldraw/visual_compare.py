@@ -34,6 +34,12 @@ DEFAULT_SCALE_MIN = 0.65
 DEFAULT_SCALE_MAX = 1.45
 DEFAULT_SCALE_STEPS = 41
 DEFAULT_ALPHA_THRESHOLD = 16
+_COARSE_MAX_DIMENSION = 512
+_COARSE_TOP_SCALES = 3
+_REFINE_SCALE_RADIUS = 1
+
+type _ScaleCandidate = tuple[int, int, float]
+type _ScaleResult = tuple[_ScaleCandidate, int, int, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +296,79 @@ def _best_placement(
     return int(x), int(y), intersection
 
 
+def _evaluate_scales(
+    reference: Mask,
+    source: Mask,
+    candidates: list[_ScaleCandidate],
+) -> list[_ScaleResult]:
+    """Evaluate scale candidates against one reference mask."""
+    transform_shape = (
+        reference.shape[0] + max(height for _, height, _ in candidates) - 1,
+        reference.shape[1] + max(width for width, _, _ in candidates) - 1,
+    )
+    reference_fft = np.fft.rfft2(reference, s=transform_shape)
+    reference_area = int(reference.sum())
+    results: list[_ScaleResult] = []
+    for width, height, scale in candidates:
+        scaled = _resize_mask(source, (width, height))
+        offset_x, offset_y, intersection = _best_placement(
+            reference,
+            scaled,
+            reference_fft=reference_fft,
+            transform_shape=transform_shape,
+        )
+        candidate_area = int(scaled.sum())
+        union = reference_area + candidate_area - intersection
+        iou = intersection / union if union else 1.0
+        results.append(((width, height, scale), offset_x, offset_y, iou))
+    return results
+
+
+def _refinement_candidates(
+    reference: Mask,
+    source: Mask,
+    candidates: list[_ScaleCandidate],
+) -> list[_ScaleCandidate]:
+    """Use a reduced-resolution sweep to select scales for full evaluation."""
+    largest_dimension = max(reference.shape)
+    if largest_dimension <= _COARSE_MAX_DIMENSION:
+        return candidates
+
+    factor = _COARSE_MAX_DIMENSION / largest_dimension
+    coarse_size = (
+        max(1, round(reference.shape[1] * factor)),
+        max(1, round(reference.shape[0] * factor)),
+    )
+    coarse_reference = _resize_mask(reference, coarse_size)
+    if not coarse_reference.any():
+        return candidates
+
+    coarse_candidates = [
+        (
+            min(coarse_size[0], max(1, round(width * factor))),
+            min(coarse_size[1], max(1, round(height * factor))),
+            scale,
+        )
+        for width, height, scale in candidates
+    ]
+    scores = _evaluate_scales(coarse_reference, source, coarse_candidates)
+    if not any(result[3] > 0 for result in scores):
+        return candidates
+    ranked = sorted(
+        range(len(scores)),
+        key=lambda index: (-scores[index][3], index),
+    )[:_COARSE_TOP_SCALES]
+    selected_indices = {
+        nearby
+        for index in ranked
+        for nearby in range(
+            max(0, index - _REFINE_SCALE_RADIUS),
+            min(len(candidates), index + _REFINE_SCALE_RADIUS + 1),
+        )
+    }
+    return [candidates[index] for index in sorted(selected_indices)]
+
+
 def register_silhouettes(
     reference_mask: Mask,
     candidate_mask: Mask,
@@ -319,40 +398,23 @@ def register_silhouettes(
         msg = "no configured scale fits the candidate inside the reference canvas"
         raise ValueError(msg)
 
-    transform_shape = (
-        reference_height + max(height for _, height in sizes) - 1,
-        reference_width + max(width for width, _ in sizes) - 1,
+    candidates = [(width, height, scale) for (width, height), scale in sizes.items()]
+    refined = _refinement_candidates(reference_mask, cropped, candidates)
+    results = _evaluate_scales(reference_mask, cropped, refined)
+    candidate, offset_x, offset_y, iou = max(
+        results,
+        key=lambda result: result[3],
     )
-    reference_fft = np.fft.rfft2(reference_mask, s=transform_shape)
-
-    best: Alignment | None = None
-    for (scaled_width, scaled_height), scale in sizes.items():
-        scaled = _resize_mask(cropped, (scaled_width, scaled_height))
-        offset_x, offset_y, intersection = _best_placement(
-            reference_mask,
-            scaled,
-            reference_fft=reference_fft,
-            transform_shape=transform_shape,
-        )
-        candidate_area = int(scaled.sum())
-        union = reference_area + candidate_area - intersection
-        iou = intersection / union if union else 1.0
-        alignment = Alignment(
-            scale=scale,
-            offset_x=offset_x,
-            offset_y=offset_y,
-            source_box=source_box,
-            scaled_width=scaled_width,
-            scaled_height=scaled_height,
-            silhouette_iou=iou,
-        )
-        if best is None or alignment.silhouette_iou > best.silhouette_iou:
-            best = alignment
-
-    if best is None:  # unreachable: sizes is non-empty
-        msg = "no configured scale fits the candidate inside the reference canvas"
-        raise ValueError(msg)
-    return best
+    scaled_width, scaled_height, scale = candidate
+    return Alignment(
+        scale=scale,
+        offset_x=offset_x,
+        offset_y=offset_y,
+        source_box=source_box,
+        scaled_width=scaled_width,
+        scaled_height=scaled_height,
+        silhouette_iou=iou,
+    )
 
 
 def apply_alignment(
@@ -536,6 +598,15 @@ def write_comparison_artifacts(
     regions: Sequence[Region] = (),
 ) -> dict[str, object]:
     """Write aligned, overlay, heatmap, and optional crop images."""
+    region_owners: dict[str, str] = {}
+    prepared_regions = [
+        (region, _claim_safe_name(region.name, region_owners, "region"))
+        for region in regions
+    ]
+    if {region.name for region, _ in prepared_regions} != set(result.regions):
+        msg = "regions must match those used to create the comparison"
+        raise ValueError(msg)
+
     output_dir.mkdir(parents=True, exist_ok=True)
     background = estimate_background(result.reference)
     aligned = Image.new("RGBA", result.reference.size, (*background, 255))
@@ -547,10 +618,8 @@ def write_comparison_artifacts(
     difference.save(output_dir / "difference.png")
 
     region_outputs: dict[str, dict[str, str]] = {}
-    region_owners: dict[str, str] = {}
-    for region in regions:
+    for region, safe_name in prepared_regions:
         box = region.resolve(result.reference.size)
-        safe_name = _claim_safe_name(region.name, region_owners, "region")
         paths = {
             "reference": f"regions/{safe_name}.reference.png",
             "aligned": f"regions/{safe_name}.aligned.png",
@@ -871,6 +940,10 @@ def _config_from_mapping(value: object) -> AlignmentConfig:
     if not isinstance(value, dict):
         msg = "alignment must be an object"
         raise TypeError(msg)
+    if not all(isinstance(name, str) for name in value):
+        msg = "alignment setting names must be strings"
+        raise TypeError(msg)
+    mapping = cast("dict[str, object]", value)
     defaults: dict[str, float | int] = {
         "min_scale": DEFAULT_SCALE_MIN,
         "max_scale": DEFAULT_SCALE_MAX,
@@ -878,13 +951,13 @@ def _config_from_mapping(value: object) -> AlignmentConfig:
         "background_tolerance": DEFAULT_BACKGROUND_TOLERANCE,
         "alpha_threshold": DEFAULT_ALPHA_THRESHOLD,
     }
-    unknown = set(value) - set(defaults)
+    unknown = set(mapping) - set(defaults)
     if unknown:
         msg = f"unknown alignment settings: {', '.join(sorted(unknown))}"
         raise ValueError(msg)
     settings: dict[str, float | int] = {}
     for name, default in defaults.items():
-        raw = value.get(name, default)
+        raw = mapping.get(name, default)
         if isinstance(raw, bool) or not isinstance(raw, int | float):
             msg = f"alignment setting {name} must be a number"
             raise TypeError(msg)

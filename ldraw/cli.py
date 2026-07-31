@@ -777,13 +777,16 @@ def _dispatch_instructions(args: Namespace) -> int:
                 output=args.output,
                 force=args.force,
             )
-        case _:
+        case "snapshots":
             return instructions_snapshots_command(
                 file=args.file,
                 output=args.out,
                 section_name=args.section,
                 force=args.force,
             )
+        case _:
+            msg = f"Unhandled instructions subcommand: {args.instructions_command!r}"
+            raise AssertionError(msg)
 
 
 if __name__ == "__main__":  # pragma: no cover

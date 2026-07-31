@@ -1,12 +1,13 @@
 """CLI coverage for the nested instruction commands."""
 
 import json
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from ldraw.cli import main
+from ldraw.cli import _dispatch_instructions, main
 from ldraw.parts import Parts
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -23,6 +24,11 @@ def _write_model(path: Path, *, instructions: tuple[str, ...] = ()) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def test_unknown_instruction_subcommand_fails_explicitly() -> None:
+    with pytest.raises(AssertionError, match="Unhandled instructions subcommand"):
+        _dispatch_instructions(Namespace(instructions_command="future"))
 
 
 @pytest.mark.parametrize(

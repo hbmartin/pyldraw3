@@ -419,7 +419,13 @@ class Model:
         return InstructionDocument.from_model(self, parts=parts)
 
     def iter_instruction_steps(self) -> Iterator[InstructionStep]:
-        """Yield this model section's semantic instruction steps."""
+        """Yield this model section's semantic instruction steps.
+
+        This convenience method constructs the complete instruction document,
+        including reachable and orphan sections. Callers that need to inspect
+        steps repeatedly should build :meth:`instruction_document` once and
+        reuse its ``root.steps`` tuple.
+        """
         yield from self.instruction_document().root.steps
 
     @property

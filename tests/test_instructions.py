@@ -42,10 +42,13 @@ def _matrix_values(matrix: Matrix) -> list[float]:
 
 def test_source_tracking_covers_every_object_without_changing_legacy_steps() -> None:
     model = parse_model(f"0 A note\n{_piece()}\n0 ROTSTEP 0 90 0\n0 STEP\n")
+    semantic_step = model.instruction_document().root.steps[0]
 
     assert [model.source_line_for(obj) for obj in model.objects] == [1, 2, 3, 4]
     assert [len(step) for step in model.steps] == [1]
     assert model.source_line_for(Comment("A note")) is None
+    assert semantic_step.cumulative_objects == tuple(model.objects[:3])
+    assert semantic_step.source_line_for(semantic_step.added_pieces[0]) == 2
 
 
 def test_document_is_root_first_then_reachable_mpd_order_with_orphans() -> None:
@@ -292,6 +295,7 @@ def test_camera_global_local_and_context_inheritance() -> None:
     model = parse_model(
         "\n".join(
             (
+                "0 FILE main.ldr",
                 "0 !LPUB ASSEM CAMERA_FOV GLOBAL 45",
                 _piece(),
                 "0 STEP",
@@ -310,18 +314,23 @@ def test_camera_global_local_and_context_inheritance() -> None:
                 _piece(x=80),
                 "0 STEP",
                 "0 !LPUB MULTI_STEP END",
+                "0 NOFILE",
                 "0 FILE sub.ldr",
                 _piece(),
                 "0 NOFILE",
             )
         )
     )
-    steps = model.instruction_document().root.steps
+    document = model.instruction_document()
+    steps = document.root.steps
 
+    assert document.root.name == "main.ldr"
+    assert document.section("sub.ldr").name == "sub.ldr"
     assert steps[0].camera == CameraState(fov=45)
     assert steps[1].camera == CameraState(distance=100, fov=45)
     assert steps[2].camera.fov == 30
     assert steps[2].callouts[0].mode is CalloutMode.ROTATED
+    assert steps[2].callouts[0].references == ("sub.ldr",)
     assert steps[3].camera == CameraState(fov=45)
     assert steps[4].camera == CameraState(distance=200, fov=45)
     assert steps[4].multi_step_group == 1
