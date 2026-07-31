@@ -39,6 +39,10 @@ class DiagnosticCode(StrEnum):
     MPD_CYCLE = "mpd.cycle"
     MODEL_UNKNOWN_PART = "model.unknown_part"
     MODEL_UNKNOWN_COLOUR = "model.unknown_colour"
+    MODEL_LEGACY_COLOUR = "model.legacy_colour"
+    MODEL_SINGULAR_MATRIX = "model.singular_matrix"
+    MODEL_NON_ORTHONORMAL_MATRIX = "model.non_orthonormal_matrix"
+    MODEL_UNKNOWN_META = "model.unknown_meta"
     PART_NOT_FOUND = "part.not_found"
     PART_HEADER_INVALID = "part.header_invalid"
     PART_REFERENCE_UNRESOLVED = "part.reference_unresolved"
@@ -58,6 +62,14 @@ class Diagnostic:
     ``line_number`` remains the first field so the historical
     ``ValidationIssue(line_number, message, severity)`` constructor stays
     source compatible. New callers should prefer keyword arguments.
+
+    Warning: equality and hashing deliberately compare only
+    ``line_number``, ``message``, and ``severity`` (historical
+    ``ValidationIssue`` behavior), so ``set``/``dict`` deduplication
+    collapses diagnostics that differ only by ``code``, ``path``, or
+    ``section``. To deduplicate diagnostics across files, key on a tuple
+    such as ``(diagnostic.path, diagnostic.code, diagnostic.line_number,
+    diagnostic.message)`` instead.
     """
 
     line_number: int | None = None
@@ -74,7 +86,12 @@ class Diagnostic:
     cause: BaseException | None = field(default=None, compare=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-ready representation, including safe cause details."""
+        """Return a JSON-ready representation, including safe cause details.
+
+        ``offending_value`` passes JSON-native scalars through unchanged;
+        any other value (bytes, matrices, exceptions, ...) is coerced with
+        ``repr()`` so the result always survives ``json.dumps``.
+        """
         result: dict[str, Any] = {
             "code": str(self.code),
             "message": self.message,
@@ -82,7 +99,7 @@ class Diagnostic:
             "path": str(self.path) if self.path is not None else None,
             "section": self.section,
             "line_number": self.line_number,
-            "offending_value": self.offending_value,
+            "offending_value": _json_safe(self.offending_value),
             "suggestions": list(self.suggestions),
             "cause": None,
         }
@@ -92,6 +109,15 @@ class Diagnostic:
                 "message": str(self.cause),
             }
         return result
+
+
+def _json_safe(value: object | None) -> str | int | float | bool | None:
+    """Pass JSON-native scalars through; coerce everything else via repr."""
+    match value:
+        case str() | int() | float() | bool() | None:
+            return value
+        case _:
+            return repr(value)
 
 
 __all__ = ["Diagnostic", "DiagnosticCode", "Severity"]

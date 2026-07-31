@@ -215,7 +215,14 @@ class Part:
     def _parse_header(self) -> tuple[str, ...]:
         if self._keywords is not None:
             return self._keywords
-        metadata = self.metadata
+        try:
+            metadata = self.metadata
+        except EmptyPartFileError:
+            # category/keywords historically degrade to None/() for an
+            # empty file; only description and metadata raise.
+            self._category = None
+            self._keywords = ()
+            return self._keywords
         self._category = metadata.category
         self._keywords = metadata.keywords
         return self._keywords

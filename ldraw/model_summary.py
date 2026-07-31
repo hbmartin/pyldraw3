@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from ldraw.colour import Colour
     from ldraw.geometry import Vector
+    from ldraw.inspection import ModelInspection
     from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
 
@@ -44,8 +45,57 @@ class ModelSummary:
 
     @classmethod
     def from_model(cls, model: Model, parts: Parts | None) -> ModelSummary:
-        """Build a summary for ``model`` using geometry from ``parts``."""
-        return cls.from_occurrences(tuple(model.iter_occurrences()), parts)
+        """Build a summary for ``model`` using geometry from ``parts``.
+
+        Cyclic submodel references (possible in tolerantly-loaded models)
+        are skipped rather than raising.
+        """
+        from ldraw.model import _iter_occurrences_skip_cycles  # noqa: PLC0415
+
+        return cls.from_occurrences(
+            tuple(_iter_occurrences_skip_cycles(model)),
+            parts,
+        )
+
+    @classmethod
+    def from_inspection(cls, inspection: ModelInspection) -> ModelSummary:
+        """Build a summary reusing bounds already computed by an inspection.
+
+        ``inspect_model`` already transforms every occurrence's expanded
+        points into exact world bounds; this constructor folds those
+        results instead of recomputing them, so callers building both an
+        inspection and a summary pay for the geometry only once.
+        """
+        origins = _BoundsAccumulator()
+        part_counts: Counter[str] = Counter()
+        colour_usage: Counter[int | str | None] = Counter()
+        skipped: list[SkippedGeometry] = []
+        for resolved in inspection.occurrences:
+            occurrence = resolved.attribution.occurrence
+            part_counts[occurrence.part_code] += 1
+            colour_usage[_colour_key(occurrence.colour)] += 1
+            origins.add(occurrence.position)
+        for entry in inspection.skipped_geometry:
+            occurrence = entry.attribution.occurrence
+            part_counts[occurrence.part_code] += 1
+            colour_usage[_colour_key(occurrence.colour)] += 1
+            origins.add(occurrence.position)
+            skipped.append(
+                SkippedGeometry(
+                    part=occurrence.part_code,
+                    source_model=occurrence.source_model.name,
+                    source_line=occurrence.source_line,
+                    reason=entry.diagnostic.message,
+                ),
+            )
+        return cls(
+            bounds=inspection.bounds,
+            origin_bounds=origins.box(),
+            part_counts=dict(part_counts),
+            colour_usage=dict(colour_usage),
+            skipped_geometry=tuple(skipped),
+            occurrence_count=inspection.occurrence_count,
+        )
 
     @classmethod
     def from_occurrences(

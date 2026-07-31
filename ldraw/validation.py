@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from difflib import get_close_matches
 from typing import TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
@@ -60,6 +61,25 @@ def _unknown_part(piece: Piece, parts: Parts) -> bool:
     return parts.find_part(code=piece.part) is None
 
 
+_candidate_codes_cache: WeakKeyDictionary[Parts, tuple[int, tuple[str, ...]]] = (
+    WeakKeyDictionary()
+)
+
+
+def _candidate_codes(parts: Parts) -> tuple[str, ...]:
+    """Return the sorted casefolded catalog codes, built once per catalog."""
+    count = len(parts.catalog.by_code)
+    if (cached := _candidate_codes_cache.get(parts)) is not None:
+        cached_count, candidates = cached
+        if cached_count == count:
+            return candidates
+    candidates = tuple(
+        sorted(candidate.casefold() for candidate in parts.catalog.by_code),
+    )
+    _candidate_codes_cache[parts] = (count, candidates)
+    return candidates
+
+
 def _part_suggestions(reference: str, parts: Parts) -> tuple[str, ...]:
     code = reference.rsplit(".", maxsplit=1)[0].replace("\\", "/")
     substring = parts.catalog.search(
@@ -71,7 +91,7 @@ def _part_suggestions(reference: str, parts: Parts) -> tuple[str, ...]:
         return tuple(entry.code for entry in substring)
     matches = get_close_matches(
         code.casefold(),
-        sorted(candidate.casefold() for candidate in parts.catalog.by_code),
+        _candidate_codes(parts),
         n=3,
         cutoff=0.55,
     )
@@ -104,7 +124,7 @@ def _colour_issue(
             line_number=number,
             message=f"legacy dithered colour code {colour.code}",
             severity=Severity.WARNING,
-            code="model.legacy_colour",
+            code=DiagnosticCode.MODEL_LEGACY_COLOUR,
             path=path,
             section=section,
             offending_value=colour.code,
@@ -132,7 +152,7 @@ def _matrix_issue(
             line_number=number,
             message="singular transformation matrix (flattens geometry)",
             severity=Severity.WARNING,
-            code="model.singular_matrix",
+            code=DiagnosticCode.MODEL_SINGULAR_MATRIX,
             path=path,
             section=section,
             offending_value=piece.matrix,
@@ -142,7 +162,7 @@ def _matrix_issue(
             line_number=number,
             message="transformation matrix is not orthonormal (scaled or sheared part)",
             severity=Severity.WARNING,
-            code="model.non_orthonormal_matrix",
+            code=DiagnosticCode.MODEL_NON_ORTHONORMAL_MATRIX,
             path=path,
             section=section,
             offending_value=piece.matrix,
@@ -162,7 +182,7 @@ def _meta_issue(
             line_number=number,
             message=f"unknown meta-command !{meta.type}",
             severity=Severity.WARNING,
-            code="model.unknown_meta",
+            code=DiagnosticCode.MODEL_UNKNOWN_META,
             path=path,
             section=section,
             offending_value=meta.type,
@@ -232,17 +252,25 @@ def iter_ldr_issues(
     path: Path | ModelLoadResult,
     parts: Parts | None = None,
 ) -> Iterator[ValidationIssue]:
-    """Yield the issues found in an LDraw model or part file.
+    """Yield the issues found in an LDraw model or part file, in line order.
 
     Malformed lines, unparseable colour values, and (when a parts catalog
     with colour definitions is given) unknown part references and colour
     codes are errors. Suspicious-but-legal constructs — legacy dithered
     colours, non-orthonormal or singular transformation matrices, and
     unknown bang meta-commands — are warnings.
+
+    Unreadable or non-UTF-8 files do not raise; they yield an
+    ``IO_READ_FAILED`` or ``IO_DECODE_FAILED`` error diagnostic with
+    ``line_number=None``. Issues are yielded sorted by line number, with
+    file-level diagnostics (``line_number=None``) first.
     """
     from ldraw.model import ModelLoadResult, load_model  # noqa: PLC0415
 
-    if isinstance(path, ModelLoadResult):
-        yield from path.diagnostics
-        return
-    yield from load_model(path, parts=parts).diagnostics
+    result = (
+        path if isinstance(path, ModelLoadResult) else load_model(path, parts=parts)
+    )
+    yield from sorted(
+        result.diagnostics,
+        key=lambda issue: (issue.line_number is not None, issue.line_number or 0),
+    )

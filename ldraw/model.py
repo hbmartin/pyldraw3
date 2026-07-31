@@ -25,7 +25,7 @@ from ldraw.pieces import MAIN_COLOUR_CODE, Piece
 from ldraw.utils import ldraw_file_name, normalize_ref, split_reference
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from ldraw.analysis import ModelAnalysis
     from ldraw.bom import BomRow
@@ -71,7 +71,13 @@ class OccurrencePathItem:
 
     @property
     def step(self) -> int | None:
-        """Compatibility spelling for the placement's local source step."""
+        """Compatibility spelling for ``local_step`` — the *local* step.
+
+        This is the step counted within the placement's own section, not
+        the inherited one, so for submodel contents it differs from
+        ``ModelOccurrence.step`` (which is the *effective* step). Use
+        ``effective_step`` for the inherited semantics.
+        """
         return self.local_step
 
 
@@ -81,6 +87,12 @@ class ModelOccurrence:
 
     Occurrences are traversal events: two placements of the same submodel
     produce distinct occurrences, so they compare and hash by identity.
+
+    ``step`` is the *effective* (inherited) step: pieces inside a submodel
+    report the step their outermost placement belongs to. This differs
+    from ``path[-1].step``, which is the placement's *local* step within
+    its own section (``OccurrencePathItem.local_step``); ``source_step``
+    carries the same local semantics.
     """
 
     piece: Piece
@@ -534,11 +546,13 @@ class Model:
         colour the submodel was placed with. As with ``iter_pieces``,
         submodel references only resolve against this model's own submodel
         table; to count a single submodel of a larger model, call this on
-        ``root.submodel_view(name)``.
+        ``root.submodel_view(name)``. Cyclic submodel references (possible
+        in tolerantly-loaded models) are skipped instead of raising.
         """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
-        return bill_of_materials(self, parts=parts)
+        occurrences = _iter_occurrences_skip_cycles(self, include_steps=False)
+        return bill_of_materials(parts=parts, occurrences=occurrences)
 
     def find_pieces(
         self,
@@ -620,6 +634,50 @@ def _iter_model_pieces(
             yield from _iter_model_pieces(root=root, model=target, visiting=visiting)
 
 
+def _iter_occurrences_skip_cycles(
+    model: Model,
+    *,
+    expand_submodels: bool = True,
+    include_steps: bool = True,
+    diagnostics: list[Diagnostic] | None = None,
+) -> Iterator[ModelOccurrence]:
+    """Yield occurrences, skipping re-entry into in-progress submodels.
+
+    Used by analysis, summary, and BOM paths so tolerantly-loaded cyclic
+    models do not raise. Each skipped cyclic reference appends an
+    ``MPD_CYCLE`` diagnostic to ``diagnostics`` when a list is given.
+    """
+
+    def record(source: Model, piece: Piece, target: Model) -> None:
+        if diagnostics is None:
+            return
+        error = SubmodelCycleError(target.name)
+        diagnostics.append(
+            Diagnostic(
+                line_number=source.source_line_for(piece),
+                message=error.message,
+                code=DiagnosticCode.MPD_CYCLE,
+                section=source.name or None,
+                offending_value=piece.reference,
+                cause=error,
+            ),
+        )
+
+    return _iter_model_occurrences(
+        root=model,
+        model=model,
+        position=Vector(0, 0, 0),
+        matrix=Identity(),
+        inherited_colour=None,
+        visiting=frozenset(),
+        inherited_step=None,
+        path=(),
+        expand_submodels=expand_submodels,
+        include_steps=include_steps,
+        on_cycle=record,
+    )
+
+
 def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     *,
     root: Model,
@@ -632,12 +690,15 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     path: tuple[OccurrencePathItem, ...],
     expand_submodels: bool,
     include_steps: bool,
+    on_cycle: Callable[[Model, Piece, Model], None] | None = None,
 ) -> Iterator[ModelOccurrence]:
-    """Yield leaf occurrences of ``model``, resolving references against ``root``."""
-    key = normalize_ref(model.name)
-    if key in visiting:
-        raise SubmodelCycleError(model.name)
-    visiting = visiting | {key}
+    """Yield leaf occurrences of ``model``, resolving references against ``root``.
+
+    A submodel reference that would re-enter an in-progress submodel
+    raises ``SubmodelCycleError``, unless ``on_cycle`` is given — then the
+    reference is reported to the callback and skipped instead.
+    """
+    visiting = visiting | {normalize_ref(model.name)}
     for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
         piece_position, piece_matrix = piece._transformed()  # noqa: SLF001
         world_position = position + matrix * piece_position
@@ -656,6 +717,11 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
         )
         target = root.submodel_for(piece) if expand_submodels else None
         if target is not None:
+            if normalize_ref(target.name) in visiting:
+                if on_cycle is None:
+                    raise SubmodelCycleError(target.name)
+                on_cycle(model, piece, target)
+                continue
             yield from _iter_model_occurrences(
                 root=root,
                 model=target,
@@ -667,6 +733,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
                 path=occurrence_path,
                 expand_submodels=expand_submodels,
                 include_steps=include_steps,
+                on_cycle=on_cycle,
             )
             continue
         yield ModelOccurrence(
@@ -749,10 +816,13 @@ def _split_sections_report(
         elif current is not None:
             current.append((number, line))
         elif line.strip():
+            # The MPD spec ignores such lines, so a spec-legal file must
+            # stay valid: report the dropped content as a warning only.
             diagnostics.append(
                 Diagnostic(
                     line_number=number,
                     message="content after 0 NOFILE is ignored until the next section",
+                    severity=Severity.WARNING,
                     code=DiagnosticCode.MPD_CONTENT_AFTER_NOFILE,
                     path=path,
                     offending_value=line,
@@ -846,10 +916,13 @@ def _model_structure_diagnostics(root: Model, *, path: Path | None) -> list[Diag
             if target is None:
                 _, suffix = split_reference(piece.reference)
                 if suffix.casefold() in {".ldr", ".mpd"}:
+                    # Sibling-file references are legal LDraw multi-file
+                    # layout, so an unresolved one is only a warning.
                     diagnostics.append(
                         Diagnostic(
                             line_number=line_number,
                             message=f"unresolved submodel {piece.reference}",
+                            severity=Severity.WARNING,
                             code=DiagnosticCode.MPD_UNRESOLVED_SUBMODEL,
                             path=path,
                             section=model.name or None,
@@ -890,6 +963,12 @@ def _validation_diagnostics(
     from ldraw.validation import iter_object_issues  # noqa: PLC0415
 
     submodels = {normalize_ref(root.name), *root.submodels}
+    structural = _model_structure_diagnostics(root, path=path)
+    unresolved_references = {
+        (diagnostic.section, diagnostic.line_number)
+        for diagnostic in structural
+        if diagnostic.code is DiagnosticCode.MPD_UNRESOLVED_SUBMODEL
+    }
     diagnostics: list[Diagnostic] = []
     for section_model in (root, *root.submodels.values()):
         for obj in section_model.objects:
@@ -897,16 +976,23 @@ def _validation_diagnostics(
             if number is None:
                 continue
             diagnostics.extend(
-                iter_object_issues(
+                issue
+                for issue in iter_object_issues(
                     obj,
                     number=number,
                     parts=parts,
                     submodels=submodels,
                     path=path,
                     section=section_model.name or None,
-                ),
+                )
+                # One diagnostic per defect: a reference that already has
+                # an unresolved-submodel diagnostic is not also unknown.
+                if not (
+                    issue.code is DiagnosticCode.MODEL_UNKNOWN_PART
+                    and (issue.section, issue.line_number) in unresolved_references
+                )
             )
-    diagnostics.extend(_model_structure_diagnostics(root, path=path))
+    diagnostics.extend(structural)
     return diagnostics
 
 
@@ -922,15 +1008,22 @@ def parse_model_result(
     if not tolerant:
         try:
             model = parse_model(text, name=name, source=source)
-        except (PartError, ValueError) as error:
-            diagnostic = _parse_error_diagnostic(
-                error,
-                number=getattr(error, "line_number", None) or 0,
-                line="",
+        except (PartError, ValueError):
+            # Re-derive diagnostics tolerantly so strict failures report
+            # the same codes and line numbers as tolerant mode, then
+            # discard the partial model.
+            report = parse_model_result(
+                text,
+                name=name,
                 source=source,
-                section=None,
+                parts=parts,
+                tolerant=True,
             )
-            return ModelLoadResult(None, (diagnostic,), complete=False)
+            return ModelLoadResult(
+                model=None,
+                diagnostics=report.diagnostics,
+                complete=False,
+            )
         diagnostics = _validation_diagnostics(
             model,
             parts=parts,
