@@ -83,7 +83,9 @@ Filenames encode the exact angles, and `camera-grid.json` records the full
 LeoCAD command for reproducibility. When `--reference` is given, the JSON also
 contains the ranked registrations and `camera-grid.png` contains the ordered
 contact sheet. Add `--skip-existing` to resume an interrupted grid without
-rerendering completed PNGs.
+rerendering completed PNGs. Each render is bounded by `--timeout` seconds
+(default 240); the render metadata is written to `camera-grid.json` before
+ranking starts, so it survives a failed ranking pass.
 
 The camera sweep is intentionally separate from model generation. It invokes
 LeoCAD as:

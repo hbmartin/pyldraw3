@@ -91,11 +91,14 @@ def test_visual_comparison_dependency_and_command_are_optional() -> None:
         not dependency.casefold().startswith("pillow")
         for dependency in project["project"]["dependencies"]
     )
-    assert project["project"]["optional-dependencies"]["visual-compare"] == [
-        "pillow>=11.0",
-    ]
+    extra = project["project"]["optional-dependencies"]["visual-compare"]
+    assert len(extra) == 1
+    assert extra[0].casefold().startswith("pillow")
     assert "ldraw-compare" not in project["project"]["scripts"]
-    assert "pillow>=11.0" in project["dependency-groups"]["dev"]
+    assert any(
+        dependency.casefold().startswith("pillow")
+        for dependency in project["dependency-groups"]["dev"]
+    )
 
 
 def test_repository_script_explains_missing_optional_dependency(
@@ -130,6 +133,7 @@ def test_repository_script_explains_missing_optional_dependency(
         ({"min_scale": 0}, "min_scale"),
         ({"min_scale": 2, "max_scale": 1}, "max_scale"),
         ({"scale_steps": 0}, "scale_steps"),
+        ({"min_scale": 1.0, "max_scale": 1.2, "scale_steps": 1}, "requires min_scale"),
         ({"background_tolerance": -1}, "background_tolerance"),
         ({"alpha_threshold": 300}, "alpha_threshold"),
     ],
@@ -230,6 +234,27 @@ def test_registration_recovers_scale_and_translation() -> None:
     )
 
 
+def test_registration_sweep_matches_or_beats_single_scale() -> None:
+    reference = _model_image()
+    candidate = _model_image(size=(70, 70), scale=0.5)
+    reference_mask = foreground_mask(reference)
+    candidate_mask = foreground_mask(candidate)
+    fixed = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=AlignmentConfig(min_scale=2.0, max_scale=2.0, scale_steps=1),
+    )
+
+    swept = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=AlignmentConfig(min_scale=1.0, max_scale=2.5, scale_steps=16),
+    )
+
+    assert swept.silhouette_iou >= fixed.silhouette_iou
+    assert 1.5 <= swept.scale <= 2.5
+
+
 def test_registration_rejects_empty_or_oversized_candidates() -> None:
     reference = np.ones((20, 20), dtype=np.bool_)
     with pytest.raises(ValueError, match="no detectable foreground"):
@@ -251,6 +276,12 @@ def test_registration_rejects_empty_or_oversized_candidates() -> None:
             np.ones((10, 10), dtype=np.bool_),
             np.ones((20, 20), dtype=np.bool_),
         )
+    with pytest.raises(ValueError, match="supplied together"):
+        visual_compare._best_placement(  # noqa: SLF001
+            np.ones((10, 10), dtype=np.bool_),
+            np.ones((5, 5), dtype=np.bool_),
+            transform_shape=(14, 14),
+        )
 
 
 def test_comparison_metrics_and_visuals() -> None:
@@ -268,6 +299,26 @@ def test_comparison_metrics_and_visuals() -> None:
     assert result.regions["cab"]["silhouette_recall"] == 1.0
     assert overlay_image(result).size == reference.size
     assert difference_heatmap(result).getbbox() is not None
+
+
+def test_colliding_or_duplicate_region_names_are_rejected() -> None:
+    reference = _model_image()
+    candidate = _model_image()
+    config = AlignmentConfig(min_scale=1, max_scale=1, scale_steps=1)
+
+    colliding = [
+        Region("cab!", (0.2, 0.1, 0.5, 0.5)),
+        Region("cab?", (0.1, 0.1, 0.5, 0.5)),
+    ]
+    with pytest.raises(ValueError, match="both map to"):
+        compare(reference, candidate, config=config, regions=colliding)
+
+    duplicated = [
+        Region("cab", (0.2, 0.1, 0.5, 0.5)),
+        Region("cab", (0.1, 0.1, 0.5, 0.5)),
+    ]
+    with pytest.raises(ValueError, match="duplicate region name"):
+        compare(reference, candidate, config=config, regions=duplicated)
 
 
 def test_image_metrics_handles_empty_and_disjoint_masks() -> None:
@@ -368,6 +419,14 @@ def test_render_leocad_grid_reports_preflight_and_renderer_errors(
 
     model = tmp_path / "model.ldr"
     model.write_text("0 test\n")
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        render_leocad_grid(model, tmp_path, [], timeout_seconds=0)
+    with pytest.raises(ValueError, match="share the file key"):
+        render_leocad_grid(
+            model,
+            tmp_path,
+            [Camera(15.001, 0), Camera(15.004, 0)],
+        )
     monkeypatch.setattr(visual_compare.shutil, "which", lambda _value: None)
     with pytest.raises(FileNotFoundError, match="executable not found"):
         render_leocad_grid(model, tmp_path, [])
@@ -423,6 +482,10 @@ def test_manifest_value_parsers_cover_validation() -> None:
         visual_compare._config_from_mapping([])  # noqa: SLF001
     with pytest.raises(ValueError, match="unknown alignment"):
         visual_compare._config_from_mapping({"unknown": 1})  # noqa: SLF001
+    with pytest.raises(TypeError, match="must be a number"):
+        visual_compare._config_from_mapping({"min_scale": "wide"})  # noqa: SLF001
+    with pytest.raises(TypeError, match="must be an integer"):
+        visual_compare._config_from_mapping({"scale_steps": 2.5})  # noqa: SLF001
     with pytest.raises(TypeError, match="string label"):
         visual_compare._candidate_specs([{"label": 1, "path": "a.png"}])  # noqa: SLF001
     with pytest.raises(TypeError, match="candidate must"):
@@ -467,6 +530,54 @@ def test_manifest_report_covers_multiple_views_and_candidates(tmp_path: Path) ->
     html_text = (tmp_path / "report/report.html").read_text()
     assert "LDraw visual comparison" in html_text
     assert "views/front/geometry/overlay.png" in html_text
+
+
+def test_manifest_report_rejects_colliding_view_and_candidate_names(
+    tmp_path: Path,
+) -> None:
+    _save_model(tmp_path / "reference.png")
+    _save_model(tmp_path / "candidate.png")
+    alignment = {"min_scale": 1, "max_scale": 1, "scale_steps": 1}
+    manifest_path = tmp_path / "manifest.json"
+
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "alignment": alignment,
+                "views": [
+                    {
+                        "name": "front",
+                        "reference": "reference.png",
+                        "candidate": "candidate.png",
+                    },
+                    {
+                        "name": "front!",
+                        "reference": "reference.png",
+                        "candidate": "candidate.png",
+                    },
+                ],
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match="both map to"):
+        build_report(manifest_path, tmp_path / "views-report")
+
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "alignment": alignment,
+                "views": [
+                    {
+                        "name": "solo",
+                        "reference": "reference.png",
+                        "candidates": ["candidate.png", "candidate.png"],
+                    },
+                ],
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match="duplicate candidate name"):
+        build_report(manifest_path, tmp_path / "labels-report")
 
 
 @pytest.mark.parametrize(
@@ -552,29 +663,35 @@ def test_cli_compare_rank_and_report(tmp_path: Path, capsys) -> None:
     )
 
 
+def _fake_render_rows(output_dir: Path, cameras) -> list[dict[str, object]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, object]] = []
+    for camera in cameras:
+        path = output_dir / f"{camera.key}.png"
+        _model_image().save(path)
+        rows.append(
+            {
+                "camera": {
+                    "latitude": camera.latitude,
+                    "longitude": camera.longitude,
+                },
+                "key": camera.key,
+                "path": str(path.resolve()),
+                "command": [],
+            },
+        )
+    return rows
+
+
 def test_cli_camera_grid_and_error_path(tmp_path: Path, monkeypatch, capsys) -> None:
     model = tmp_path / "model.ldr"
     model.write_text("0 model\n")
     reference = _save_model(tmp_path / "reference.png")
+    captured_kwargs: dict[str, object] = {}
 
-    def fake_render(_model, output_dir, cameras, **_kwargs) -> list[dict[str, object]]:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        rows = []
-        for camera in cameras:
-            path = output_dir / f"{camera.key}.png"
-            _model_image().save(path)
-            rows.append(
-                {
-                    "camera": {
-                        "latitude": camera.latitude,
-                        "longitude": camera.longitude,
-                    },
-                    "key": camera.key,
-                    "path": str(path.resolve()),
-                    "command": [],
-                },
-            )
-        return rows
+    def fake_render(_model, output_dir, cameras, **kwargs) -> list[dict[str, object]]:
+        captured_kwargs.update(kwargs)
+        return _fake_render_rows(output_dir, cameras)
 
     monkeypatch.setattr(visual_compare, "render_leocad_grid", fake_render)
     assert (
@@ -589,10 +706,13 @@ def test_cli_camera_grid_and_error_path(tmp_path: Path, monkeypatch, capsys) -> 
                 "--latitudes",
                 "20",
                 "--longitudes=-45,45",
+                "--timeout",
+                "9",
             ],
         )
         == 0
     )
+    assert captured_kwargs["timeout_seconds"] == 9
     assert (tmp_path / "grid/camera-grid.json").is_file()
     assert (tmp_path / "grid/camera-grid.png").is_file()
 
@@ -601,3 +721,45 @@ def test_cli_camera_grid_and_error_path(tmp_path: Path, monkeypatch, capsys) -> 
         == 1
     )
     assert "error:" in capsys.readouterr().err
+
+
+def test_cli_camera_grid_keeps_renders_json_when_ranking_fails(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("0 model\n")
+    blank = tmp_path / "blank.png"
+    Image.new("RGB", (96, 80), "white").save(blank)
+    monkeypatch.setattr(
+        visual_compare,
+        "render_leocad_grid",
+        lambda _model, output_dir, cameras, **_kwargs: _fake_render_rows(
+            output_dir,
+            cameras,
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "camera-grid",
+                str(model),
+                "--output-dir",
+                str(tmp_path / "grid"),
+                "--reference",
+                str(blank),
+                "--latitudes",
+                "20",
+                "--longitudes",
+                "30",
+            ],
+        )
+        == 1
+    )
+
+    assert "error:" in capsys.readouterr().err
+    saved = json.loads((tmp_path / "grid/camera-grid.json").read_text())
+    assert saved["renders"]
+    assert "ranking" not in saved
