@@ -34,6 +34,11 @@ dependencies = [
     "pyyaml>=6.0.1",
 ]
 
+[project.optional-dependencies]
+visual-compare = [
+    "pillow>=11.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/hbmartin/pyldraw3"
 Repository = "https://github.com/hbmartin/pyldraw3"
@@ -45,6 +50,7 @@ ldraw = "ldraw.cli:main"
 
 [dependency-groups]
 dev = [
+    "pillow>=11.0",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.5",
