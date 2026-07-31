@@ -291,7 +291,7 @@ def test_render_rejects_non_positive_size_before_detection(
     monkeypatch.setattr(render, "_detect", track_detection)
 
     for size in ("0x768", "1024x0", "-1x768", "1024x-1"):
-        assert render.main([str(model), "--size", size, "--views", "front"]) == 1
+        assert render.main([str(model), f"--size={size}", "--views", "front"]) == 1
         assert "with positive integers" in capsys.readouterr().err
 
     assert detection_calls == []

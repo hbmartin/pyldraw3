@@ -5,11 +5,11 @@ on:
     types: [created]
 
 jobs:
-  pypi-publish:
-    name: Upload release to PyPI
+  build:
+    name: Build package distributions
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      contents: read
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
     - name: Set up Python
@@ -17,12 +17,32 @@ jobs:
       with:
         python-version: '3.12'
     - name: Install uv
-      uses: astral-sh/setup-uv@v5
+      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
     - name: Create uv environment
       run: uv venv
     - name: Install dependencies
       run: uv sync --all-groups --locked
     - name: Install build and create dist
       run: uv build
+    - name: Upload package distributions
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: python-package-distributions
+        path: dist/
+        if-no-files-found: error
+        retention-days: 1
+
+  pypi-publish:
+    name: Upload release to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+    - name: Download package distributions
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      with:
+        name: python-package-distributions
+        path: dist/
     - name: Publish package distributions to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
