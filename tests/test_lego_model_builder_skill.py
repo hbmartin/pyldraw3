@@ -177,10 +177,9 @@ def test_duplicate_detection_casefolds_part_names() -> None:
         SimpleNamespace(part="3001.dat", colour=colour, position=position),
     ]
 
-    assert geometry._find_duplicates(pieces) == [  # noqa: SLF001
-        "duplicate: 2x part 3001.dat colour 4 at "  # noqa: ISC004
-        "(0, 0, 0) — same piece placed on top of itself"
-    ]
+    suffix = "same piece placed on top of itself"
+    expected = f"duplicate: 2x part 3001.dat colour 4 at (0, 0, 0) — {suffix}"
+    assert geometry._find_duplicates(pieces) == [expected]  # noqa: SLF001
 
 
 def test_supported_renderers_are_ldview_and_leocad(

@@ -522,24 +522,22 @@ def test_latest_release_id_unparseable_pan_raises(get_mock: MagicMock) -> None:
         get_latest_release_id()
 
 
-@patch("ldraw.downloads.get_latest_release_id", return_value="2099-01")
-@patch("ldraw.downloads.generate_parts_lst")
-@patch("ldraw.downloads.unpack_version")
-@patch("ldraw.downloads._download")
-def test_download_complete_discards_cached_zip(  # noqa: PLR0913
-    download_mock: MagicMock,
-    unpack_version_mock: MagicMock,
-    generate_parts_lst_mock: MagicMock,
-    get_latest_release_id_mock: MagicMock,
+def test_download_complete_discards_cached_zip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
-    unpack_version_mock.return_value = tmp_path / "complete"
     stale = tmp_path / "complete.zip"
     stale.write_bytes(b"stale bytes")
 
-    download(show_progress=False)
+    with (
+        patch("ldraw.downloads.get_latest_release_id", return_value="2099-01"),
+        patch("ldraw.downloads.generate_parts_lst"),
+        patch("ldraw.downloads.unpack_version") as unpack_version_mock,
+        patch("ldraw.downloads._download") as download_mock,
+    ):
+        unpack_version_mock.return_value = tmp_path / "complete"
+        download(show_progress=False)
 
     assert not stale.exists()
     download_mock.assert_called_once()
