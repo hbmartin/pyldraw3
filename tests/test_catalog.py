@@ -412,10 +412,18 @@ def test_dat_header_edit_invalidates_index(
     parts_lst = library / "parts.lst"
     generated = tmp_path / "generated"
     Parts.clear_cache()
-    load_parts(parts_lst, generated, build_index=True)
+    first = load_parts(parts_lst, generated, build_index=True)
+    assert "edited" not in first.get_entry_by_code("3005").keywords
 
     target = library / "parts" / "3005.dat"
-    target.write_text(target.read_text() + "0 !KEYWORDS edited\n")
+    text = target.read_text()
+    target.write_text(
+        text.replace(
+            "0 !LICENSE Redistributable",
+            "0 !KEYWORDS edited\n0 !LICENSE Redistributable",
+            1,
+        ),
+    )
 
     calls = {"count": 0}
     original = Parts._categorize_parts  # noqa: SLF001
@@ -425,9 +433,11 @@ def test_dat_header_edit_invalidates_index(
         original(self)
 
     monkeypatch.setattr(Parts, "_categorize_parts", counting)
-    Parts.clear_cache()
     parts = load_parts(parts_lst, generated)
-    assert parts.get_entry_by_code("3005") is not None
+    entry = parts.get_entry_by_code("3005")
+    assert entry is not None
+    assert "edited" in entry.keywords
+    assert parts is not first
     assert calls["count"] == 1
 
 

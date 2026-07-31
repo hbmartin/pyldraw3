@@ -326,6 +326,36 @@ def test_download_resume_416_finalizes_complete_partial(
     assert not partial.exists()
 
 
+def test_download_resume_416_remote_size_overrides_stale_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"stale")
+    _write_sidecar(partial, etag='"v1"', total=len(b"stale"))
+    fresh = b"new!"
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=416,
+                headers={"content-range": f"bytes */{len(fresh)}"},
+            ),
+            FakeResponse(
+                headers={"content-length": str(len(fresh))},
+                chunks=(fresh,),
+            ),
+        ],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert len(sent_headers) == 2
+    assert sent_headers[1] is None
+    assert result.read_bytes() == fresh
+
+
 def test_download_resume_content_range_mismatch_restarts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

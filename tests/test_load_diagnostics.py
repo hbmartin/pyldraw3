@@ -92,8 +92,10 @@ def test_cyclic_model_bill_of_materials_and_summary_succeed(tmp_path: Path) -> N
     _, result = _load_cyclic(tmp_path)
     assert result.model is not None
 
-    rows = result.model.bill_of_materials()
-    assert [(row.part, row.quantity) for row in rows] == [("3001", 1)]
+    method_rows = result.model.bill_of_materials()
+    function_rows = bill_of_materials(result.model)
+    assert [(row.part, row.quantity) for row in method_rows] == [("3001", 1)]
+    assert function_rows == method_rows
 
     summary = ModelSummary.from_model(result.model, None)
     assert summary.occurrence_count == 1

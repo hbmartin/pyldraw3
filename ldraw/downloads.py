@@ -435,7 +435,8 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
                 response.headers.get("content-range"),
             )
             stored_total = validator.total if validator is not None else None
-            if offset and offset in {stored_total, complete_size}:
+            expected_size = complete_size if complete_size is not None else stored_total
+            if offset and offset == expected_size:
                 # The validator matched and the partial already holds the
                 # complete, still-current file: finalize it as-is.
                 return True

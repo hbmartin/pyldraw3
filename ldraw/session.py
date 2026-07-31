@@ -374,7 +374,10 @@ class LDrawSession:
                 )
             )
             if catalog is not None:
-                parts = Parts.get(paths.parts_lst)
+                parts = Parts.get(
+                    paths.parts_lst,
+                    tree_fingerprint=snapshot.tree_fingerprint,
+                )
                 parts.adopt_catalog(catalog)
                 # A generation step above may have just rebuilt and
                 # persisted the index this load came from.
@@ -388,7 +391,10 @@ class LDrawSession:
                 # A memoized instance may hold a categorization from
                 # before an in-place ``.dat`` edit; rebuild from a fresh
                 # one so the new fingerprint never keys stale data.
-                parts = Parts.fresh(paths.parts_lst)
+                parts = Parts.fresh(
+                    paths.parts_lst,
+                    tree_fingerprint=snapshot.tree_fingerprint,
+                )
                 catalog = parts.build_catalog(
                     on_progress=on_progress,
                     cancellation=cancellation,
@@ -490,7 +496,10 @@ class LDrawSession:
         )
         # Bypass the memo: it may hold a categorization from before an
         # in-place ``.dat`` edit that left the ``parts.lst`` stat unchanged.
-        parts = Parts.fresh(paths.parts_lst)
+        parts = Parts.fresh(
+            paths.parts_lst,
+            tree_fingerprint=snapshot.tree_fingerprint,
+        )
         catalog = parts.build_catalog(
             on_progress=on_progress,
             cancellation=cancellation,
