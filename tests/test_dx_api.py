@@ -220,6 +220,49 @@ def test_part_metadata_parses_relationships_and_provenance(tmp_path: Path) -> No
     )
 
 
+def test_part_metadata_parses_bare_ldraw_org_qualifiers(tmp_path: Path) -> None:
+    # Official headers write qualifiers without parentheses:
+    # ``0 !LDRAW_ORG Part Alias UPDATE 2013-02``.
+    alias = tmp_path / "alias.dat"
+    alias.write_text(
+        "0 Sticker Sheet Lookalike\n"
+        "0 Name: alias.dat\n"
+        "0 !LDRAW_ORG Part Alias UPDATE 2013-02\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    metadata = Part(alias).metadata
+
+    assert metadata.file_kind is PartFileKind.PART
+    assert metadata.origin is LibraryOrigin.OFFICIAL
+    assert metadata.qualifiers == ("Alias",)
+    assert metadata.release == "2013-02"
+    assert metadata.status is PartStatus.ALIAS
+    assert metadata.replacement == "3001.dat"
+
+    physical = tmp_path / "physical.dat"
+    physical.write_text(
+        "0 Brick 2 x 4 in Milky White\n"
+        "0 !LDRAW_ORG Part Physical_Colour UPDATE 2011-01\n",
+        encoding="utf-8",
+    )
+
+    physical_metadata = Part(physical).metadata
+
+    assert physical_metadata.qualifiers == ("Physical_Colour",)
+    assert physical_metadata.status is PartStatus.CURRENT
+    assert physical_metadata.release == "2011-01"
+
+    flexible = tmp_path / "flexible.dat"
+    flexible.write_text(
+        "0 Hose Flexible Section\n0 !LDRAW_ORG Part Flexible_Section\n",
+        encoding="utf-8",
+    )
+
+    assert Part(flexible).metadata.qualifiers == ("Flexible_Section",)
+
+
 def test_library_inspection_reports_missing_and_valid_components(
     tmp_path: Path,
 ) -> None:

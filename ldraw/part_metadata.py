@@ -233,56 +233,53 @@ def _collect_metadata_fields(lines: list[str]) -> _MetadataFields:
     fields = _MetadataFields()
     header_open = True
     for line in lines:
-        stripped = line.strip()
-        if not stripped:
+        # Whitespace-split tokens match parse_ldraw_line's tolerance, so
+        # tab-separated commands and bare "0" lines behave as they always
+        # did for Part parsing.
+        tokens = line.split()
+        if not tokens:
             continue
-        if not stripped.startswith("0 "):
+        if tokens[0] != "0":
             header_open = False
-        if header_open and _apply_header_command(stripped, fields):
+        if header_open and _apply_header_command(tokens, fields):
             continue
-        if fields.first_reference is None and stripped.startswith("1 "):
-            fields.first_reference = _reference_from_line(stripped)
+        if fields.first_reference is None and tokens[0] == "1":
+            fields.first_reference = _reference_from_line(line)
     return fields
 
 
 def _apply_header_command(  # noqa: C901 - flat dispatch over header commands
-    stripped: str,
+    tokens: list[str],
     fields: _MetadataFields,
 ) -> bool:
-    if stripped.startswith("0 Name:"):
-        fields.name = stripped.removeprefix("0 Name:").strip() or None
-    elif stripped.startswith("0 Author:"):
-        raw_author = stripped.removeprefix("0 Author:").strip()
-        if match := _AUTHOR_USER_RE.match(raw_author):
-            fields.author = match.group("author").strip() or None
-            fields.author_username = match.group("user")
-    elif stripped.startswith("0 !LDRAW_ORG "):
-        declaration = stripped.removeprefix("0 !LDRAW_ORG ").strip()
-        (
-            fields.file_kind,
-            fields.origin,
-            fields.qualifiers,
-            fields.release,
-        ) = _parse_ldraw_org(declaration)
-    elif stripped.startswith("0 !LICENSE "):
-        fields.license = stripped.removeprefix("0 !LICENSE ").strip() or None
-    elif stripped.startswith("0 BFC "):
-        fields.bfc = _parse_bfc(stripped.removeprefix("0 BFC "))
-    elif stripped.startswith("0 !CATEGORY "):
-        fields.category = stripped.removeprefix("0 !CATEGORY ").strip() or None
-    elif stripped.startswith("0 !KEYWORDS "):
-        _extend_keywords(
-            fields.keywords,
-            stripped.removeprefix("0 !KEYWORDS "),
-        )
-    elif stripped.startswith("0 !HISTORY "):
-        fields.history.append(
-            _parse_history(stripped.removeprefix("0 !HISTORY ").strip()),
-        )
-    elif stripped.startswith("0 !PREVIEW "):
-        fields.preview = _parse_preview(stripped.removeprefix("0 !PREVIEW "))
-    else:
-        return False
+    match tokens:
+        case ["0", "Name:", *rest]:
+            fields.name = " ".join(rest) or None
+        case ["0", "Author:", *rest]:
+            if match := _AUTHOR_USER_RE.match(" ".join(rest)):
+                fields.author = match.group("author").strip() or None
+                fields.author_username = match.group("user")
+        case ["0", "!LDRAW_ORG", *rest]:
+            (
+                fields.file_kind,
+                fields.origin,
+                fields.qualifiers,
+                fields.release,
+            ) = _parse_ldraw_org(" ".join(rest))
+        case ["0", "!LICENSE", *rest]:
+            fields.license = " ".join(rest) or None
+        case ["0", "BFC", *rest]:
+            fields.bfc = _parse_bfc(" ".join(rest))
+        case ["0", "!CATEGORY", *rest]:
+            fields.category = " ".join(rest) or None
+        case ["0", "!KEYWORDS", *rest]:
+            _extend_keywords(fields.keywords, " ".join(rest))
+        case ["0", "!HISTORY", *rest]:
+            fields.history.append(_parse_history(" ".join(rest)))
+        case ["0", "!PREVIEW", *rest]:
+            fields.preview = _parse_preview(" ".join(rest))
+        case _:
+            return False
     return True
 
 
@@ -350,16 +347,37 @@ def _parse_ldraw_org(
         file_kind = PartFileKind(kind_name)
     except ValueError:
         file_kind = PartFileKind.UNKNOWN
-    qualifiers = tuple(
-        qualifier.strip()
-        for group in re.findall(r"\(([^)]+)\)", declaration)
-        for qualifier in group.split(",")
-        if qualifier.strip()
+    qualifiers = (
+        *_bare_qualifiers(declaration),
+        *(
+            qualifier.strip()
+            for group in re.findall(r"\(([^)]+)\)", declaration)
+            for qualifier in group.split(",")
+            if qualifier.strip()
+        ),
     )
     release = next(
         (token for token in reversed(tokens) if _RELEASE_RE.match(token)), None
     )
     return file_kind, origin, qualifiers, release
+
+
+def _bare_qualifiers(declaration: str) -> tuple[str, ...]:
+    """Extract unparenthesized qualifier tokens from an !LDRAW_ORG value.
+
+    Official headers write qualifiers bare — ``Part Alias UPDATE 2013-02``
+    or ``Part Physical_Colour`` — so every token between the type word and
+    the UPDATE/ORIGINAL release tag counts, excluding release dates.
+    """
+    tokens = re.sub(r"\([^)]*\)", " ", declaration).split()
+    qualifiers: list[str] = []
+    for token in tokens[1:]:
+        if token.casefold() in {"update", "original"}:
+            break
+        if _RELEASE_RE.match(token):
+            continue
+        qualifiers.append(token)
+    return tuple(qualifiers)
 
 
 def _parse_bfc(value: str) -> BfcCertification:

@@ -428,7 +428,8 @@ def validate_command(*, file: Path, strict: bool = False) -> int:
         print(f"{file}: error: {decode_issue.message}", file=sys.stderr)
         return 1
     for issue in issues:
-        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+        line = "" if issue.line_number is None else f":{issue.line_number}"
+        print(f"{file}{line}: {issue.severity}: {issue.message}")
     if not issues:
         print(f"{file}: OK")
         return 0

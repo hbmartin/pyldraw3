@@ -71,7 +71,11 @@ def part_bounding_box(parts: _PartGeometryLibrary, code: str) -> BoundingBox:
     Unresolvable subfiles are skipped with a warning.
 
     Raises ``PartNotFoundError`` for an unknown code and
-    ``NoGeometryError`` when the part draws nothing.
+    ``NoGeometryError`` when the part draws nothing. Read failures
+    (``OSError``/``UnicodeError``) on the part's own file are tolerated
+    the same way as unresolvable subfiles: the file contributes no
+    geometry, so the query raises ``NoGeometryError`` rather than the
+    underlying IO error.
     """
     local = _require_local(parts, code)
     if local.box is None:
@@ -104,10 +108,13 @@ def part_studs(parts: _PartGeometryLibrary, code: str) -> tuple[StudReference, .
 
 
 def _require_local(parts: _PartGeometryLibrary, code: str) -> _LocalGeometry:
-    parts.part(code=code)
+    cached = _cache_for(parts).get(_local_key(code))
+    if cached is not None and cached.box is not None:
+        # Cache hit with drawable geometry: skip re-resolving the file path.
+        return cached
+    parts.part(code=code)  # raises the precise PartError for this code
     local = _local_geometry(parts, code, frozenset())
     if local is None:
-        parts.part(code=code)  # raises the precise PartError for this code
         raise NoGeometryError(code)  # pragma: no cover - cache raced with disk
     return local
 

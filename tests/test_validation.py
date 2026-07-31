@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ldraw.diagnostics import DiagnosticCode
 from ldraw.parts import Parts
 from ldraw.validation import (
     KNOWN_META_COMMANDS,
@@ -251,3 +252,80 @@ def test_one_line_can_produce_multiple_issues(
         "transformation matrix is not orthonormal (scaled or sheared part)",
         "unknown part 9999.dat",
     ]
+
+
+def test_issues_are_yielded_in_line_order(tmp_path: Path) -> None:
+    text = (
+        f"0 !FOOBAR one\n9 16 0 0 0\n0 !BARBAZ three\n1 4 0 0 x {IDENTITY} 3001.dat\n"
+    )
+
+    issues = validate(tmp_path, text, None)
+
+    assert [issue.line_number for issue in issues] == [1, 2, 3, 4]
+
+
+def test_file_level_issues_come_before_numbered_ones(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.ldr"
+
+    issues = list(iter_ldr_issues(missing, None))
+
+    assert [issue.line_number for issue in issues] == [None]
+    assert issues[0].code is DiagnosticCode.IO_READ_FAILED
+
+
+def test_every_diagnostic_code_is_a_stable_enum_member(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
+    text = (
+        "0 !FOOBAR something\n"
+        f"1 256 0 0 0 {IDENTITY} 3001.dat\n"
+        f"1 4 0 0 0 {SINGULAR} 3001.dat\n"
+        f"1 999 0 0 0 {SCALED} 9999.dat\n"
+        "9 16 0 0 0\n"
+        "2 16 bad 0 0 1 1 1\n"
+        "1 abc 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+    )
+
+    issues = validate(tmp_path, text, parts)
+
+    assert issues
+    assert all(isinstance(issue.code, DiagnosticCode) for issue in issues)
+    assert {
+        DiagnosticCode.MODEL_UNKNOWN_META,
+        DiagnosticCode.MODEL_LEGACY_COLOUR,
+        DiagnosticCode.MODEL_SINGULAR_MATRIX,
+        DiagnosticCode.MODEL_NON_ORTHONORMAL_MATRIX,
+    } <= {issue.code for issue in issues}
+    assert DiagnosticCode.MODEL_LEGACY_COLOUR.value == "model.legacy_colour"
+    assert DiagnosticCode.MODEL_SINGULAR_MATRIX.value == "model.singular_matrix"
+    assert (
+        DiagnosticCode.MODEL_NON_ORTHONORMAL_MATRIX.value
+        == "model.non_orthonormal_matrix"
+    )
+    assert DiagnosticCode.MODEL_UNKNOWN_META.value == "model.unknown_meta"
+
+
+def test_unresolved_sibling_reference_without_catalog_is_one_warning(
+    tmp_path: Path,
+) -> None:
+    text = f"0 FILE main.ldr\n1 16 0 0 0 {IDENTITY} missing.ldr\n0 NOFILE\n"
+
+    issues = validate(tmp_path, text, None)
+
+    assert [issue.code for issue in issues] == [DiagnosticCode.MPD_UNRESOLVED_SUBMODEL]
+    assert issues[0].severity is Severity.WARNING
+    assert issues[0].line_number == 2
+
+
+def test_unresolved_sibling_reference_with_catalog_is_not_double_reported(
+    tmp_path: Path,
+    parts: Parts,
+) -> None:
+    text = f"0 FILE main.ldr\n1 16 0 0 0 {IDENTITY} missing.ldr\n0 NOFILE\n"
+
+    issues = validate(tmp_path, text, parts)
+
+    assert [issue.code for issue in issues] == [DiagnosticCode.MPD_UNRESOLVED_SUBMODEL]
+    assert issues[0].severity is Severity.WARNING
+    assert DiagnosticCode.MODEL_UNKNOWN_PART not in {issue.code for issue in issues}
