@@ -208,11 +208,14 @@ malformed line becomes a stable, structured diagnostic while valid content
 around it remains available in a partial model:
 
 ```python
-from ldraw import DiagnosticCode, load_model
+from ldraw import DiagnosticCode, load_model, prepare_catalog
 
+parts = prepare_catalog().parts
 result = load_model("model.mpd", parts=parts)
 for diagnostic in result.diagnostics:
     print(diagnostic.code, diagnostic.section, diagnostic.line_number)
+    if diagnostic.code is DiagnosticCode.MODEL_UNKNOWN_PART:
+        print(f"  unknown part: {diagnostic.offending_value}")
 
 if result.model is not None:
     analysis = result.analyze(parts)

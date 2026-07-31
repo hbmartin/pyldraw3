@@ -104,9 +104,15 @@ def build_parser() -> ArgumentParser:
     )
     search_parser = parts_subparsers.add_parser(
         "search",
-        help="Search parts by description or code.",
+        help="Search parts by code, description, category, or keywords.",
     )
-    search_parser.add_argument("term", help="Case-insensitive substring to match.")
+    search_parser.add_argument(
+        "term",
+        help=(
+            "Case-insensitive search terms; every whitespace-separated token "
+            "must match, and results are ranked by relevance."
+        ),
+    )
     search_parser.add_argument(
         "--limit",
         type=int,

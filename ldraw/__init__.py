@@ -91,6 +91,7 @@ from ldraw.parts import (
     PartReference,
     PartReferenceKind,
     Parts,
+    PartsCatalog,
 )
 from ldraw.pieces import Group, Piece
 from ldraw.progress import ProgressEvent, ProgressStage, ProgressUnit
@@ -171,6 +172,7 @@ __all__ = [
     "PartReferenceKind",
     "PartStatus",
     "Parts",
+    "PartsCatalog",
     "Person",
     "Piece",
     "PreviewTransform",

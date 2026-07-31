@@ -34,8 +34,10 @@ options:
 - `ldraw generate [--yes] [--force]` regenerates `ldraw.library.*` from the
   currently configured release. `--force` regenerates even when already up to
   date.
-- `ldraw parts search TERM [--limit N]` searches the catalog by description
-  or code substring. It exits with code 1 when nothing matches.
+- `ldraw parts search TERM [--limit N]` searches the catalog across part
+  codes, descriptions, categories, and keywords. Every whitespace-separated
+  token in `TERM` must match (case-insensitive), and results are ranked by
+  relevance. It exits with code 1 when nothing matches.
 - `ldraw parts info CODE` shows a part's description, category, file path, and
   the generated-library import to use.
 - `ldraw validate FILE [--strict]` lints `.ldr`, `.mpd`, and `.dat` files.
