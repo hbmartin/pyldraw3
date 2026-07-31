@@ -240,8 +240,9 @@ def test_category_and_keywords_share_header_parse(
 
     assert part.category == "Brick"
     assert part.keywords == ("Space", "Castle")
-    # One pass over the file: 3 header lines plus the type 1 line that ends it.
-    assert parse_count == 4
+    # Structured header parsing is shared; only the first relationship line is
+    # parsed so alias/moved targets can be retained.
+    assert parse_count == 1
 
 
 def test_objects_parses_valid_lines(tmp_path: Path) -> None:

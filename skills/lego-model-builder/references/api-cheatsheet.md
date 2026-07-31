@@ -17,11 +17,11 @@ brick = Piece.place(Brick2X4, colour=Red, position=Vector(0, 0, 0))
 # Assemble a flat model and save it:
 model = Model.from_pieces(
     [brick, Piece.place(Plate2X4, colour=White, position=Vector(0, -24, 0))],
-    name="example.ldr",          # becomes the file's model name
+    name="example.ldr",  # becomes the file's model name
     description="An example",
     author="lego-model-builder",
 )
-model.save("example.ldr")         # writes the .ldr file
+model.save("example.ldr")  # writes the .ldr file
 ```
 
 - `part` is an LDraw code string. Imported names like `Brick2X4` *are* code
@@ -45,8 +45,9 @@ LDraw uses **LDraw Units (LDU)**. The single most common mistake is the Y axis.
 So a 1×1 column of 3 bricks:
 
 ```python
-pieces = [Piece.place(Brick1X1, colour=Red, position=Vector(0, -24 * i, 0))
-          for i in range(3)]
+pieces = [
+    Piece.place(Brick1X1, colour=Red, position=Vector(0, -24 * i, 0)) for i in range(3)
+]
 ```
 
 ### Gotcha: Vector scalar multiply is right-only
@@ -54,8 +55,8 @@ pieces = [Piece.place(Brick1X1, colour=Red, position=Vector(0, -24 * i, 0))
 `Vector` implements `__rmul__`, not `__mul__`. Write the scalar on the **left**:
 
 ```python
-20 * Vector(1, 0, 0)      # OK
-Vector(1, 0, 0) * 20      # TypeError
+20 * Vector(1, 0, 0)  # OK
+Vector(1, 0, 0) * 20  # TypeError
 ```
 
 ### Rotation
@@ -65,7 +66,8 @@ Vector(1, 0, 0) * 20      # TypeError
 
 ```python
 from ldraw.geometry import Identity, YAxis
-m = Identity().rotate(90, YAxis)               # quarter turn about the up axis
+
+m = Identity().rotate(90, YAxis)  # quarter turn about the up axis
 Piece.place(Slope2X1, colour=Red, position=Vector(0, 0, 0), matrix=m)
 ```
 
@@ -114,23 +116,28 @@ from ldraw.geometry import Vector
 from ldraw.library.parts import Brick2X4
 from ldraw.library.colours import Light_Bluish_Grey
 
-STUDS_WIDE = 8          # in studs
-COURSES = 4             # brick rows tall
-BRICK = 24              # LDU per brick
-BRICK_LEN = 20 * 4      # 2x4 brick is 4 studs long
+STUDS_WIDE = 8  # in studs
+COURSES = 4  # brick rows tall
+BRICK = 24  # LDU per brick
+BRICK_LEN = 20 * 4  # 2x4 brick is 4 studs long
 
 pieces = []
 for course in range(COURSES):
-    offset = (BRICK_LEN // 2) if course % 2 else 0   # stagger alternate rows
+    offset = (BRICK_LEN // 2) if course % 2 else 0  # stagger alternate rows
     x = -offset
     while x < 20 * STUDS_WIDE:
-        pieces.append(Piece.place(
-            Brick2X4, colour=Light_Bluish_Grey,
-            position=Vector(x, -BRICK * course, 0)))
+        pieces.append(
+            Piece.place(
+                Brick2X4,
+                colour=Light_Bluish_Grey,
+                position=Vector(x, -BRICK * course, 0),
+            )
+        )
         x += BRICK_LEN
 
-Model.from_pieces(pieces, name="wall.ldr", description="A staggered wall",
-                  author="lego-model-builder").save("wall.ldr")
+Model.from_pieces(
+    pieces, name="wall.ldr", description="A staggered wall", author="lego-model-builder"
+).save("wall.ldr")
 ```
 
 ### Freeform: a tiny object
@@ -143,17 +150,20 @@ from ldraw.library.colours import Red, Black
 
 pieces = [
     Piece.place(Plate1X1, colour=Black, position=Vector(0, 0, 0)),
-    Piece.place(Brick1X1, colour=Red, position=Vector(0, -8, 0)),      # on the plate
-    Piece.place(Brick1X1, colour=Red, position=Vector(0, -8 - 24, 0)), # stacked
+    Piece.place(Brick1X1, colour=Red, position=Vector(0, -8, 0)),  # on the plate
+    Piece.place(Brick1X1, colour=Red, position=Vector(0, -8 - 24, 0)),  # stacked
 ]
-Model.from_pieces(pieces, name="tower.ldr", author="lego-model-builder").save("tower.ldr")
+Model.from_pieces(pieces, name="tower.ldr", author="lego-model-builder").save(
+    "tower.ldr"
+)
 ```
 
 ## Reading a model back (for the geometry check / debugging)
 
 ```python
 from ldraw import read_model
+
 model = read_model("wall.ldr")
-for piece in model.pieces:        # Piece objects with .part, .colour, .position
+for piece in model.pieces:  # Piece objects with .part, .colour, .position
     print(piece.part, piece.position)
 ```

@@ -51,7 +51,7 @@ colours = [
 ]
 
 
-def draw_mandelbrot(  # noqa: PLR0913
+def draw_mandelbrot(  # noqa: PLR0913, PLR0917
     x1: int,
     z1: int,
     x2: int,

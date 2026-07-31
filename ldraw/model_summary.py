@@ -6,13 +6,16 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ldraw.errors import PartError
+from ldraw.errors import NoGeometryError, PartError
+from ldraw.inspection import transformed_bounds
 from ldraw.part_geometry_types import BoundingBox
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ldraw.colour import Colour
     from ldraw.geometry import Vector
-    from ldraw.model import Model
+    from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
 
 LDU_TO_MM = 0.4
@@ -40,8 +43,17 @@ class ModelSummary:
     occurrence_count: int
 
     @classmethod
-    def from_model(cls, model: Model, parts: Parts) -> ModelSummary:
+    def from_model(cls, model: Model, parts: Parts | None) -> ModelSummary:
         """Build a summary for ``model`` using geometry from ``parts``."""
+        return cls.from_occurrences(tuple(model.iter_occurrences()), parts)
+
+    @classmethod
+    def from_occurrences(
+        cls,
+        occurrences: Iterable[ModelOccurrence],
+        parts: Parts | None,
+    ) -> ModelSummary:
+        """Build a summary from occurrences already traversed by a caller."""
         geometry = _BoundsAccumulator()
         origins = _BoundsAccumulator()
         part_counts: Counter[str] = Counter()
@@ -49,13 +61,22 @@ class ModelSummary:
         skipped: list[SkippedGeometry] = []
         occurrence_count = 0
 
-        for occurrence in model.iter_occurrences():
+        for occurrence in occurrences:
             occurrence_count += 1
             part_counts[occurrence.part_code] += 1
             colour_usage[_colour_key(occurrence.colour)] += 1
             origins.add(occurrence.position)
+            if parts is None:
+                continue
             try:
-                local_box = parts.bounding_box(occurrence.part_code)
+                local = parts.geometry(occurrence.part_code)
+                world_box = transformed_bounds(
+                    local.points,
+                    position=occurrence.position,
+                    matrix=occurrence.matrix,
+                )
+                if world_box is None:
+                    raise NoGeometryError(occurrence.part_code)
             except PartError as error:
                 skipped.append(
                     SkippedGeometry(
@@ -66,8 +87,8 @@ class ModelSummary:
                     ),
                 )
                 continue
-            for corner in local_box.corners():
-                geometry.add(occurrence.position + occurrence.matrix * corner)
+            geometry.add(world_box.min)
+            geometry.add(world_box.max)
 
         return cls(
             bounds=geometry.box(),

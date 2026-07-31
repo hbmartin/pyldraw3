@@ -178,7 +178,7 @@ def test_duplicate_detection_casefolds_part_names() -> None:
     ]
 
     assert geometry._find_duplicates(pieces) == [  # noqa: SLF001
-        "duplicate: 2x part 3001.dat colour 4 at "
+        "duplicate: 2x part 3001.dat colour 4 at "  # noqa: ISC004
         "(0, 0, 0) — same piece placed on top of itself"
     ]
 

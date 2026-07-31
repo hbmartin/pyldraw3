@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ldraw.geometry import Vector
 
-__all__ = ["BoundingBox", "StudReference"]
+if TYPE_CHECKING:
+    from ldraw.diagnostics import Diagnostic
+
+__all__ = ["BoundingBox", "PartGeometry", "StudReference"]
 
 # Stud primitives whose description carries one of these markers connect
 # downwards (underside tubes and the like) or are drawing aids, not studs a
@@ -45,6 +49,33 @@ class BoundingBox:
 
 
 @dataclass(frozen=True, slots=True)
+class PartGeometry:
+    """Expanded drawable geometry plus explicit completeness diagnostics."""
+
+    code: str
+    description: str
+    bounds: BoundingBox | None
+    points: tuple[Vector, ...]
+    studs: tuple[StudReference, ...]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        """Whether every referenced child was resolved and expanded."""
+        return not self.diagnostics
+
+    @property
+    def top_studs(self) -> tuple[StudReference, ...]:
+        """Upward-facing stud connectors in local coordinates."""
+        return tuple(stud for stud in self.studs if stud.is_top_stud)
+
+    @property
+    def receptacles(self) -> tuple[StudReference, ...]:
+        """Detected underside/tube receivers in local coordinates."""
+        return tuple(stud for stud in self.studs if stud.is_receptacle)
+
+
+@dataclass(frozen=True, slots=True)
 class StudReference:
     """A stud primitive placed by a part, in the part's own coordinates."""
 
@@ -60,6 +91,17 @@ class StudReference:
     up: Vector = field(default_factory=lambda: Vector(0, -1, 0))
     """Image of the stud's local up direction (0, -1, 0) under the placing
     transforms; unit length under rigid placements."""
+
+    @property
+    def is_receptacle(self) -> bool:
+        """Whether this primitive describes an underside/tube receiver."""
+        lowered = self.description.casefold()
+        return "tube" in lowered or "underside" in lowered
+
+    @property
+    def is_placeholder(self) -> bool:
+        """Whether this is a drawing placeholder rather than a connector."""
+        return "placeholder" in self.description.casefold()
 
     @property
     def is_top_stud(self) -> bool:

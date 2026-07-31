@@ -6,8 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
+from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import (
     DuplicateSubmodelError,
+    InvalidColourValueError,
+    InvalidNumericValueError,
     MisplacedNofileError,
     PartError,
     StructuralCommentError,
@@ -24,6 +27,7 @@ from ldraw.utils import ldraw_file_name, normalize_ref, split_reference
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from ldraw.analysis import ModelAnalysis
     from ldraw.bom import BomRow
     from ldraw.colour import Colour
     from ldraw.geometry import Matrix
@@ -51,7 +55,24 @@ class _RawSection:
     """A ``0 FILE`` section before its lines are parsed."""
 
     name: str
+    line_number: int = 0
     lines: list[_NumberedLine] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class OccurrencePathItem:
+    """One local placement in a root-to-leaf occurrence path."""
+
+    model: Model
+    piece: Piece
+    source_line: int | None
+    local_step: int | None
+    effective_step: int | None
+
+    @property
+    def step(self) -> int | None:
+        """Compatibility spelling for the placement's local source step."""
+        return self.local_step
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -72,6 +93,35 @@ class ModelOccurrence:
     source_line: int | None
     step: int | None
     source_step: int | None
+    path: tuple[OccurrencePathItem, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ModelLoadResult:
+    """Model, diagnostics, and source completeness from one read/parse pass."""
+
+    model: Model | None
+    diagnostics: tuple[Diagnostic, ...]
+    complete: bool
+
+    @property
+    def valid(self) -> bool:
+        """Whether the load emitted no error diagnostics."""
+        return not any(
+            diagnostic.severity is Severity.ERROR for diagnostic in self.diagnostics
+        )
+
+    def analyze(self, parts: Parts | None = None) -> ModelAnalysis | None:
+        """Analyze the loaded model without discarding its diagnostics."""
+        if self.model is None:
+            return None
+        from ldraw.analysis import analyze_model  # noqa: PLC0415
+
+        return analyze_model(
+            self.model,
+            parts=parts,
+            diagnostics=self.diagnostics,
+        )
 
 
 def _split_sections(
@@ -472,6 +522,7 @@ class Model:
             inherited_colour=None,
             visiting=frozenset(),
             inherited_step=None,
+            path=(),
             expand_submodels=expand_submodels,
             include_steps=include_steps,
         )
@@ -578,6 +629,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     inherited_colour: Colour | None,
     visiting: frozenset[str],
     inherited_step: int | None,
+    path: tuple[OccurrencePathItem, ...],
     expand_submodels: bool,
     include_steps: bool,
 ) -> Iterator[ModelOccurrence]:
@@ -592,6 +644,16 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
         world_matrix = matrix * piece_matrix
         occurrence_step = inherited_step if inherited_step is not None else source_step
         colour = _effective_colour(piece.colour, inherited_colour)
+        occurrence_path = (
+            *path,
+            OccurrencePathItem(
+                model=model,
+                piece=piece,
+                source_line=model.source_line_for(piece),
+                local_step=source_step,
+                effective_step=occurrence_step,
+            ),
+        )
         target = root.submodel_for(piece) if expand_submodels else None
         if target is not None:
             yield from _iter_model_occurrences(
@@ -602,6 +664,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
                 inherited_colour=colour,
                 visiting=visiting,
                 inherited_step=occurrence_step,
+                path=occurrence_path,
                 expand_submodels=expand_submodels,
                 include_steps=include_steps,
             )
@@ -617,6 +680,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
             source_line=model.source_line_for(piece),
             step=occurrence_step,
             source_step=source_step,
+            path=occurrence_path,
         )
 
 
@@ -641,6 +705,327 @@ def _effective_colour(colour: Colour, inherited: Colour | None) -> Colour:
     if colour.code == MAIN_COLOUR_CODE and inherited is not None:
         return inherited
     return colour
+
+
+def _source_path(source: Path | str | None) -> Path | None:
+    return None if source is None else Path(source)
+
+
+def _split_sections_report(
+    text: str,
+    *,
+    source: Path | str | None,
+) -> tuple[list[_NumberedLine], list[_RawSection], list[Diagnostic], bool]:
+    """Split MPD structure while retaining diagnostics instead of aborting."""
+    preamble: list[_NumberedLine] = []
+    sections: list[_RawSection] = []
+    diagnostics: list[Diagnostic] = []
+    current: list[_NumberedLine] | None = preamble
+    complete = True
+    path = _source_path(source)
+    for number, line in enumerate(text.splitlines(), start=1):
+        if (name := ldraw_file_name(line)) is not None:
+            sections.append(_RawSection(name=name, line_number=number))
+            current = sections[-1].lines
+        elif _is_nofile(line):
+            if not sections:
+                error = MisplacedNofileError(
+                    source=str(source) if source is not None else "<string>",
+                    line_number=number,
+                )
+                diagnostics.append(
+                    Diagnostic(
+                        line_number=number,
+                        message=error.message,
+                        code=DiagnosticCode.MPD_MISPLACED_NOFILE,
+                        path=path,
+                        offending_value=line,
+                        cause=error,
+                    ),
+                )
+                complete = False
+            else:
+                current = None
+        elif current is not None:
+            current.append((number, line))
+        elif line.strip():
+            diagnostics.append(
+                Diagnostic(
+                    line_number=number,
+                    message="content after 0 NOFILE is ignored until the next section",
+                    code=DiagnosticCode.MPD_CONTENT_AFTER_NOFILE,
+                    path=path,
+                    offending_value=line,
+                ),
+            )
+            complete = False
+    return preamble, sections, diagnostics, complete
+
+
+def _parse_error_diagnostic(
+    error: BaseException,
+    *,
+    number: int,
+    line: str,
+    source: Path | str | None,
+    section: str | None,
+) -> Diagnostic:
+    match error:
+        case InvalidNumericValueError():
+            code = DiagnosticCode.PARSE_INVALID_NUMERIC
+            offending_value: object = error.token
+        case InvalidColourValueError():
+            code = DiagnosticCode.PARSE_INVALID_COLOUR
+            offending_value = error.token
+        case _:
+            code = DiagnosticCode.PARSE_INVALID_LINE
+            offending_value = line
+    message = getattr(error, "message", str(error))
+    return Diagnostic(
+        line_number=number,
+        message=" ".join(str(message).splitlines()),
+        code=code,
+        path=_source_path(source),
+        section=section,
+        offending_value=offending_value,
+        cause=error,
+    )
+
+
+def _parse_objects_report(
+    numbered_lines: Iterable[_NumberedLine],
+    *,
+    source: Path | str | None,
+    section: str | None,
+) -> tuple[
+    list[ParsedObject],
+    dict[Piece, int],
+    dict[int, int],
+    list[Diagnostic],
+    bool,
+]:
+    objects: list[ParsedObject] = []
+    source_lines: dict[Piece, int] = {}
+    object_source_lines: dict[int, int] = {}
+    diagnostics: list[Diagnostic] = []
+    complete = True
+    for number, line in numbered_lines:
+        try:
+            parsed = parse_ldraw_line(line)
+        except (PartError, ValueError) as error:
+            diagnostics.append(
+                _parse_error_diagnostic(
+                    error,
+                    number=number,
+                    line=line,
+                    source=source,
+                    section=section,
+                ),
+            )
+            complete = False
+            continue
+        if parsed is None:
+            continue
+        objects.append(parsed)
+        object_source_lines[id(parsed)] = number
+        if isinstance(parsed, Piece):
+            source_lines[parsed] = number
+    return objects, source_lines, object_source_lines, diagnostics, complete
+
+
+def _model_structure_diagnostics(root: Model, *, path: Path | None) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    emitted_cycles: set[tuple[str, int | None]] = set()
+
+    def walk(model: Model, visiting: tuple[str, ...]) -> None:
+        key = normalize_ref(model.name)
+        next_visiting = (*visiting, key)
+        for piece in model.pieces:
+            target = root.submodel_for(piece)
+            line_number = model.source_line_for(piece)
+            if target is None:
+                _, suffix = split_reference(piece.reference)
+                if suffix.casefold() in {".ldr", ".mpd"}:
+                    diagnostics.append(
+                        Diagnostic(
+                            line_number=line_number,
+                            message=f"unresolved submodel {piece.reference}",
+                            code=DiagnosticCode.MPD_UNRESOLVED_SUBMODEL,
+                            path=path,
+                            section=model.name or None,
+                            offending_value=piece.reference,
+                        ),
+                    )
+                continue
+            target_key = normalize_ref(target.name)
+            if target_key in next_visiting:
+                marker = (target_key, line_number)
+                if marker not in emitted_cycles:
+                    emitted_cycles.add(marker)
+                    error = SubmodelCycleError(target.name)
+                    diagnostics.append(
+                        Diagnostic(
+                            line_number=line_number,
+                            message=error.message,
+                            code=DiagnosticCode.MPD_CYCLE,
+                            path=path,
+                            section=model.name or None,
+                            offending_value=piece.reference,
+                            cause=error,
+                        ),
+                    )
+                continue
+            walk(target, next_visiting)
+
+    walk(root, ())
+    return diagnostics
+
+
+def _validation_diagnostics(
+    root: Model,
+    *,
+    parts: Parts | None,
+    path: Path | None,
+) -> list[Diagnostic]:
+    from ldraw.validation import iter_object_issues  # noqa: PLC0415
+
+    submodels = {normalize_ref(root.name), *root.submodels}
+    diagnostics: list[Diagnostic] = []
+    for section_model in (root, *root.submodels.values()):
+        for obj in section_model.objects:
+            number = section_model.source_line_for(obj)
+            if number is None:
+                continue
+            diagnostics.extend(
+                iter_object_issues(
+                    obj,
+                    number=number,
+                    parts=parts,
+                    submodels=submodels,
+                    path=path,
+                    section=section_model.name or None,
+                ),
+            )
+    diagnostics.extend(_model_structure_diagnostics(root, path=path))
+    return diagnostics
+
+
+def parse_model_result(
+    text: str,
+    *,
+    name: str = "",
+    source: Path | str | None = None,
+    parts: Parts | None = None,
+    tolerant: bool = True,
+) -> ModelLoadResult:
+    """Parse and validate text once, optionally retaining a partial model."""
+    if not tolerant:
+        try:
+            model = parse_model(text, name=name, source=source)
+        except (PartError, ValueError) as error:
+            diagnostic = _parse_error_diagnostic(
+                error,
+                number=getattr(error, "line_number", None) or 0,
+                line="",
+                source=source,
+                section=None,
+            )
+            return ModelLoadResult(None, (diagnostic,), complete=False)
+        diagnostics = _validation_diagnostics(
+            model,
+            parts=parts,
+            path=_source_path(source),
+        )
+        return ModelLoadResult(model, tuple(diagnostics), complete=True)
+
+    preamble, sections, diagnostics, complete = _split_sections_report(
+        text,
+        source=source,
+    )
+    unique_sections: list[_RawSection] = []
+    seen: set[str] = set()
+    for section in sections:
+        key = normalize_ref(section.name)
+        if key in seen:
+            error = DuplicateSubmodelError(section.name)
+            diagnostics.append(
+                Diagnostic(
+                    line_number=section.line_number,
+                    message=error.message,
+                    code=DiagnosticCode.MPD_DUPLICATE_SECTION,
+                    path=_source_path(source),
+                    section=section.name,
+                    offending_value=section.name,
+                    cause=error,
+                ),
+            )
+            complete = False
+            continue
+        seen.add(key)
+        unique_sections.append(section)
+
+    if not unique_sections:
+        parsed = _parse_objects_report(
+            preamble,
+            source=source,
+            section=name or None,
+        )
+        objects, source_lines, object_lines, parse_diagnostics, parsed_all = parsed
+        model = Model(
+            name=name,
+            objects=objects,
+            _source_lines=source_lines,
+            _object_source_lines=object_lines,
+        )
+        diagnostics.extend(parse_diagnostics)
+        complete = complete and parsed_all
+    else:
+        first, *rest = unique_sections
+        root_lines = [*preamble, *first.lines]
+        parsed = _parse_objects_report(
+            root_lines,
+            source=source,
+            section=first.name,
+        )
+        objects, source_lines, object_lines, parse_diagnostics, parsed_all = parsed
+        model = Model(
+            name=first.name,
+            objects=objects,
+            _source_lines=source_lines,
+            _object_source_lines=object_lines,
+        )
+        diagnostics.extend(parse_diagnostics)
+        complete = complete and parsed_all
+        for section in rest:
+            parsed = _parse_objects_report(
+                section.lines,
+                source=source,
+                section=section.name,
+            )
+            objects, source_lines, object_lines, section_diagnostics, parsed_all = (
+                parsed
+            )
+            model.submodels[normalize_ref(section.name)] = Model(
+                name=section.name,
+                objects=objects,
+                _source_lines=source_lines,
+                _object_source_lines=object_lines,
+            )
+            diagnostics.extend(section_diagnostics)
+            complete = complete and parsed_all
+
+    diagnostics.extend(
+        _validation_diagnostics(
+            model,
+            parts=parts,
+            path=_source_path(source),
+        ),
+    )
+    return ModelLoadResult(
+        model=model,
+        diagnostics=tuple(diagnostics),
+        complete=complete,
+    )
 
 
 def parse_model(
@@ -706,4 +1091,52 @@ def read_model(path: Path | str) -> Model:
         file_path.read_text(encoding="utf-8-sig"),
         name=file_path.name,
         source=file_path,
+    )
+
+
+def load_model(
+    path: Path | str,
+    parts: Parts | None = None,
+    *,
+    tolerant: bool = True,
+) -> ModelLoadResult:
+    """Read, parse, and validate a model without throwing for data failures."""
+    file_path = Path(path)
+    try:
+        data = file_path.read_bytes()
+    except OSError as error:
+        return ModelLoadResult(
+            model=None,
+            diagnostics=(
+                Diagnostic(
+                    message=f"could not read model: {error}",
+                    code=DiagnosticCode.IO_READ_FAILED,
+                    path=file_path,
+                    cause=error,
+                ),
+            ),
+            complete=False,
+        )
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        return ModelLoadResult(
+            model=None,
+            diagnostics=(
+                Diagnostic(
+                    message=f"model is not valid UTF-8 text: {error}",
+                    code=DiagnosticCode.IO_DECODE_FAILED,
+                    path=file_path,
+                    offending_value=data[error.start : error.end],
+                    cause=error,
+                ),
+            ),
+            complete=False,
+        )
+    return parse_model_result(
+        text,
+        name=file_path.name,
+        source=file_path,
+        parts=parts,
+        tolerant=tolerant,
     )

@@ -1,6 +1,6 @@
 [project]
 name = "pyldraw3"
-version = "1.4.0"
+version = "1.5.0"
 description = "Python wrapper for LDraw library."
 keywords = ["ldraw", "lego", "cad", "3d", "modeling", "parts", "bricks"]
 readme = "README.md"
@@ -79,7 +79,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["COM812", "D105", "D107", "D203", "D212", "D213", "EM101", "PLR2004", "T201"]
+ignore = ["COM812", "CPY001", "D105", "D107", "D203", "D212", "D213", "EM101", "PLR2004", "T201"]
 
 [tool.ruff.lint.isort]
 # ldraw.library.* is generated at runtime; without this isort calls it

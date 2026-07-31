@@ -1,6 +1,7 @@
 """Tests for public LDraw session and setup APIs."""
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,12 +17,16 @@ from ldraw.catalog import (
 from ldraw.catalog import save_catalog as catalog_save_catalog
 from ldraw.config import Config
 from ldraw.generation import library_fingerprint
+from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.parts import Parts
 from ldraw.progress import ProgressEvent, ProgressStage
 from ldraw.session import (
+    CatalogBuildOutcome,
+    LDrawCapability,
     LDrawSession,
     LDrawStateReason,
     ensure_library,
+    prepare_catalog,
 )
 
 
@@ -126,7 +131,10 @@ def test_session_state_reports_stale_and_unreadable_indexes(tmp_path: Path) -> N
     generated_path = tmp_path / "generated"
     write_fresh_index(parts_lst, generated_path)
     write_fresh_generation(parts_lst, generated_path)
-    with sqlite3.connect(catalog_db_path(generated_path)) as connection:
+    with (
+        closing(sqlite3.connect(catalog_db_path(generated_path))) as connection,
+        connection,
+    ):
         connection.execute("PRAGMA user_version = 999")
     session = LDrawSession(
         Config(
@@ -186,7 +194,7 @@ def test_rebuild_index_replaces_catalog_atomically(
     generated_path = tmp_path / "generated"
     write_fresh_index(parts_lst, generated_path)
     catalog_db = catalog_db_path(generated_path)
-    with sqlite3.connect(catalog_db) as connection:
+    with closing(sqlite3.connect(catalog_db)) as connection, connection:
         connection.execute("PRAGMA user_version = 999")
     session = LDrawSession(
         Config(
@@ -275,7 +283,9 @@ def test_ensure_library_downloads_generates_rebuilds_and_writes_config(
     events: list[ProgressEvent] = []
     calls: list[str] = []
 
-    def fake_download(*, version, show_progress, on_progress) -> str:
+    def fake_download(
+        *, version, show_progress, on_progress, resume, cancellation
+    ) -> str:
         calls.append(f"download:{version}:{show_progress}")
         parts_lst = write_minimal_library(cache / version)
         if on_progress is not None:
@@ -284,7 +294,7 @@ def test_ensure_library_downloads_generates_rebuilds_and_writes_config(
             )
         return "2099-01"
 
-    def fake_generate(*, config, force, on_progress) -> None:
+    def fake_generate(*, config, force, on_progress, fingerprint, cancellation) -> None:
         calls.append(f"generate:{force}")
         parts_lst = Path(config.ldraw_library_path) / "ldraw" / "parts.lst"
         write_fresh_generation(parts_lst, Path(config.generated_path))
@@ -316,12 +326,12 @@ def test_ensure_library_downloads_generates_rebuilds_and_writes_config(
     assert config.ldraw_library_path == str(cache / "complete")
     assert written == [tmp_path / "config.yml"]
     assert session.state().ready
-    assert [event.stage for event in events] == [
-        ProgressStage.DOWNLOAD,
-        ProgressStage.LIBRARY_GENERATION,
-        ProgressStage.INDEX_REBUILD,
-        ProgressStage.DONE,
-    ]
+    stages = [event.stage for event in events]
+    assert stages[0] is ProgressStage.DOWNLOAD
+    assert ProgressStage.FINGERPRINT in stages
+    assert ProgressStage.LIBRARY_GENERATION in stages
+    assert ProgressStage.INDEX_REBUILD in stages
+    assert stages[-1] is ProgressStage.DONE
 
 
 def test_ensure_library_does_not_write_config_by_default(
@@ -381,3 +391,158 @@ def test_ensure_library_wraps_oserror(tmp_path: Path, monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="disk full"):
         ensure_library(config)
+
+
+def test_prepare_catalog_reports_missing_library_and_empty_capabilities(
+    tmp_path: Path,
+) -> None:
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing"),
+        generated_path=str(tmp_path / "generated"),
+    )
+    session = LDrawSession(config)
+
+    result = prepare_catalog(config)
+
+    assert result.complete is False
+    assert result.parts is None
+    assert result.report.outcome is CatalogBuildOutcome.UNAVAILABLE
+    assert result.report.fingerprint is None
+    assert result.final_state == result.initial_state
+    with pytest.raises(FileNotFoundError):
+        session.load()
+    with pytest.raises(ValueError, match="at least one"):
+        session.prepare_catalog(capabilities=())
+
+
+def test_prepare_catalog_generated_only_reports_generation_failure(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    config = Config(
+        ldraw_library_path=str(parts_lst.parents[1]),
+        generated_path=str(tmp_path / "generated"),
+    )
+    generation_error = OSError("generator failed")
+
+    def failing_generate(**_kwargs) -> None:
+        raise generation_error
+
+    monkeypatch.setattr("ldraw.session.generate_library", failing_generate)
+
+    result = LDrawSession(config).prepare_catalog(
+        capabilities=(LDrawCapability.GENERATED_MODULES,),
+    )
+
+    assert result.complete is False
+    assert result.parts is not None
+    assert result.report.outcome is CatalogBuildOutcome.LOADED
+    assert result.report.entry_count == 1
+    assert result.report.persisted is False
+    assert "generator failed" in result.diagnostics[0].message
+
+
+def test_prepare_catalog_returns_parts_when_index_cannot_be_persisted(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(tmp_path / "generated"),
+        ),
+    )
+    persistence_error = sqlite3.OperationalError("read only")
+
+    def failing_persist(**_kwargs) -> None:
+        raise persistence_error
+
+    monkeypatch.setattr("ldraw.session._persist_catalog_atomically", failing_persist)
+
+    result = session.prepare_catalog()
+
+    assert result.complete is True
+    assert result.parts is not None
+    assert result.report.outcome is CatalogBuildOutcome.REBUILT_NOT_PERSISTED
+    assert result.report.persisted is False
+    assert result.diagnostics[0].severity.value == "warning"
+
+
+def test_session_uses_existing_index_and_structured_model_loader(
+    tmp_path: Path,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    write_fresh_index(parts_lst, generated_path)
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+    model_path = tmp_path / "model.ldr"
+    model_path.write_text("0 Model\ninvalid\n", encoding="utf-8")
+
+    assert session.rebuild_index(force=False).get_entry_by_code("3001") is not None
+    loaded = session.load_model(model_path)
+    assert loaded.model is not None
+    assert loaded.complete is False
+
+
+def test_session_reports_connection_and_generation_hash_read_failures(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    write_fresh_index(parts_lst, generated_path)
+    write_fresh_generation(parts_lst, generated_path)
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ldraw.session.sqlite3.connect",
+        lambda *args, **kwargs: (_ for _ in ()).throw(sqlite3.Error("no database")),
+    )
+    assert session.state(
+        capabilities=(LDrawCapability.CATALOG,),
+    ).reasons == (LDrawStateReason.INDEX_UNREADABLE,)
+
+    original_read_text = Path.read_text
+    hash_error = OSError("unreadable hash")
+
+    def failing_hash_read(path: Path, *args, **kwargs) -> str:
+        if path.name == "__hash__":
+            raise hash_error
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", failing_hash_read)
+    generated_state = session.state(
+        capabilities=(LDrawCapability.GENERATED_MODULES,),
+    )
+    assert generated_state.reasons == (LDrawStateReason.GENERATED_LIBRARY_UNREADABLE,)
+
+
+def test_ensure_library_wraps_forced_generation_failure(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    config = Config(
+        ldraw_library_path=str(parts_lst.parents[1]),
+        generated_path=str(tmp_path / "generated"),
+    )
+
+    def failing_generate(**_kwargs) -> None:
+        raise UnwritableOutputError(config.generated_path)
+
+    monkeypatch.setattr("ldraw.session.generate_library", failing_generate)
+
+    with pytest.raises(RuntimeError, match="unwritable"):
+        ensure_library(config, force_generate=True)

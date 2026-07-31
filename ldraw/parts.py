@@ -13,15 +13,27 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ldraw.colour import Colour
+from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import PartError, PartNotFoundError
 from ldraw.lines import MetaCommand
+from ldraw.operations import CancellationToken, check_cancelled
 from ldraw.part import Part
 from ldraw.pieces import Piece
+from ldraw.progress import (
+    ProgressCallback,
+    ProgressEvent,
+    ProgressStage,
+    ProgressUnit,
+    emit_progress,
+)
 from ldraw.utils import camel, clean
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ldraw.geometry import Matrix, Vector
-    from ldraw.part_geometry_types import BoundingBox, StudReference
+    from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
+    from ldraw.part_metadata import PartMetadata
 
 DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
@@ -283,6 +295,18 @@ class PartReferenceKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+class CatalogSearchField(StrEnum):
+    """Catalog entry fields considered by ``PartsCatalog.search``."""
+
+    CODE = "code"
+    DESCRIPTION = "description"
+    CATEGORY = "category"
+    KEYWORD = "keyword"
+
+
+ALL_CATALOG_SEARCH_FIELDS = tuple(CatalogSearchField)
+
+
 def _split_minifig_description(
     description: str,
 ) -> tuple[str, MinifigSection] | None:
@@ -349,6 +373,7 @@ class CatalogEntry:
     part: Part | None = None
     minifig_section: MinifigSection | None = None
     keywords: tuple[str, ...] = ()
+    metadata: PartMetadata | None = None
 
     @property
     def symbol_name(self) -> str:
@@ -380,6 +405,26 @@ class PartReference:
     depth: int
 
 
+@dataclass(frozen=True, slots=True)
+class PartInspection:
+    """Part lookup, metadata, references, geometry, and explicit failures."""
+
+    code: str
+    entry: CatalogEntry | None
+    path: Path | None
+    metadata: PartMetadata | None
+    references: tuple[PartReference, ...]
+    geometry: PartGeometry | None
+    diagnostics: tuple[Diagnostic, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every requested inspection component succeeded."""
+        return not any(
+            diagnostic.severity is Severity.ERROR for diagnostic in self.diagnostics
+        ) and (self.geometry is None or self.geometry.complete)
+
+
 @dataclass(slots=True)
 class PartsCatalog:
     """Typed collection of part catalog entries."""
@@ -397,6 +442,11 @@ class PartsCatalog:
         init=False,
         repr=False,
     )
+    _search_haystacks: dict[tuple[str, tuple[CatalogSearchField, ...]], str] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def add(self, entry: CatalogEntry) -> None:
         """Add or replace an entry in every lookup index."""
@@ -408,6 +458,11 @@ class PartsCatalog:
             if existing.minifig_section is not None:
                 self.by_minifig_section[existing.minifig_section].remove(existing)
         self.by_code[entry.code] = entry
+        self._search_haystacks = {
+            key: value
+            for key, value in self._search_haystacks.items()
+            if key[0] != entry.code
+        }
         self.by_description[entry.description] = entry
         self.by_category[entry.category].append(entry)
         self._entries_by_category_cache.pop(entry.category, None)
@@ -443,6 +498,74 @@ class PartsCatalog:
             entries.extend(section_entries)
         return tuple(entries)
 
+    def search(
+        self,
+        query: str,
+        *,
+        within: Iterable[CatalogEntry] | None = None,
+        fields: Iterable[CatalogSearchField] = ALL_CATALOG_SEARCH_FIELDS,
+        limit: int | None = None,
+    ) -> tuple[CatalogEntry, ...]:
+        """Return normalized token matches in deterministic relevance order.
+
+        Every token must occur somewhere in the selected fields. ``within``
+        scopes the search to a caller-provided category or other subset.
+        """
+        if limit is not None and limit < 0:
+            message = "search limit must be non-negative"
+            raise ValueError(message)
+        selected_fields = tuple(dict.fromkeys(fields))
+        if not selected_fields:
+            return ()
+        entries = tuple(within) if within is not None else tuple(self.by_code.values())
+        normalized = _normalize_search_text(query)
+        tokens = normalized.split()
+        if not tokens:
+            matches = entries
+        else:
+            matches = tuple(
+                entry
+                for entry in entries
+                if all(
+                    token in self._search_haystack(entry, selected_fields)
+                    for token in tokens
+                )
+            )
+            matches = tuple(
+                sorted(
+                    matches,
+                    key=lambda entry: (
+                        _catalog_search_rank(entry, normalized),
+                        entry.code.casefold(),
+                        _normalize_search_text(entry.description),
+                    ),
+                ),
+            )
+        return matches if limit is None else matches[:limit]
+
+    def _search_haystack(
+        self,
+        entry: CatalogEntry,
+        fields: tuple[CatalogSearchField, ...],
+    ) -> str:
+        key = (entry.code, fields)
+        if (cached := self._search_haystacks.get(key)) is not None:
+            return cached
+        values: list[str] = []
+        for field_name in fields:
+            match field_name:
+                case CatalogSearchField.CODE:
+                    values.append(entry.code)
+                case CatalogSearchField.DESCRIPTION:
+                    values.append(entry.description)
+                case CatalogSearchField.CATEGORY:
+                    values.append(entry.category.value)
+                case CatalogSearchField.KEYWORD:
+                    values.extend(entry.keywords)
+        cached = _normalize_search_text(" ".join(values))
+        self._search_haystacks[key] = cached
+        return cached
+
     def module_sections(self) -> dict[tuple[str, ...], dict[str, str]]:
         """Return generated module sections keyed by package path.
 
@@ -467,6 +590,27 @@ class PartsCatalog:
                 module_dict[entry.description] = entry.code
 
         return sections
+
+
+def _normalize_search_text(text: str) -> str:
+    """Casefold text and collapse whitespace used for visual alignment."""
+    return " ".join(text.casefold().split())
+
+
+def _catalog_search_rank(entry: CatalogEntry, query: str) -> int:
+    code = entry.code.casefold()
+    description = _normalize_search_text(entry.description)
+    if code == query:
+        return 0
+    if code.startswith(query):
+        return 1
+    if description == query:
+        return 2
+    if description.startswith(query):
+        return 3
+    if query in description:
+        return 4
+    return 5
 
 
 @lru_cache(maxsize=8)
@@ -535,6 +679,11 @@ class Parts:
 
         self.load()
 
+    @property
+    def library_root(self) -> Path:
+        """Directory containing ``parts.lst``, parts, primitives, and colours."""
+        return self.path.parent
+
     @classmethod
     def from_catalog(cls, parts_lst: str | Path, catalog: PartsCatalog) -> Parts:
         """Construct a Parts that adopts a prebuilt catalog.
@@ -574,6 +723,24 @@ class Parts:
             if not self._categorized:
                 self._categorize_parts()
                 self._categorized = True
+
+    def build_catalog(
+        self,
+        *,
+        on_progress: ProgressCallback | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> PartsCatalog:
+        """Materialize the catalog with determinate progress and cancellation."""
+        if self._categorized:
+            return self._catalog
+        with self._categorize_lock:
+            if not self._categorized:
+                self._categorize_parts(
+                    on_progress=on_progress,
+                    cancellation=cancellation,
+                )
+                self._categorized = True
+        return self._catalog
 
     def get_entry_by_code(self, code: str) -> CatalogEntry | None:
         """Return a typed catalog entry by part code."""
@@ -660,17 +827,47 @@ class Parts:
                 case "p.lst" if item.is_file():
                     self._load_primitives(item)
 
-    def _categorize_parts(self) -> None:
+    def _categorize_parts(
+        self,
+        *,
+        on_progress: ProgressCallback | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> None:
         """Load part files and categorize them, skipping unloadable ones."""
-        for code, description in self.by_code_name:
+        entries = tuple(self.by_code_name)
+        total = len(entries)
+        emit_progress(
+            on_progress,
+            ProgressEvent(
+                stage=ProgressStage.INDEX_REBUILD,
+                message="Classifying parts",
+                current=0,
+                total=total,
+                path=self.path,
+                unit=ProgressUnit.PARTS,
+            ),
+        )
+        for current, (code, description) in enumerate(entries, start=1):
+            check_cancelled(cancellation)
             try:
                 part = self.part(code=code)
                 part_category = part.category
-            except PartError:
+            except (OSError, PartError, UnicodeError, ValueError):
                 logger.warning(
                     "skipping part %s (%r): part file missing or unparseable",
                     code,
                     description,
+                )
+                emit_progress(
+                    on_progress,
+                    ProgressEvent(
+                        stage=ProgressStage.INDEX_REBUILD,
+                        message="Classifying parts",
+                        current=current,
+                        total=total,
+                        path=self.path,
+                        unit=ProgressUnit.PARTS,
+                    ),
                 )
                 continue
             self.by_code_name[(code, description)] = part
@@ -697,6 +894,18 @@ class Parts:
                     part=part,
                     minifig_section=self._minifig_sections_by_code.get(code),
                     keywords=part.keywords,
+                    metadata=part.metadata,
+                ),
+            )
+            emit_progress(
+                on_progress,
+                ProgressEvent(
+                    stage=ProgressStage.INDEX_REBUILD,
+                    message="Classifying parts",
+                    current=current,
+                    total=total,
+                    path=self.path,
+                    unit=ProgressUnit.PARTS,
                 ),
             )
 
@@ -772,6 +981,115 @@ class Parts:
         from ldraw.part_geometry import part_bounding_box  # noqa: PLC0415
 
         return part_bounding_box(self, code)
+
+    def geometry(self, code: str) -> PartGeometry:
+        """Return exact expanded geometry and completeness diagnostics."""
+        from ldraw.part_geometry import part_geometry  # noqa: PLC0415
+
+        return part_geometry(self, code)
+
+    def inspect_part(
+        self,
+        code: str,
+        *,
+        include_geometry: bool = True,
+        recursive_references: bool = False,
+    ) -> PartInspection:
+        """Inspect one part without translating failures into empty data."""
+        diagnostics: list[Diagnostic] = []
+        try:
+            entry = self.get_entry_by_code(code)
+        except (OSError, PartError, UnicodeError, ValueError) as exc:
+            entry = None
+            diagnostics.append(
+                Diagnostic(
+                    line_number=0,
+                    message=f"Could not read catalog metadata for {code}: {exc}",
+                    severity=Severity.ERROR,
+                    code=DiagnosticCode.PART_HEADER_INVALID,
+                    path=self.library_root,
+                    offending_value=code,
+                    cause=exc,
+                ),
+            )
+        try:
+            part = self.part(code=code)
+        except PartError as exc:
+            return PartInspection(
+                code=code,
+                entry=entry,
+                path=None,
+                metadata=None,
+                references=(),
+                geometry=None,
+                diagnostics=(
+                    Diagnostic(
+                        line_number=0,
+                        message=str(exc),
+                        severity=Severity.ERROR,
+                        code=DiagnosticCode.PART_NOT_FOUND,
+                        path=self.library_root,
+                        offending_value=code,
+                        cause=exc,
+                    ),
+                ),
+            )
+        try:
+            metadata = part.metadata
+        except (OSError, PartError, UnicodeError, ValueError) as exc:
+            metadata = None
+            diagnostics.append(
+                Diagnostic(
+                    line_number=0,
+                    message=f"Could not parse metadata for {code}: {exc}",
+                    severity=Severity.ERROR,
+                    code=DiagnosticCode.PART_HEADER_INVALID,
+                    path=part.path,
+                    offending_value=code,
+                    cause=exc,
+                ),
+            )
+        try:
+            references = self.references_for(code, recursive=recursive_references)
+        except (OSError, PartError, UnicodeError, ValueError) as exc:
+            references = ()
+            diagnostics.append(
+                Diagnostic(
+                    line_number=0,
+                    message=f"Could not inspect references for {code}: {exc}",
+                    severity=Severity.ERROR,
+                    code=DiagnosticCode.PART_REFERENCE_UNRESOLVED,
+                    path=part.path,
+                    offending_value=code,
+                    cause=exc,
+                ),
+            )
+        geometry = None
+        if include_geometry:
+            try:
+                geometry = self.geometry(code)
+                diagnostics.extend(geometry.diagnostics)
+            except (OSError, PartError, UnicodeError, ValueError) as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        line_number=0,
+                        message=f"Could not inspect geometry for {code}: {exc}",
+                        severity=Severity.ERROR,
+                        code=DiagnosticCode.GEOMETRY_INCOMPLETE,
+                        path=part.path,
+                        offending_value=code,
+                        cause=exc,
+                    ),
+                )
+        return PartInspection(
+            code=code,
+            entry=entry,
+            path=part.path,
+            metadata=metadata,
+            references=references,
+            geometry=geometry,
+            diagnostics=tuple(diagnostics),
+        )
 
     def studs(self, code: str) -> tuple[StudReference, ...]:
         """All stud primitives a part places, in the part's own coordinates.

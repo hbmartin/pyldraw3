@@ -10,8 +10,9 @@ drop-in replacement for the unmaintained `pyldraw` library.
 - Pythonic model construction with `Piece`, `Group`, `Model`, and `Person`.
 - Dynamic `ldraw.library.*` modules generated from a downloaded LDraw library.
 - Catalog search, validation, bill-of-materials export, and type-stub helpers.
+- Tolerant one-read loading with machine-readable diagnostics and partial models.
 - Sectioned STEP/ROTSTEP and LPub3D instruction semantics, manifests, and snapshots.
-- Geometry queries for bounding boxes and stud positions.
+- Exact geometry, connector, occurrence-provenance, and inspection APIs.
 
 ## Installation
 

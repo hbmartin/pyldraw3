@@ -14,6 +14,7 @@ import math
 import shutil
 import subprocess
 import sys
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -290,9 +291,12 @@ def _best_placement(
         candidate_height - 1 : reference_height,
         candidate_width - 1 : reference_width,
     ]
+    # Mask correlation is integer-valued. Round away transform-shape-dependent
+    # FFT noise so equal intersections always use NumPy's stable first maximum.
+    np.rint(valid, out=valid)
     flat_index = int(np.argmax(valid))
     y, x = np.unravel_index(flat_index, valid.shape)
-    intersection = round(float(valid[y, x]))
+    intersection = int(valid[y, x])
     return int(x), int(y), intersection
 
 
@@ -656,21 +660,29 @@ def write_comparison_artifacts(
 
 def _safe_name(value: str) -> str:
     """Return a stable conservative path segment."""
-    safe = "".join(character if character.isalnum() else "-" for character in value)
+    normalized = unicodedata.normalize("NFC", value)
+    safe = "".join(
+        character if character.isalnum() else "-" for character in normalized
+    )
     return safe.strip("-") or "item"
 
 
 def _claim_safe_name(name: str, owners: dict[str, str], kind: str) -> str:
     """Sanitize ``name`` and reject names whose artifacts would collide."""
     safe = _safe_name(name)
-    if (existing := owners.get(safe)) is not None:
-        msg = (
-            f"duplicate {kind} name: {name!r}"
-            if existing == name
-            else f"{kind} names {existing!r} and {name!r} both map to {safe!r}"
-        )
+    owner_key = safe.casefold()
+    if (existing := owners.get(owner_key)) is not None:
+        if existing == name:
+            msg = f"duplicate {kind} name: {name!r}"
+        elif _safe_name(existing) == safe:
+            msg = f"{kind} names {existing!r} and {name!r} both map to {safe!r}"
+        else:
+            msg = (
+                f"{kind} names {existing!r} and {name!r} map to "
+                "filesystem-equivalent path names"
+            )
         raise ValueError(msg)
-    owners[safe] = name
+    owners[owner_key] = name
     return safe
 
 
@@ -758,12 +770,13 @@ def _grid_preflight(
         raise ValueError(msg)
     key_owners: dict[str, Camera] = {}
     for camera in cameras:
-        if (existing := key_owners.setdefault(camera.key, camera)) is not camera:
+        if (existing := key_owners.get(camera.key)) is not None:
             msg = (
                 f"cameras {existing} and {camera} share the file key "
                 f"{camera.key!r}; keep angles at least 0.01 degrees apart"
             )
             raise ValueError(msg)
+        key_owners[camera.key] = camera
     resolved_executable = shutil.which(executable)
     if resolved_executable is None:
         msg = f"LeoCAD executable not found: {executable}"
@@ -1171,7 +1184,6 @@ def _add_alignment_arguments(parser: argparse.ArgumentParser) -> None:
 def _parser() -> argparse.ArgumentParser:
     """Create the command-line parser."""
     parser = argparse.ArgumentParser(
-        prog="visual-compare",
         description="Register and compare LDraw renders with raster references.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

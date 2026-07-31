@@ -85,9 +85,9 @@ mirrored results:
 from ldraw.geometry import Identity, Vector, XAxis, YAxis, ZAxis
 
 # 1.3.0 — all three axes are cyclic:
-Identity().rotate(90, XAxis) * Vector(0, 1, 0)   # → (0, 0, 1): ŷ→ẑ
-Identity().rotate(90, YAxis) * Vector(0, 0, 1)   # → (1, 0, 0): ẑ→x̂  (was (-1, 0, 0))
-Identity().rotate(90, ZAxis) * Vector(1, 0, 0)   # → (0, 1, 0): x̂→ŷ
+Identity().rotate(90, XAxis) * Vector(0, 1, 0)  # → (0, 0, 1): ŷ→ẑ
+Identity().rotate(90, YAxis) * Vector(0, 0, 1)  # → (1, 0, 0): ẑ→x̂  (was (-1, 0, 0))
+Identity().rotate(90, ZAxis) * Vector(1, 0, 0)  # → (0, 1, 0): x̂→ŷ
 ```
 
 Serialized matrices for Y rotations change sign on the two sine terms; a
@@ -101,7 +101,7 @@ silently mixed frames. Both now compose in the **local frame**:
 
 ```python
 m = Identity().rotate(90, ZAxis).scale(2, 1, 1)
-m * Vector(1, 0, 0)   # → (0, 2, 0): the *local* X axis was scaled
+m * Vector(1, 0, 0)  # → (0, 2, 0): the *local* X axis was scaled
 # Equivalent identity that now holds:
 m == Identity().rotate(90, ZAxis) * Identity().scale(2, 1, 1)
 ```
@@ -152,7 +152,7 @@ most common LEGO modeling pattern, and it used to raise
 
 ```python
 root.add_submodel(wheel)
-root.add_submodel(wheel, position=Vector(0, -24, 0))   # now: second placement
+root.add_submodel(wheel, position=Vector(0, -24, 0))  # now: second placement
 ```
 
 A **different** `Model` object under an already-registered name still
@@ -195,9 +195,9 @@ file and line context.
 Direct colours are also parsed in every spelling other tools accept:
 
 ```python
-colour_from_str("0x2FF0000")   # canonical
-colour_from_str("0X2FF0000")   # uppercase prefix — was UnknownCommandError
-colour_from_str("50266112")    # the same value in decimal — was a plain code
+colour_from_str("0x2FF0000")  # canonical
+colour_from_str("0X2FF0000")  # uppercase prefix — was UnknownCommandError
+colour_from_str("50266112")  # the same value in decimal — was a plain code
 # all three → Colour(rgb="#FF0000", alpha=255)
 ```
 
@@ -231,7 +231,7 @@ direction under the placing transforms. `is_top_stud` (and therefore
 `Parts.stud_positions`) uses it to exclude sideways and inverted studs:
 
 ```python
-parts.stud_positions("4070")   # Headlight Brick
+parts.stud_positions("4070")  # Headlight Brick
 # 1.2.0: included the sideways front stud — a brick cannot sit on it
 # 1.3.0: only the genuine top stud
 ```
@@ -387,7 +387,7 @@ form:
 ```python
 try:
     read_model("broken.ldr")
-except InvalidNumericValueError as exc:   # now catchable by concrete class
+except InvalidNumericValueError as exc:  # now catchable by concrete class
     print(exc.source, exc.line_number)
 ```
 

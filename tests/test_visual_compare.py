@@ -5,6 +5,7 @@ import builtins
 import importlib.util
 import json
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from types import ModuleType
@@ -128,6 +129,36 @@ def test_repository_script_explains_missing_optional_dependency(
 
     assert cast("Callable[[list[str]], int]", script.main)([]) == 1
     assert "pyldraw3[visual-compare]" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "usage"),
+    [
+        (
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "visual_compare.py"),
+                "--help",
+            ],
+            "usage: visual_compare.py",
+        ),
+        (
+            [sys.executable, "-m", "ldraw.visual_compare", "--help"],
+            f"usage: {Path(sys.executable).name} -m ldraw.visual_compare",
+        ),
+    ],
+)
+def test_help_uses_the_actual_invocation_name(command, usage: str) -> None:
+    process = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert process.returncode == 0
+    assert process.stdout.startswith(usage)
 
 
 @pytest.mark.parametrize(
@@ -258,6 +289,31 @@ def test_registration_sweep_matches_or_beats_single_scale() -> None:
     assert 1.5 <= swept.scale <= 2.5
 
 
+def test_tied_registration_does_not_depend_on_losing_scales() -> None:
+    reference = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+    reference.putpixel((1, 0), (255, 0, 0, 255))
+    reference.putpixel((2, 2), (0, 0, 255, 255))
+    candidate = Image.new("RGBA", (2, 2), (0, 0, 0, 0))
+    candidate.putpixel((0, 0), (255, 0, 0, 255))
+
+    fixed = compare(
+        reference,
+        candidate,
+        config=AlignmentConfig(min_scale=1, max_scale=1, scale_steps=1),
+    )
+    swept = compare(
+        reference,
+        candidate,
+        config=AlignmentConfig(min_scale=1, max_scale=4, scale_steps=2),
+    )
+
+    assert fixed.alignment == swept.alignment
+    assert fixed.metrics == swept.metrics
+    assert swept.alignment.offset_x == 1
+    assert swept.alignment.offset_y == 0
+    assert swept.metrics["rgb_mae"] == 0.0
+
+
 def test_coarse_registration_matches_the_exhaustive_full_resolution_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -346,6 +402,29 @@ def test_colliding_or_duplicate_region_names_are_rejected() -> None:
     ]
     with pytest.raises(ValueError, match="duplicate region name"):
         compare(reference, candidate, config=config, regions=duplicated)
+
+
+def test_safe_names_reject_case_and_unicode_equivalent_paths() -> None:
+    case_owners: dict[str, str] = {}
+    assert visual_compare._claim_safe_name("Front", case_owners, "view") == "Front"  # noqa: SLF001
+    with pytest.raises(ValueError, match="filesystem-equivalent"):
+        visual_compare._claim_safe_name("front", case_owners, "view")  # noqa: SLF001
+
+    unicode_owners: dict[str, str] = {}
+    assert (
+        visual_compare._claim_safe_name(  # noqa: SLF001
+            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            unicode_owners,
+            "candidate",
+        )
+        == "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+    )
+    with pytest.raises(ValueError, match="both map to"):
+        visual_compare._claim_safe_name(  # noqa: SLF001
+            "Cafe\N{COMBINING ACUTE ACCENT}",
+            unicode_owners,
+            "candidate",
+        )
 
 
 def test_artifact_regions_must_match_the_comparison(tmp_path: Path) -> None:
@@ -472,6 +551,9 @@ def test_render_leocad_grid_reports_preflight_and_renderer_errors(
             tmp_path,
             [Camera(15.001, 0), Camera(15.004, 0)],
         )
+    camera = Camera(15.001, 0)
+    with pytest.raises(ValueError, match="share the file key"):
+        render_leocad_grid(model, tmp_path, [camera, camera])
     monkeypatch.setattr(visual_compare.shutil, "which", lambda _value: None)
     with pytest.raises(FileNotFoundError, match="executable not found"):
         render_leocad_grid(model, tmp_path, [])
