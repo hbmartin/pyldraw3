@@ -18,6 +18,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - 🐍 **Pythonic API**: Import LEGO parts directly as Python modules
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
 - 🧭 **Building Instructions**: Typed STEP/ROTSTEP, LPub3D semantics, validation, manifests, and MPD/LDR snapshots
+- 🔎 **Reliable Inspection**: Tolerant loading, structured diagnostics, exact geometry, provenance, and one-pass analysis
 - 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/)
 
 ## Table of Contents
@@ -29,6 +30,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
   - [Examples](#examples)
   - [Basic Usage](#basic-usage)
   - [Reading and Writing Model Files](#reading-and-writing-model-files)
+  - [Reliable Loading and Inspection](#reliable-loading-and-inspection)
   - [Building Instructions](#building-instructions)
   - [Part Geometry Queries](#part-geometry-queries)
   - [IDE Autocompletion and Type Checking](#ide-autocompletion-and-type-checking)
@@ -92,7 +94,13 @@ from ldraw.geometry import Vector, Identity
 
 # Create a simple model
 model = Group()
-Piece(Light_Grey, Vector(-10, -32, -90), Identity(), Brick1X2WithClassicSpaceLogoPattern, model)
+Piece(
+    Light_Grey,
+    Vector(-10, -32, -90),
+    Identity(),
+    Brick1X2WithClassicSpaceLogoPattern,
+    model,
+)
 
 with open("my_model.ldr", "w") as ldr_file:
     print(model, file=ldr_file)
@@ -153,9 +161,9 @@ model.add_group(group)
 wheels = Model.from_pieces([Piece.place("3005", colour=0)], name="wheels.ldr")
 model.add_submodel(wheels, position=Vector(0, -24, 0))
 
-model.find_pieces(colour=4)          # query by part and/or colour
-list(model.iter_pieces())            # leaf pieces, submodels expanded
-model.bill_of_materials()            # counted (part, colour) rows
+model.find_pieces(colour=4)  # query by part and/or colour
+list(model.iter_pieces())  # leaf pieces, submodels expanded
+model.bill_of_materials()  # counted (part, colour) rows
 model.save("scene.ldr")
 ```
 
@@ -192,6 +200,32 @@ Building steps are first-class: `model.add_step()` appends a `0 STEP`
 marker and `model.steps` returns the pieces grouped step by step. Header
 lines are managed through `model.set_header(description=..., name=...,
 author=..., ldraw_org=..., license=...)`.
+
+### Reliable Loading and Inspection
+
+For user-facing tools, `load_model()` reads, parses, and validates once. A
+malformed line becomes a stable, structured diagnostic while valid content
+around it remains available in a partial model:
+
+```python
+from ldraw import DiagnosticCode, load_model
+
+result = load_model("model.mpd", parts=parts)
+for diagnostic in result.diagnostics:
+    print(diagnostic.code, diagnostic.section, diagnostic.line_number)
+
+if result.model is not None:
+    analysis = result.analyze(parts)
+    print(analysis.summary.occurrence_count, analysis.bom)
+```
+
+Use `prepare_catalog()` for one cancellable setup operation, public
+`PartsCatalog.search()` for consistent multi-field search, and
+`parts.inspect_part(code)` / `inspect_model(model, parts)` for metadata,
+exact geometry, root-to-leaf occurrence provenance, and explicit failures.
+First-run clients can call `discover_libraries()`, `inspect_library()`, and
+`plan_download()` before changing anything. Preview rendering remains
+optional: `render_capabilities()` reports whether LDView or LeoCAD is present.
 
 ### Building Instructions
 
@@ -248,19 +282,20 @@ from ldraw import Parts
 
 parts = Parts.get("~/ldraw/parts.lst")
 
-box = parts.bounding_box("3001")     # axis-aligned, in LDU
-print(box.min, box.max, box.size)    # origin sits on the stud plane; +Y is down
+box = parts.bounding_box("3001")  # axis-aligned, in LDU
+print(box.min, box.max, box.size)  # origin sits on the stud plane; +Y is down
 
 print(parts.stud_positions("3001"))  # centres of the 8 top studs
 
-for stud in parts.studs("3062b"):    # every stud primitive, tubes included
+for stud in parts.studs("3062b"):  # every stud primitive, tubes included
     print(stud.name, stud.description, stud.position, stud.is_top_stud)
 ```
 
-Boxes are composed from memoized per-subfile boxes, exact under the
-axis-aligned rotations that dominate the library. Stud queries expand stud
-group primitives down to individual `stud*` references; `is_top_stud`
-distinguishes upward connectors from underside tubes.
+`parts.geometry(code)` expands drawable points exactly and returns bounds,
+studs/connectors, and completeness diagnostics together. `bounding_box()`
+remains as the compact compatibility helper. Stud queries expand stud group
+primitives down to individual `stud*` references; `is_top_stud` distinguishes
+upward connectors from underside tubes.
 
 ### IDE Autocompletion and Type Checking
 

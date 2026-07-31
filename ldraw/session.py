@@ -14,13 +14,14 @@ import requests
 
 from ldraw.catalog import (
     CATALOG_SCHEMA_VERSION,
+    CatalogFingerprint,
     catalog_db_path,
+    catalog_fingerprint,
     load_parts,
-    parts_lst_md5,
-    parts_tree_fingerprint,
     save_catalog,
 )
 from ldraw.config import Config
+from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as download_library
 from ldraw.errors import CouldNotDetermineLatestVersionError
@@ -32,11 +33,14 @@ from ldraw.generation import (
 )
 from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.imports import LibraryImporter
-from ldraw.model import read_model
-from ldraw.parts import Parts
+from ldraw.model import ModelLoadResult, load_model, read_model
+from ldraw.operations import CancellationToken, check_cancelled
+from ldraw.parts import Parts, PartsCatalog
 from ldraw.progress import ProgressCallback, ProgressEvent, ProgressStage, emit_progress
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ldraw.model import Model
 
 
@@ -50,6 +54,22 @@ class LDrawStateReason(StrEnum):
     GENERATED_LIBRARY_MISSING = "generated-library-missing"
     GENERATED_LIBRARY_STALE = "generated-library-stale"
     GENERATED_LIBRARY_UNREADABLE = "generated-library-unreadable"
+
+
+class LDrawCapability(StrEnum):
+    """Configured data capabilities a caller may require."""
+
+    CATALOG = "catalog"
+    GENERATED_MODULES = "generated-modules"
+
+
+class CatalogBuildOutcome(StrEnum):
+    """How a catalog preparation obtained its in-memory catalog."""
+
+    UNAVAILABLE = "unavailable"
+    LOADED = "loaded"
+    REBUILT = "rebuilt"
+    REBUILT_NOT_PERSISTED = "rebuilt-not-persisted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +106,9 @@ class LDrawState:
 
     paths: LDrawPaths
     reasons: tuple[LDrawStateReason, ...]
+    capabilities: frozenset[LDrawCapability] = frozenset(
+        {LDrawCapability.CATALOG, LDrawCapability.GENERATED_MODULES}
+    )
 
     @property
     def ready(self) -> bool:
@@ -124,6 +147,36 @@ class LDrawState:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CatalogBuildReport:
+    """Index work and persistence performed by ``prepare_catalog``."""
+
+    library_root: Path
+    index_path: Path
+    fingerprint: CatalogFingerprint | None
+    entry_count: int
+    outcome: CatalogBuildOutcome
+    persisted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogPreparationResult:
+    """Parts plus before/after state and diagnostics from one preparation."""
+
+    parts: Parts | None
+    initial_state: LDrawState
+    final_state: LDrawState
+    report: CatalogBuildReport
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        """Whether usable parts were produced without an error diagnostic."""
+        return self.parts is not None and not any(
+            diagnostic.severity is Severity.ERROR for diagnostic in self.diagnostics
+        )
+
+
 class LDrawSession:
     """Manage one configured LDraw catalog and generated library."""
 
@@ -139,29 +192,203 @@ class LDrawSession:
         """Resolved paths for this session."""
         return LDrawPaths.from_config(self.config)
 
-    def state(self) -> LDrawState:
-        """Classify the configured library, catalog index, and generated package."""
+    def state(
+        self,
+        *,
+        capabilities: Iterable[LDrawCapability] | None = None,
+        fingerprint: CatalogFingerprint | None = None,
+    ) -> LDrawState:
+        """Classify only the configured capabilities requested by the caller."""
+        required = frozenset(capabilities or tuple(LDrawCapability))
         paths = self.paths
         if not paths.parts_lst.is_file():
             return LDrawState(
                 paths=paths,
                 reasons=(LDrawStateReason.LIBRARY_MISSING,),
+                capabilities=required,
             )
 
+        snapshot = fingerprint or _session_fingerprint(
+            paths,
+            include_catalog=LDrawCapability.CATALOG in required,
+            include_generation=LDrawCapability.GENERATED_MODULES in required,
+        )
+
         reasons: list[LDrawStateReason] = []
-        if (index_reason := _catalog_index_reason(paths)) is not None:
+        if (
+            LDrawCapability.CATALOG in required
+            and (index_reason := _catalog_index_reason(paths, snapshot)) is not None
+        ):
             reasons.append(index_reason)
-        if (generation_reason := _generation_reason(paths)) is not None:
+        if (
+            LDrawCapability.GENERATED_MODULES in required
+            and (
+                generation_reason := _generation_reason(
+                    paths,
+                    expected_fingerprint=snapshot.generation_fingerprint,
+                )
+            )
+            is not None
+        ):
             reasons.append(generation_reason)
-        return LDrawState(paths=paths, reasons=tuple(reasons))
+        return LDrawState(
+            paths=paths,
+            reasons=tuple(reasons),
+            capabilities=required,
+        )
 
     def load(self) -> Parts:
         """Load parts, building and persisting the catalog index when needed."""
-        self.paths.generated_path.mkdir(parents=True, exist_ok=True)
-        return load_parts(
-            self.paths.parts_lst,
-            self.paths.generated_path,
-            build_index=True,
+        result = self.prepare_catalog()
+        if result.parts is None:
+            raise FileNotFoundError(self.paths.parts_lst)
+        return result.parts
+
+    def prepare_catalog(
+        self,
+        *,
+        capabilities: Iterable[LDrawCapability] = (LDrawCapability.CATALOG,),
+        force: bool = False,
+        on_progress: ProgressCallback | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> CatalogPreparationResult:
+        """Load or rebuild requested data using one filesystem fingerprint."""
+        required = frozenset(capabilities)
+        if not required:
+            message = "at least one LDraw capability is required"
+            raise ValueError(message)
+        paths = self.paths
+        if not paths.parts_lst.is_file():
+            state = LDrawState(
+                paths=paths,
+                reasons=(LDrawStateReason.LIBRARY_MISSING,),
+                capabilities=required,
+            )
+            diagnostic = Diagnostic(
+                message=f"LDraw parts list not found: {paths.parts_lst}",
+                code=DiagnosticCode.CATALOG_LIBRARY_MISSING,
+                path=paths.parts_lst,
+            )
+            return CatalogPreparationResult(
+                parts=None,
+                initial_state=state,
+                final_state=state,
+                report=CatalogBuildReport(
+                    library_root=paths.ldraw_path,
+                    index_path=paths.catalog_db,
+                    fingerprint=None,
+                    entry_count=0,
+                    outcome=CatalogBuildOutcome.UNAVAILABLE,
+                    persisted=False,
+                ),
+                diagnostics=(diagnostic,),
+            )
+
+        check_cancelled(cancellation)
+        snapshot = _session_fingerprint(
+            paths,
+            include_catalog=LDrawCapability.CATALOG in required,
+            include_generation=LDrawCapability.GENERATED_MODULES in required,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        initial = self.state(capabilities=required, fingerprint=snapshot)
+        diagnostics: list[Diagnostic] = []
+
+        if LDrawCapability.GENERATED_MODULES in required and (
+            force or initial.needs_generation
+        ):
+            try:
+                generate_library(
+                    config=self.config,
+                    force=force,
+                    on_progress=on_progress,
+                    fingerprint=snapshot.generation_fingerprint,
+                    cancellation=cancellation,
+                )
+            except (OSError, UnwritableOutputError) as error:
+                diagnostics.append(
+                    Diagnostic(
+                        message=f"Could not generate ldraw.library: {error}",
+                        code=DiagnosticCode.GENERATION_FAILED,
+                        path=paths.generated_library,
+                        cause=error,
+                    ),
+                )
+
+        parts: Parts | None = None
+        outcome = CatalogBuildOutcome.UNAVAILABLE
+        persisted = False
+        if LDrawCapability.CATALOG in required:
+            paths.generated_path.mkdir(parents=True, exist_ok=True)
+            needs_rebuild = force or initial.needs_index_rebuild
+            if not needs_rebuild:
+                parts = load_parts(
+                    paths.parts_lst,
+                    paths.generated_path,
+                    fingerprint=snapshot,
+                    on_progress=on_progress,
+                    cancellation=cancellation,
+                )
+                outcome = CatalogBuildOutcome.LOADED
+                persisted = True
+            else:
+                parts = Parts.get(paths.parts_lst)
+                catalog = parts.build_catalog(
+                    on_progress=on_progress,
+                    cancellation=cancellation,
+                )
+                try:
+                    _persist_catalog_atomically(
+                        paths=paths,
+                        parts=parts,
+                        catalog=catalog,
+                        fingerprint=snapshot,
+                        on_progress=on_progress,
+                        cancellation=cancellation,
+                    )
+                    outcome = CatalogBuildOutcome.REBUILT
+                    persisted = True
+                except (OSError, sqlite3.Error) as error:
+                    outcome = CatalogBuildOutcome.REBUILT_NOT_PERSISTED
+                    diagnostics.append(
+                        Diagnostic(
+                            message=f"Could not persist catalog index: {error}",
+                            severity=Severity.WARNING,
+                            code=DiagnosticCode.CATALOG_PERSIST_FAILED,
+                            path=paths.catalog_db,
+                            cause=error,
+                        ),
+                    )
+        else:
+            parts = Parts.get(paths.parts_lst)
+            outcome = CatalogBuildOutcome.LOADED
+
+        final = self.state(capabilities=required, fingerprint=snapshot)
+        report = CatalogBuildReport(
+            library_root=paths.ldraw_path,
+            index_path=paths.catalog_db,
+            fingerprint=snapshot,
+            entry_count=(
+                len(parts.catalog.by_code)
+                if parts is not None and LDrawCapability.CATALOG in required
+                else len(parts.by_code)
+                if parts is not None
+                else 0
+            ),
+            outcome=outcome,
+            persisted=persisted,
+        )
+        emit_progress(
+            on_progress,
+            ProgressEvent(stage=ProgressStage.DONE, message="LDraw data is ready"),
+        )
+        return CatalogPreparationResult(
+            parts=parts,
+            initial_state=initial,
+            final_state=final,
+            report=report,
+            diagnostics=tuple(diagnostics),
         )
 
     def rebuild_index(
@@ -169,13 +396,28 @@ class LDrawSession:
         *,
         force: bool = True,
         on_progress: ProgressCallback | None = None,
+        cancellation: CancellationToken | None = None,
+        fingerprint: CatalogFingerprint | None = None,
     ) -> Parts:
         """Rebuild the persistent catalog index and return the loaded parts."""
         paths = self.paths
         paths.generated_path.mkdir(parents=True, exist_ok=True)
-        index_reason = _catalog_index_reason(paths)
+        snapshot = fingerprint or _session_fingerprint(
+            paths,
+            include_catalog=True,
+            include_generation=False,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        index_reason = _catalog_index_reason(paths, snapshot)
         if not force and index_reason is None:
-            return load_parts(paths.parts_lst, paths.generated_path)
+            return load_parts(
+                paths.parts_lst,
+                paths.generated_path,
+                fingerprint=snapshot,
+                on_progress=on_progress,
+                cancellation=cancellation,
+            )
         emit_progress(
             on_progress,
             ProgressEvent(
@@ -185,34 +427,122 @@ class LDrawSession:
             ),
         )
         parts = Parts.get(paths.parts_lst)
-        with NamedTemporaryFile(
-            dir=paths.catalog_db.parent,
-            prefix=f".{paths.catalog_db.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_db = Path(temp_file.name)
-        try:
-            save_catalog(
-                temp_db,
-                md5=parts_lst_md5(paths.parts_lst),
-                catalog=parts.catalog,
-                library_root=paths.parts_lst.parent,
-                tree_fingerprint=parts_tree_fingerprint(paths.parts_lst.parent),
-            )
-            temp_db.replace(paths.catalog_db)
-        finally:
-            temp_db.unlink(missing_ok=True)
+        catalog = parts.build_catalog(
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        _persist_catalog_atomically(
+            paths=paths,
+            parts=parts,
+            catalog=catalog,
+            fingerprint=snapshot,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
         return parts
 
     def open_model(self, path: Path | str) -> Model:
         """Read a ``.ldr`` or ``.mpd`` model file."""
         return read_model(path)
 
+    def load_model(
+        self,
+        path: Path | str,
+        parts: Parts | None = None,
+        *,
+        tolerant: bool = True,
+    ) -> ModelLoadResult:
+        """Read and validate a model into a structured load result."""
+        return load_model(path, parts=parts, tolerant=tolerant)
 
-def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
+
+def _session_fingerprint(
+    paths: LDrawPaths,
+    *,
+    include_catalog: bool,
+    include_generation: bool,
+    on_progress: ProgressCallback | None = None,
+    cancellation: CancellationToken | None = None,
+) -> CatalogFingerprint:
+    if include_catalog:
+        snapshot = catalog_fingerprint(
+            paths.parts_lst,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        generation_fingerprint = (
+            library_fingerprint(
+                paths.parts_lst,
+                parts_lst_digest=snapshot.parts_lst_md5,
+                tree_fingerprint=snapshot.tree_fingerprint,
+            )
+            if include_generation
+            else None
+        )
+    elif include_generation:
+        generation_fingerprint = library_fingerprint(
+            paths.parts_lst,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        lines = generation_fingerprint.splitlines()
+        snapshot = CatalogFingerprint(
+            parts_lst_md5=lines[1],
+            tree_fingerprint=lines[3],
+        )
+    else:
+        message = "at least one fingerprint capability is required"
+        raise ValueError(message)
+    return CatalogFingerprint(
+        parts_lst_md5=snapshot.parts_lst_md5,
+        tree_fingerprint=snapshot.tree_fingerprint,
+        generation_fingerprint=generation_fingerprint,
+    )
+
+
+def _persist_catalog_atomically(  # noqa: PLR0913 - operation state is explicit
+    *,
+    paths: LDrawPaths,
+    parts: Parts,
+    catalog: PartsCatalog,
+    fingerprint: CatalogFingerprint,
+    on_progress: ProgressCallback | None,
+    cancellation: CancellationToken | None,
+) -> None:
+    with NamedTemporaryFile(
+        dir=paths.catalog_db.parent,
+        prefix=f".{paths.catalog_db.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as temp_file:
+        temp_db = Path(temp_file.name)
+    try:
+        save_catalog(
+            temp_db,
+            md5=fingerprint.parts_lst_md5,
+            catalog=catalog,
+            library_root=parts.library_root,
+            tree_fingerprint=fingerprint.tree_fingerprint,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        check_cancelled(cancellation)
+        temp_db.replace(paths.catalog_db)
+    finally:
+        temp_db.unlink(missing_ok=True)
+
+
+def _catalog_index_reason(
+    paths: LDrawPaths,
+    fingerprint: CatalogFingerprint | None = None,
+) -> LDrawStateReason | None:
     if not paths.catalog_db.is_file():
         return LDrawStateReason.INDEX_MISSING
+    snapshot = fingerprint or _session_fingerprint(
+        paths,
+        include_catalog=True,
+        include_generation=False,
+    )
     try:
         connection = sqlite3.connect(
             f"{paths.catalog_db.resolve().as_uri()}?mode=ro",
@@ -223,11 +553,11 @@ def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
     meta_checks = (
         (
             "SELECT value FROM meta WHERE key = 'parts_lst_md5'",
-            parts_lst_md5(paths.parts_lst),
+            snapshot.parts_lst_md5,
         ),
         (
             "SELECT value FROM meta WHERE key = 'tree_fingerprint'",
-            parts_tree_fingerprint(paths.parts_lst.parent),
+            snapshot.tree_fingerprint,
         ),
     )
     try:
@@ -245,15 +575,37 @@ def _catalog_index_reason(paths: LDrawPaths) -> LDrawStateReason | None:
     return None
 
 
-def _generation_reason(paths: LDrawPaths) -> LDrawStateReason | None:
+def _generation_reason(
+    paths: LDrawPaths,
+    *,
+    expected_fingerprint: str | None = None,
+) -> LDrawStateReason | None:
     if not paths.generated_library.is_dir() or not paths.generation_hash.is_file():
         return LDrawStateReason.GENERATED_LIBRARY_MISSING
     try:
-        if paths.generation_hash.read_text() != library_fingerprint(paths.parts_lst):
+        expected = expected_fingerprint or library_fingerprint(paths.parts_lst)
+        if paths.generation_hash.read_text() != expected:
             return LDrawStateReason.GENERATED_LIBRARY_STALE
     except OSError:
         return LDrawStateReason.GENERATED_LIBRARY_UNREADABLE
     return None
+
+
+def prepare_catalog(
+    config: Config | None = None,
+    *,
+    capabilities: Iterable[LDrawCapability] = (LDrawCapability.CATALOG,),
+    force: bool = False,
+    on_progress: ProgressCallback | None = None,
+    cancellation: CancellationToken | None = None,
+) -> CatalogPreparationResult:
+    """Prepare requested configured data and return a structured report."""
+    return LDrawSession(config).prepare_catalog(
+        capabilities=capabilities,
+        force=force,
+        on_progress=on_progress,
+        cancellation=cancellation,
+    )
 
 
 def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
@@ -264,6 +616,7 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
     config_file: str | Path | None = None,
     force_generate: bool = False,
     on_progress: ProgressCallback | None = None,
+    cancellation: CancellationToken | None = None,
 ) -> LDrawSession:
     """Ensure a configured library, generated package, and catalog index exist.
 
@@ -274,7 +627,7 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
     """
     cfg = Config.load(config_file) if config is None else config
     session = LDrawSession(cfg)
-    state = session.state()
+    state = session.state(capabilities=(LDrawCapability.CATALOG,))
 
     if LDrawStateReason.LIBRARY_MISSING in state.reasons:
         try:
@@ -282,6 +635,8 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
                 version=version,
                 show_progress=False,
                 on_progress=on_progress,
+                resume=True,
+                cancellation=cancellation,
             )
         except (
             requests.RequestException,
@@ -294,29 +649,45 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
             raise RuntimeError(message) from exc
         cfg.ldraw_library_path = str(cache_ldraw / version)
         session = LDrawSession(cfg)
-        state = session.state()
 
-    if force_generate or state.needs_generation:
+    if force_generate:
         try:
             generate_library(
                 config=cfg,
-                force=force_generate,
+                force=True,
                 on_progress=on_progress,
+                cancellation=cancellation,
             )
         except UnwritableOutputError as exc:
             message = f"Generated library path is unwritable: {cfg.generated_path}"
             raise RuntimeError(message) from exc
-        session = LDrawSession(cfg)
-        state = session.state()
 
-    if state.needs_index_rebuild:
-        session.rebuild_index(force=False, on_progress=on_progress)
+    result = session.prepare_catalog(
+        capabilities=(
+            LDrawCapability.CATALOG,
+            LDrawCapability.GENERATED_MODULES,
+        ),
+        on_progress=on_progress,
+        cancellation=cancellation,
+    )
+    if result.parts is None:
+        message = (
+            result.diagnostics[0].message if result.diagnostics else "unknown error"
+        )
+        raise RuntimeError(message)
+    if (
+        failure := next(
+            (
+                diagnostic
+                for diagnostic in result.diagnostics
+                if diagnostic.severity is Severity.ERROR
+            ),
+            None,
+        )
+    ) is not None:
+        raise RuntimeError(failure.message) from failure.cause
 
     LibraryImporter.set_config(cfg)
     if write_config:
         cfg.write(config_file=config_file)
-    emit_progress(
-        on_progress,
-        ProgressEvent(stage=ProgressStage.DONE, message="LDraw library is ready"),
-    )
     return session

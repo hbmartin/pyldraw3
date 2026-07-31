@@ -103,10 +103,11 @@ nothing else, so it never interferes with ordinary imports:
 ```python
 VIRTUAL_MODULE = "ldraw.library"
 
+
 @staticmethod
 def valid_module(fullname: str) -> bool:
     if fullname.startswith(VIRTUAL_MODULE):
-        rest = fullname[len(VIRTUAL_MODULE):]
+        rest = fullname[len(VIRTUAL_MODULE) :]
         return not rest or rest.startswith(".")
     return False
 ```
@@ -133,7 +134,7 @@ def find_spec(self, fullname, path=None, target=None):
     config, generation = self._config_snapshot()
     library_root = Path(config.generated_path)
     if not (library_root / "library" / "__init__.py").is_file():
-        return None                      # nothing generated: don't claim it
+        return None  # nothing generated: don't claim it
     init_path, py_path = _module_candidates(library_root, fullname)
     # …pick whichever exists, then importlib.util.spec_from_file_location…
 ```

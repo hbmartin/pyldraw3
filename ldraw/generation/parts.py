@@ -11,6 +11,7 @@ import pystache
 from progress.bar import Bar
 
 from ldraw.generation.exceptions import DuplicateSymbolError
+from ldraw.operations import CancellationToken, check_cancelled
 from ldraw.resources import _get_resource_content
 from ldraw.snippets import symbol_name_for_description
 from ldraw.utils import clean, safe_identifier
@@ -23,7 +24,12 @@ SECTION_SEP = "#|#"
 logger = logging.getLogger("ldraw")
 
 
-def gen_parts(parts: Parts, library_path: str | Path) -> None:
+def gen_parts(
+    parts: Parts,
+    library_path: str | Path,
+    *,
+    cancellation: CancellationToken | None = None,
+) -> None:
     """Generate the ldraw.library.parts namespace modules."""
     print("Generating ldraw.library.parts, this might take a long time...")
     parts_dir = Path(library_path) / "parts"
@@ -33,6 +39,7 @@ def gen_parts(parts: Parts, library_path: str | Path) -> None:
         sections=parts.catalog.module_sections(),
         directory=parts_dir,
         prefix=(),
+        cancellation=cancellation,
     )
 
 
@@ -40,6 +47,7 @@ def recursive_gen_parts(
     sections: dict[tuple[str, ...], dict[str, str]],
     directory: Path,
     prefix: tuple[str, ...],
+    cancellation: CancellationToken | None = None,
 ) -> None:
     """Recursively generate parts modules for nested part categories."""
     child_directories = sorted(
@@ -57,18 +65,25 @@ def recursive_gen_parts(
     }
 
     for child_name in child_directories:
+        check_cancelled(cancellation)
         subdir = directory / child_name
         subdir.mkdir(parents=True, exist_ok=True)
         recursive_gen_parts(
             sections=sections,
             directory=subdir,
             prefix=(*prefix, child_name),
+            cancellation=cancellation,
         )
 
     for section_name, section_parts in local_sections.items():
+        check_cancelled(cancellation)
         parts_py = directory / f"{section_name}.py"
         parts_py.write_text(
-            section_content(section_parts, section_name),
+            section_content(
+                section_parts,
+                section_name,
+                cancellation=cancellation,
+            ),
             encoding="utf-8",
         )
 
@@ -94,11 +109,17 @@ def parts__init__content(sections: list[str]) -> str:
     )
 
 
-def section_content(section_parts: dict[str, str], section_key: str) -> str:
+def section_content(
+    section_parts: dict[str, str],
+    section_key: str,
+    *,
+    cancellation: CancellationToken | None = None,
+) -> str:
     """Generate the content for a section of parts."""
     parts_list: list[dict[str, str]] = []
     progress_bar = Bar(f"section {section_key} ...", max=len(section_parts))
     for description, code in section_parts.items():
+        check_cancelled(cancellation)
         context = _part_context(
             description=description,
             code=code,

@@ -200,6 +200,15 @@ class InstructionStep:
         """Direct placements accumulated in this section through this step."""
         return tuple(obj for obj in self._cumulative_objects if isinstance(obj, Piece))
 
+    @property
+    def cumulative_objects(self) -> tuple[ParsedObject, ...]:
+        """Parsed objects accumulated in this section through this step."""
+        return self._cumulative_objects
+
+    def source_line_for(self, obj: ParsedObject) -> int | None:
+        """Return the source line for one object in this step's section."""
+        return self._model.source_line_for(obj)
+
     def added_occurrences(
         self,
         *,
@@ -1008,9 +1017,7 @@ def _rotation_from_directive(
         return None
     angles = (float(x), float(y), float(z))
     command = _rotation_matrix(angles)
-    effective = command if mode is RotationMode.ABSOLUTE else current * command
-    if mode is RotationMode.RELATIVE:
-        effective = Identity() * command
+    effective = current * command if mode is RotationMode.ADDITIVE else command
     return RotationStep(mode, angles, command, effective, directive.source_line)
 
 

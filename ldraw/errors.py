@@ -53,6 +53,9 @@ class InvalidLineDataError(PartError, ValueError):
         super().__init__(
             f"Line type {line_type} must have {size} parameters:\n{' '.join(line)}",
         )
+        self.line_type = line_type
+        self.expected_size = size
+        self.line = tuple(line)
 
 
 class InvalidNumericValueError(PartError, ValueError):
@@ -62,6 +65,9 @@ class InvalidNumericValueError(PartError, ValueError):
         super().__init__(
             f'Invalid numeric value {token!r} in {line_type} line "{" ".join(line)}"',
         )
+        self.line_type = line_type
+        self.token = token
+        self.line = tuple(line)
 
 
 class UnknownCommandError(PartError):
@@ -69,6 +75,7 @@ class UnknownCommandError(PartError):
 
     def __init__(self, command: str) -> None:
         super().__init__(f"Unknown command ({command})")
+        self.command = command
 
 
 class InvalidColourValueError(PartError, ValueError):

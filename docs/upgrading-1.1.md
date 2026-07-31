@@ -115,7 +115,7 @@ working without changes:
 
 ```python
 # 1.0.0 (relied on forced uppercase)
-if piece.part == "3001":        # worked because .part was uppercased anyway
+if piece.part == "3001":  # worked because .part was uppercased anyway
     ...
 if piece.reference == "3001.DAT":
     ...
@@ -180,9 +180,9 @@ construction time rather than surfacing at write-out.
 ```python
 from ldraw.colour import Colour
 
-Colour(rgb="4b0082").rgb    # "#4B0082"
-Colour(rgb="#4b0082").rgb   # "#4B0082"
-Colour(rgb="nonsense")      # ValueError, immediately
+Colour(rgb="4b0082").rgb  # "#4B0082"
+Colour(rgb="#4b0082").rgb  # "#4B0082"
+Colour(rgb="nonsense")  # ValueError, immediately
 ```
 
 In 1.0.0, `rgb` kept whatever string you passed, and only code-less
@@ -322,12 +322,12 @@ from ldraw import Parts
 
 parts = Parts.get("path/to/parts.lst")
 
-box = parts.bounding_box("3001")        # 2 x 4 brick
-box.min, box.max                        # Vector(-40, -4, -20), Vector(40, 24, 20)
-box.size                                # Vector(80, 28, 40) — LDU; multiply by 0.4 for mm
+box = parts.bounding_box("3001")  # 2 x 4 brick
+box.min, box.max  # Vector(-40, -4, -20), Vector(40, 24, 20)
+box.size  # Vector(80, 28, 40) — LDU; multiply by 0.4 for mm
 
-studs = parts.studs("3001")             # every stud primitive, incl. underside tubes
-tops = parts.stud_positions("3001")     # 8 top-stud positions for a 2 x 4 brick
+studs = parts.studs("3001")  # every stud primitive, incl. underside tubes
+tops = parts.stud_positions("3001")  # 8 top-stud positions for a 2 x 4 brick
 ```
 
 The supporting types are exported at the top level:
@@ -384,9 +384,9 @@ from ldraw import Model
 
 model = Model(name="tower.ldr")
 model.add(base_plate)
-model.add_step()                 # end of step 1
+model.add_step()  # end of step 1
 model.add(first_brick, second_brick)
-model.add_step()                 # end of step 2
+model.add_step()  # end of step 2
 model.add(roof)
 
 for number, step in enumerate(model.steps, start=1):
@@ -442,12 +442,12 @@ root = read_model("castle.mpd")
 
 # The trap (still works, still wrong for nested references):
 wing = root.submodels["wing.ldr"]
-rows = wing.bill_of_materials()          # sibling submodel refs counted as parts!
+rows = wing.bill_of_materials()  # sibling submodel refs counted as parts!
 
 # The fix:
 wing = root.submodel_view("wing.ldr")
-rows = wing.bill_of_materials()          # nested references expanded correctly
-list(wing.iter_pieces())                 # likewise
+rows = wing.bill_of_materials()  # nested references expanded correctly
+list(wing.iter_pieces())  # likewise
 wing.find_pieces(part="3001", recursive=True)
 ```
 
@@ -469,8 +469,8 @@ flattening the whole file.
 A convenience for the common "what is part `3001` called?" question:
 
 ```python
-parts.description_for("3001")      # "Brick  2 x  4" (as written in parts.lst)
-parts.description_for("30071B")    # found even though parts.lst says "30071b"
+parts.description_for("3001")  # "Brick  2 x  4" (as written in parts.lst)
+parts.description_for("30071B")  # found even though parts.lst says "30071b"
 parts.description_for("nonsense")  # None
 ```
 
@@ -494,9 +494,7 @@ A new property that reports whether a colour is plain opaque paint — full
 alpha (or none given) and no finish attributes:
 
 ```python
-solid_palette = [
-    colour for colour in parts.colours_by_code.values() if colour.is_solid
-]
+solid_palette = [colour for colour in parts.colours_by_code.values() if colour.is_solid]
 ```
 
 This composes with the expanded finish detection: transparent, chrome,

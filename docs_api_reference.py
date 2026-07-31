@@ -91,8 +91,14 @@ def _reference_markdown(
     identifiers: list[str] = []
     seen: set[str] = set()
     for name in _public_names(package):
-        if (identifier := _object_identifier(package=package, name=name)) in seen:
-            continue
+        identifier = _object_identifier(package=package, name=name)
+        if identifier in seen:
+            if package.__name__ == "ldraw" and name == "ValidationIssue":
+                # This intentional compatibility alias deserves its own
+                # public heading even though it resolves to Diagnostic.
+                identifier = f"{package.__name__}.{name}"
+            else:
+                continue
         seen.add(identifier)
         identifiers.append(identifier)
 

@@ -134,6 +134,30 @@ def test_download_success_replaces_partial_file(
     assert not (tmp_path / "x.zip.part").exists()
 
 
+@patch("ldraw.downloads.requests.get")
+def test_download_resume_appends_partial_and_sends_range(
+    get_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"first-")
+    response = get_mock.return_value.__enter__.return_value
+    response.status_code = 206
+    response.headers = {"content-length": "6"}
+    response.iter_content.return_value = [b"second"]
+
+    result = _download(
+        "https://example.test/x.zip",
+        "x.zip",
+        resume=True,
+    )
+
+    assert get_mock.call_args.kwargs["headers"] == {"Range": "bytes=6-"}
+    assert result.read_bytes() == b"first-second"
+
+
 def test_temporary_rename_path_skips_existing(tmp_path: Path) -> None:
     target = tmp_path / "LDRAW"
     (tmp_path / "LDRAW__pyldraw_tmp__").mkdir()
@@ -279,7 +303,7 @@ def test_latest_release_id_unparseable_pan_raises(get_mock: MagicMock) -> None:
 @patch("ldraw.downloads.generate_parts_lst")
 @patch("ldraw.downloads.unpack_version")
 @patch("ldraw.downloads._download")
-def test_download_complete_discards_cached_zip(  # noqa: PLR0913 - stacked patches
+def test_download_complete_discards_cached_zip(  # noqa: PLR0913, PLR0917
     download_mock: MagicMock,
     unpack_version_mock: MagicMock,
     generate_parts_lst_mock: MagicMock,

@@ -162,7 +162,9 @@ from ldraw.library.colours import Black, Chrome_Silver, White, Yellow
 from ldraw.library.parts.minifig.accessories import ToolMagnifyingGlass
 from ldraw.library.parts.minifig.hats import TopHat
 from ldraw.library.parts.minifig.heads import HeadWithMonocle_Scar_AndMoustachePattern
-from ldraw.library.parts.minifig.torsos import TorsoWithBlackSuit_RedShirt_GoldClaspsPattern
+from ldraw.library.parts.minifig.torsos import (
+    TorsoWithBlackSuit_RedShirt_GoldClaspsPattern,
+)
 
 detective = Person()
 detective.head(Yellow, part=HeadWithMonocle_Scar_AndMoustachePattern)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ldraw.colour import Colour
 from ldraw.errors import (
@@ -26,6 +27,9 @@ from ldraw.lines import (
 )
 from ldraw.pieces import Piece
 from ldraw.utils import split_reference
+
+if TYPE_CHECKING:
+    from ldraw.part_metadata import PartMetadata
 
 ParsedObject = (
     Comment | MetaCommand | Piece | Line | Triangle | Quadrilateral | OptionalLine
@@ -179,6 +183,7 @@ class Part:
         self._category: str | None = None
         self._description: str | None = None
         self._keywords: tuple[str, ...] | None = None
+        self._metadata: PartMetadata | None = None
 
     @property
     def lines(self) -> Iterator[str]:
@@ -210,24 +215,20 @@ class Part:
     def _parse_header(self) -> tuple[str, ...]:
         if self._keywords is not None:
             return self._keywords
-
-        keywords: list[str] = []
-        for obj in self.objects:
-            if not isinstance(obj, Comment | MetaCommand):
-                break
-            if not isinstance(obj, MetaCommand):
-                continue
-
-            match obj.type:
-                case "CATEGORY" if self._category is None:
-                    self._category = obj.text
-                case "KEYWORDS":
-                    for keyword in obj.text.split(","):
-                        if (stripped := keyword.strip()) and stripped not in keywords:
-                            keywords.append(stripped)
-
-        self._keywords = tuple(keywords)
+        metadata = self.metadata
+        self._category = metadata.category
+        self._keywords = metadata.keywords
         return self._keywords
+
+    @property
+    def metadata(self) -> PartMetadata:
+        """Return structured metadata parsed from this part's header."""
+        if self._metadata is None:
+            from ldraw.part_metadata import parse_part_metadata  # noqa: PLC0415
+
+            self._metadata = parse_part_metadata(self.path)
+            self._description = self._metadata.description
+        return self._metadata
 
     @property
     def category(self) -> str | None:

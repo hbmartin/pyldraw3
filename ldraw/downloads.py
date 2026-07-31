@@ -12,7 +12,14 @@ from progress.bar import Bar
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
 from ldraw.generate import generate_parts_lst
-from ldraw.progress import ProgressCallback, ProgressEvent, ProgressStage, emit_progress
+from ldraw.operations import CancellationToken, check_cancelled
+from ldraw.progress import (
+    ProgressCallback,
+    ProgressEvent,
+    ProgressStage,
+    ProgressUnit,
+    emit_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +176,7 @@ def unpack_version(
     *,
     show_progress: bool = True,
     on_progress: ProgressCallback | None = None,
+    cancellation: CancellationToken | None = None,
 ) -> Path:
     """Unpack a downloaded LDraw library ZIP file to the cache directory."""
     _validate_version(version)
@@ -186,20 +194,37 @@ def unpack_version(
     with zipfile.ZipFile(version_zip, "r") as zip_ref:
         destination.mkdir(parents=True, exist_ok=True)
         _validate_zip_members(zip_ref, destination)
-        zip_ref.extractall(destination)
+        members = zip_ref.infolist()
+        total = len(members)
+        for current, member in enumerate(members, start=1):
+            check_cancelled(cancellation)
+            zip_ref.extract(member, destination)
+            emit_progress(
+                on_progress,
+                ProgressEvent(
+                    stage=ProgressStage.UNPACK,
+                    message=f"Unpacking {version_zip.name}",
+                    current=current,
+                    total=total,
+                    path=destination,
+                    unit=ProgressUnit.FILES,
+                ),
+            )
     version_zip.unlink()
     _normalize_tree(destination)
 
     return destination
 
 
-def _download(
+def _download(  # noqa: PLR0913 - streaming state and controls are explicit
     url: str,
     filename: str,
     chunk_size: int = 1_024,
     *,
     show_progress: bool = False,
     on_progress: ProgressCallback | None = None,
+    resume: bool = False,
+    cancellation: CancellationToken | None = None,
 ) -> Path:
     """Download ``url`` to ``filename`` in the cache, streaming via a ``.part`` file.
 
@@ -223,58 +248,99 @@ def _download(
         return retrieved
 
     partial = retrieved.with_name(f"{retrieved.name}.part")
+    offset = partial.stat().st_size if resume and partial.is_file() else 0
+    request_headers = {"Range": f"bytes={offset}-"} if offset else None
     with requests.get(
         url=url,
         stream=True,
         timeout=_REQUEST_TIMEOUT_SECONDS,
+        headers=request_headers,
     ) as response:
         response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        message = f"Downloading {filename}"
-
-        # Only build events when a callback is registered, and throttle so a
-        # multi-megabyte stream does not flood the consumer with one event per
-        # 1 KiB chunk. The start and final byte counts are always emitted.
-        last_emitted = -1
-
-        def emit_download(current: int, *, force: bool = False) -> None:
-            nonlocal last_emitted
-            if on_progress is None:
-                return
-            if not force and current - last_emitted < _PROGRESS_BYTE_STEP:
-                return
-            last_emitted = current
-            on_progress(
-                ProgressEvent(
-                    stage=ProgressStage.DOWNLOAD,
-                    message=message,
-                    current=current,
-                    total=total or None,
-                    path=retrieved,
-                ),
-            )
-
-        emit_download(0, force=True)
-        try:
-            with partial.open("wb") as file:
-                bar = (
-                    Bar(f"Downloading {url} ...", max=total) if show_progress else None
-                )
-                current = 0
-                for data in response.iter_content(chunk_size=chunk_size):
-                    written = file.write(data)
-                    current += written
-                    if bar is not None:
-                        bar.next(written)
-                    emit_download(current)
-                if bar is not None:
-                    bar.finish()
-                emit_download(current, force=True)
-        except BaseException:
-            partial.unlink(missing_ok=True)
-            raise
+        accepted_resume = offset > 0 and response.status_code == 206
+        if offset and not accepted_resume:
+            offset = 0
+        remaining = int(response.headers.get("content-length", 0))
+        total = remaining + offset if accepted_resume else remaining
+        _stream_download(
+            response=response,
+            partial=partial,
+            retrieved=retrieved,
+            url=url,
+            filename=filename,
+            chunk_size=chunk_size,
+            show_progress=show_progress,
+            on_progress=on_progress,
+            resume=resume,
+            accepted_resume=accepted_resume,
+            offset=offset,
+            total=total,
+            cancellation=cancellation,
+        )
     partial.replace(retrieved)
     return retrieved
+
+
+def _stream_download(  # noqa: PLR0913 - transfer state is explicit
+    *,
+    response: requests.Response,
+    partial: Path,
+    retrieved: Path,
+    url: str,
+    filename: str,
+    chunk_size: int,
+    show_progress: bool,
+    on_progress: ProgressCallback | None,
+    resume: bool,
+    accepted_resume: bool,
+    offset: int,
+    total: int,
+    cancellation: CancellationToken | None,
+) -> None:
+    message = f"Downloading {filename}"
+
+    # Only build events when a callback is registered, and throttle so a
+    # multi-megabyte stream does not flood the consumer with one event per
+    # 1 KiB chunk. The start and final byte counts are always emitted.
+    last_emitted = -1
+
+    def emit_download(current: int, *, force: bool = False) -> None:
+        nonlocal last_emitted
+        if on_progress is None:
+            return
+        if not force and current - last_emitted < _PROGRESS_BYTE_STEP:
+            return
+        last_emitted = current
+        on_progress(
+            ProgressEvent(
+                stage=ProgressStage.DOWNLOAD,
+                message=message,
+                current=current,
+                total=total or None,
+                path=retrieved,
+                unit=ProgressUnit.BYTES,
+            ),
+        )
+
+    emit_download(offset, force=True)
+    try:
+        with partial.open("ab" if accepted_resume else "wb") as file:
+            bar = Bar(f"Downloading {url} ...", max=total) if show_progress else None
+            current = offset
+            for data in response.iter_content(chunk_size=chunk_size):
+                check_cancelled(cancellation)
+                written = file.write(data)
+                current += written
+                if bar is not None:
+                    bar.next(written)
+                emit_download(current)
+            if bar is not None:
+                bar.finish()
+            emit_download(current, force=True)
+    except BaseException:
+        if not resume:
+            partial.unlink(missing_ok=True)
+        raise
 
 
 def download(
@@ -282,6 +348,8 @@ def download(
     show_progress: bool = True,
     version: str = COMPLETE_VERSION,
     on_progress: ProgressCallback | None = None,
+    resume: bool = False,
+    cancellation: CancellationToken | None = None,
 ) -> str:
     """Download and unpack an LDraw library version, generating parts.lst file.
 
@@ -311,6 +379,8 @@ def download(
         filename=filename,
         show_progress=show_progress,
         on_progress=on_progress,
+        resume=resume,
+        cancellation=cancellation,
     )
 
     version_dir = unpack_version(
@@ -318,6 +388,7 @@ def download(
         version=version,
         show_progress=show_progress,
         on_progress=on_progress,
+        cancellation=cancellation,
     )
 
     if show_progress:

@@ -73,8 +73,8 @@ stale, rebuild the catalog index if stale — then wires up the importer:
 ```python
 from ldraw import ensure_library
 
-session = ensure_library()          # download + generate + index as needed
-parts = session.load()              # ready to use
+session = ensure_library()  # download + generate + index as needed
+parts = session.load()  # ready to use
 model = session.open_model("castle.mpd")
 ```
 
@@ -98,14 +98,14 @@ control the steps individually:
 ```python
 from ldraw import LDrawSession
 
-session = LDrawSession()            # uses Config.load() by default
+session = LDrawSession()  # uses Config.load() by default
 state = session.state()
 
 if state.ready:
     parts = session.load()
 else:
     if state.needs_generation:
-        ...                          # call ensure_library() to fix, or regenerate
+        ...  # call ensure_library() to fix, or regenerate
     if state.needs_index_rebuild:
         parts = session.rebuild_index()
 ```
@@ -139,11 +139,13 @@ Pass an `on_progress` callback to `ensure_library`, `download`, or
 ```python
 from ldraw import ProgressEvent, ProgressStage, ensure_library
 
+
 def report(event: ProgressEvent) -> None:
     if event.total:
         print(f"[{event.stage}] {event.message}: {event.current}/{event.total}")
     else:
         print(f"[{event.stage}] {event.message}")
+
 
 ensure_library(on_progress=report)
 ```
@@ -218,11 +220,11 @@ from ldraw import ModelSummary, model_bounds, read_model
 model = read_model("castle.mpd")
 summary = ModelSummary.from_model(model, parts)
 
-summary.bounds          # transformed axis-aligned bounds (BoundingBox | None)
-summary.size_ldu        # overall size as a Vector, in LDU
-summary.size_mm         # same, in millimetres (× 0.4)
-summary.part_counts     # {part_code: count}
-summary.colour_usage    # {colour_code_or_rgb: count}
+summary.bounds  # transformed axis-aligned bounds (BoundingBox | None)
+summary.size_ldu  # overall size as a Vector, in LDU
+summary.size_mm  # same, in millimetres (× 0.4)
+summary.part_counts  # {part_code: count}
+summary.colour_usage  # {colour_code_or_rgb: count}
 summary.occurrence_count
 summary.skipped_geometry  # parts whose geometry couldn't be resolved
 ```
@@ -277,9 +279,9 @@ on.
 library:
 
 ```python
-entry.symbol_name          # e.g. "Brick2X4"
-entry.module_path          # "ldraw.library.parts.bricks" (or None if uncategorized)
-entry.import_statement()   # "from ldraw.library.parts.bricks import Brick2X4"
+entry.symbol_name  # e.g. "Brick2X4"
+entry.module_path  # "ldraw.library.parts.bricks" (or None if uncategorized)
+entry.import_statement()  # "from ldraw.library.parts.bricks import Brick2X4"
 ```
 
 The new `ldraw.snippets` module offers the same as free functions —
@@ -298,9 +300,9 @@ from the catalog, or resolving a catalog entry to its importable class.
 pickers and inspectors:
 
 ```python
-colour.display_label   # "Bright Red" (name, spaces for underscores) / "Colour 4" / rgb / "Unknown colour"
-colour.swatch_rgb      # rgb hex for a swatch, or None
-colour.swatch_alpha    # alpha 0–255, defaulting to fully opaque when unset
+colour.display_label  # "Bright Red" (name, spaces for underscores) / "Colour 4" / rgb / "Unknown colour"
+colour.swatch_rgb  # rgb hex for a swatch, or None
+colour.swatch_alpha  # alpha 0–255, defaulting to fully opaque when unset
 colour.is_transparent  # True when swatch_alpha is below opaque
 ```
 

@@ -1,6 +1,7 @@
 """Tests for the persistent SQLite parts index."""
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -113,7 +114,7 @@ def test_load_catalog_wrong_schema_version_returns_none(
         library_root=LIBRARY_ROOT,
         tree_fingerprint=TREE,
     )
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute(f"PRAGMA user_version = {CATALOG_SCHEMA_VERSION + 1}")
 
     assert (
@@ -154,7 +155,7 @@ def test_keywords_round_trip_through_index(tmp_path, slow_catalog) -> None:
 def test_load_catalog_v1_schema_returns_none(tmp_path) -> None:
     """An old v1 index (no keywords column) must trigger a rebuild, not crash."""
     db_path = tmp_path / "catalog.sqlite"
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("PRAGMA user_version = 1")
         connection.execute(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -193,7 +194,7 @@ def test_load_catalog_unknown_category_returns_none(tmp_path, slow_catalog) -> N
         library_root=LIBRARY_ROOT,
         tree_fingerprint=TREE,
     )
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("UPDATE parts SET category = 'not-a-category'")
 
     assert (

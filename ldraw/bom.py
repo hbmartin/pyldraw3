@@ -71,9 +71,10 @@ def _colour_name(colour: Colour, parts: Parts | None) -> str | None:
 
 
 def bill_of_materials(
-    model: _ModelLike,
+    model: _ModelLike | None = None,
     *,
     parts: Parts | None = None,
+    occurrences: Iterable[ModelOccurrence] | None = None,
 ) -> list[BomRow]:
     """Count leaf pieces by part and colour, expanding submodel references.
 
@@ -92,9 +93,19 @@ def bill_of_materials(
     Part codes are counted case-insensitively; each row shows the code as
     first written in the model.
     """
+    if (model is None) == (occurrences is None):
+        message = "provide exactly one of model or occurrences"
+        raise ValueError(message)
+    source = (
+        model.iter_occurrences(include_steps=False)
+        if model is not None
+        else occurrences
+    )
+    if source is None:  # pragma: no cover - guarded above
+        raise AssertionError
     counts: Counter[tuple[str, Colour]] = Counter()
     display: dict[str, str] = {}
-    for occurrence in model.iter_occurrences(include_steps=False):
+    for occurrence in source:
         part_key = occurrence.part_code.casefold()
         display.setdefault(part_key, occurrence.part_code)
         counts[(part_key, occurrence.colour)] += 1

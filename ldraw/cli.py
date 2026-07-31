@@ -19,6 +19,7 @@ from ldraw import generate as do_generate
 from ldraw.bom import BomRow, rows_to_csv, rows_to_json
 from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
+from ldraw.diagnostics import DiagnosticCode
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
 from ldraw.errors import (
@@ -363,30 +364,11 @@ def _suggested_import(entry: CatalogEntry) -> str | None:
     return suggested_import(entry)
 
 
-def _search_key(text: str) -> str:
-    """Casefold and collapse whitespace runs for substring matching.
-
-    Catalog descriptions are column-aligned with double spaces
-    (``Arch  1 x  6``), so naturally spaced queries only match after
-    normalization.
-    """
-    return " ".join(text.split()).casefold()
-
-
 def parts_search_command(*, term: str, limit: int) -> int:
-    """Search the parts catalog by description or code substring."""
+    """Search the parts catalog through the shared public search API."""
     if (parts := _load_parts()) is None:
         return 1
-    needle = _search_key(term)
-    matches = sorted(
-        (
-            entry
-            for entry in parts.catalog.by_code.values()
-            if needle in _search_key(entry.description)
-            or needle in entry.code.casefold()
-        ),
-        key=lambda entry: entry.description,
-    )
+    matches = parts.catalog.search(term)
     if not matches:
         print(f"No parts found matching {term!r}.", file=sys.stderr)
         return 1
@@ -432,6 +414,12 @@ def validate_command(*, file: Path, strict: bool = False) -> int:
         issues = list(iter_ldr_issues(file, parts))
     except UnicodeDecodeError as exc:
         print(f"{file}: error: not valid UTF-8 text ({exc})", file=sys.stderr)
+        return 1
+    if decode_issue := next(
+        (issue for issue in issues if issue.code is DiagnosticCode.IO_DECODE_FAILED),
+        None,
+    ):
+        print(f"{file}: error: {decode_issue.message}", file=sys.stderr)
         return 1
     for issue in issues:
         print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
@@ -777,13 +765,16 @@ def _dispatch_instructions(args: Namespace) -> int:
                 output=args.output,
                 force=args.force,
             )
-        case _:
+        case "snapshots":
             return instructions_snapshots_command(
                 file=args.file,
                 output=args.out,
                 section_name=args.section,
                 force=args.force,
             )
+        case _:
+            msg = f"Unhandled instructions subcommand: {args.instructions_command!r}"
+            raise AssertionError(msg)
 
 
 if __name__ == "__main__":  # pragma: no cover
