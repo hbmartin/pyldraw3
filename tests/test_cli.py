@@ -1059,6 +1059,74 @@ def test_render_writes_named_views_with_current_backend_options(
 
 
 @patch("ldraw.cli.render_preview", side_effect=_successful_render)
+def test_render_defaults_to_all_standard_views(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+
+    assert main(["render", str(model)]) == 0
+
+    assert [call.kwargs["view"] for call in render_mock.call_args_list] == [
+        RenderView.FRONT,
+        RenderView.ISOMETRIC,
+        RenderView.TOP,
+    ]
+    assert all(call.kwargs["size"] == (800, 600) for call in render_mock.call_args_list)
+    assert all(call.kwargs["backend"] is None for call in render_mock.call_args_list)
+    assert all(call.kwargs["refresh"] is False for call in render_mock.call_args_list)
+    for view in RenderView:
+        output = tmp_path / f"model.{view.value}.png"
+        assert output.read_bytes() == f"{view.value}:False".encode()
+    assert capsys.readouterr().out.count("RENDERED:") == len(RenderView)
+
+
+def test_render_promotes_and_reports_cached_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+
+    def cached_render(  # noqa: PLR0913 - mirrors render_preview
+        source: str | Path,
+        *,
+        view: RenderView,
+        size: tuple[int, int],
+        backend: RenderBackend | None,
+        output: str | Path | None,
+        refresh: bool,
+    ) -> RenderResult:
+        fresh = _successful_render(
+            source=source,
+            view=view,
+            size=size,
+            backend=backend,
+            output=output,
+            refresh=refresh,
+        )
+        return RenderResult(
+            source=fresh.source,
+            view=fresh.view,
+            size=fresh.size,
+            backend=fresh.backend,
+            output=fresh.output,
+            cached=True,
+        )
+
+    monkeypatch.setattr("ldraw.cli.render_preview", cached_render)
+
+    assert main(["render", str(model), "--view", "front"]) == 0
+
+    output = tmp_path / "model.front.png"
+    assert output.read_bytes() == b"front:False"
+    assert capsys.readouterr().out == f"CACHED: {output}\n"
+
+
+@patch("ldraw.cli.render_preview", side_effect=_successful_render)
 def test_render_preflights_conflicts_and_validates_request(
     render_mock: MagicMock,
     tmp_path: Path,

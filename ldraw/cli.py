@@ -599,14 +599,14 @@ def inspect_command(  # noqa: PLR0913 - mirrors explicit CLI controls
     if (parts := _load_parts()) is None:
         return 1
 
-    loaded = load_model(file, parts)
+    loaded = load_model(file, parts=parts)
     if loaded.model is None:
         _print_diagnostics(loaded.diagnostics, fallback_path=file)
         return 1
     try:
         inspection = inspect_model(
             loaded.model,
-            parts,
+            parts=parts,
             page_marker_prefix=page_marker_prefix,
         )
         contacts = inspection.contact_gaps(
@@ -726,8 +726,9 @@ def render_command(  # noqa: PLR0911, PLR0913 - explicit CLI controls
         print(f"render failed: {exc}", file=sys.stderr)
         return 1
 
-    for output in outputs:
-        print(f"RENDERED: {output}")
+    for result, output in zip(staged_results, outputs, strict=True):
+        status = "CACHED" if result.cached else "RENDERED"
+        print(f"{status}: {output}")
     return 0
 
 
