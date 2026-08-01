@@ -355,6 +355,69 @@ def _response_validator_matches(
     return None
 
 
+def _resume_state(
+    partial: Path,
+    *,
+    resume: bool,
+) -> tuple[int, _ResumeValidator | None, dict[str, str] | None]:
+    """Return the resume offset, stored validator, and request headers."""
+    offset = partial.stat().st_size if resume and partial.is_file() else 0
+    if not offset:
+        return 0, None, None
+    validator = _read_resume_validator(partial)
+    if validator is None or validator.header_value is None:
+        # Without a stored freshness validator a partial cannot be safely
+        # resumed against a possibly changed remote file; start over.
+        _discard_partial(partial)
+        return 0, None, None
+    headers = {"Range": f"bytes={offset}-", "If-Range": validator.header_value}
+    return offset, validator, headers
+
+
+def _finalize_unsatisfiable_range(
+    *,
+    response: requests.Response,
+    partial: Path,
+    offset: int,
+    validator: _ResumeValidator | None,
+) -> bool:
+    """Handle a 416: keep a complete, still-current partial or discard it."""
+    complete_size = _content_range_complete_size(
+        response.headers.get("content-range"),
+    )
+    stored_total = validator.total if validator is not None else None
+    expected_size = complete_size if complete_size is not None else stored_total
+    if (
+        offset
+        and offset == expected_size
+        and validator is not None
+        and _response_validator_matches(response, validator) is True
+    ):
+        # Only an explicitly echoed matching validator proves that
+        # the complete partial still represents the current file.
+        return True
+    _discard_partial(partial)
+    return False
+
+
+def _resume_is_consistent(
+    *,
+    response: requests.Response,
+    offset: int,
+    validator: _ResumeValidator | None,
+) -> bool:
+    """Check that a 206 continues the local partial's exact current state."""
+    if (
+        validator is not None
+        and _response_validator_matches(response, validator) is False
+    ):
+        # A server that ignored If-Range can otherwise splice two releases.
+        return False
+    # A 206 that resumes from a different position than the local partial
+    # ends at would corrupt the archive when appended.
+    return _content_range_start(response.headers.get("content-range")) == offset
+
+
 def _download(  # noqa: PLR0913 - streaming state and controls are explicit
     url: str,
     filename: str,
@@ -428,20 +491,7 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
     Returns True when ``partial`` holds the complete body, False when the
     attempt discarded an unusable partial and the caller should restart.
     """
-    offset = partial.stat().st_size if resume and partial.is_file() else 0
-    validator = _read_resume_validator(partial) if offset else None
-    if offset and (validator is None or validator.header_value is None):
-        # Without a stored freshness validator a partial cannot be safely
-        # resumed against a possibly changed remote file; start over.
-        _discard_partial(partial)
-        offset = 0
-        validator = None
-    request_headers: dict[str, str] | None = None
-    if offset and validator is not None and validator.header_value is not None:
-        request_headers = {
-            "Range": f"bytes={offset}-",
-            "If-Range": validator.header_value,
-        }
+    offset, validator, request_headers = _resume_state(partial, resume=resume)
     with requests.get(
         url=url,
         stream=True,
@@ -449,41 +499,19 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
         headers=request_headers,
     ) as response:
         if response.status_code == _HTTP_RANGE_NOT_SATISFIABLE:
-            complete_size = _content_range_complete_size(
-                response.headers.get("content-range"),
+            return _finalize_unsatisfiable_range(
+                response=response,
+                partial=partial,
+                offset=offset,
+                validator=validator,
             )
-            stored_total = validator.total if validator is not None else None
-            expected_size = complete_size if complete_size is not None else stored_total
-            if (
-                offset
-                and offset == expected_size
-                and validator is not None
-                and _response_validator_matches(response, validator) is True
-            ):
-                # Only an explicitly echoed matching validator proves that
-                # the complete partial still represents the current file.
-                return True
-            _discard_partial(partial)
-            return False
         response.raise_for_status()
         accepted_resume = offset > 0 and response.status_code == _HTTP_PARTIAL_CONTENT
-        if (
-            accepted_resume
-            and validator is not None
-            and _response_validator_matches(response, validator) is False
+        if accepted_resume and not _resume_is_consistent(
+            response=response,
+            offset=offset,
+            validator=validator,
         ):
-            # A server that ignored If-Range can otherwise splice two releases.
-            _discard_partial(partial)
-            return False
-        if (
-            accepted_resume
-            and _content_range_start(
-                response.headers.get("content-range"),
-            )
-            != offset
-        ):
-            # The server resumed from a different position than the local
-            # partial ends at; appending would corrupt the archive.
             _discard_partial(partial)
             return False
         if offset and not accepted_resume:

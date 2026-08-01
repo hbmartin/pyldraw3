@@ -248,36 +248,65 @@ def _collect_metadata_fields(lines: list[str]) -> _MetadataFields:
     return fields
 
 
-def _apply_header_command(  # noqa: C901 - flat dispatch over header commands
-    tokens: list[str],
+def _apply_header_command(tokens: list[str], fields: _MetadataFields) -> bool:
+    match tokens:
+        case ["0", command, *rest]:
+            value = " ".join(rest)
+            return _apply_identity_command(
+                command=command,
+                value=value,
+                fields=fields,
+            ) or _apply_annotation_command(command=command, value=value, fields=fields)
+        case _:
+            return False
+
+
+def _apply_identity_command(
+    *,
+    command: str,
+    value: str,
     fields: _MetadataFields,
 ) -> bool:
-    match tokens:
-        case ["0", "Name:", *rest]:
-            fields.name = " ".join(rest) or None
-        case ["0", "Author:", *rest]:
-            if match := _AUTHOR_USER_RE.match(" ".join(rest)):
+    """Apply a header command describing the part's identity and provenance."""
+    match command:
+        case "Name:":
+            fields.name = value or None
+        case "Author:":
+            if match := _AUTHOR_USER_RE.match(value):
                 fields.author = match.group("author").strip() or None
                 fields.author_username = match.group("user")
-        case ["0", "!LDRAW_ORG", *rest]:
+        case "!LDRAW_ORG":
             (
                 fields.file_kind,
                 fields.origin,
                 fields.qualifiers,
                 fields.release,
-            ) = _parse_ldraw_org(" ".join(rest))
-        case ["0", "!LICENSE", *rest]:
-            fields.license = " ".join(rest) or None
-        case ["0", "BFC", *rest]:
-            fields.bfc = _parse_bfc(" ".join(rest))
-        case ["0", "!CATEGORY", *rest]:
-            fields.category = " ".join(rest) or None
-        case ["0", "!KEYWORDS", *rest]:
-            _extend_keywords(fields.keywords, " ".join(rest))
-        case ["0", "!HISTORY", *rest]:
-            fields.history.append(_parse_history(" ".join(rest)))
-        case ["0", "!PREVIEW", *rest]:
-            fields.preview = _parse_preview(" ".join(rest))
+            ) = _parse_ldraw_org(value)
+        case "!LICENSE":
+            fields.license = value or None
+        case _:
+            return False
+    return True
+
+
+def _apply_annotation_command(
+    *,
+    command: str,
+    value: str,
+    fields: _MetadataFields,
+) -> bool:
+    """Apply a header command annotating geometry, search, or history."""
+    match command:
+        case "BFC":
+            fields.bfc = _parse_bfc(value)
+        case "!CATEGORY":
+            fields.category = value or None
+        case "!KEYWORDS":
+            _extend_keywords(fields.keywords, value)
+        case "!HISTORY":
+            fields.history.append(_parse_history(value))
+        case "!PREVIEW":
+            fields.preview = _parse_preview(value)
         case _:
             return False
     return True

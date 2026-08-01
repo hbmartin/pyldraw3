@@ -356,74 +356,15 @@ class LDrawSession:
                     ),
                 )
 
-        parts: Parts | None = None
-        outcome = CatalogBuildOutcome.UNAVAILABLE
-        persisted = False
-        if LDrawCapability.CATALOG in required:
-            paths.generated_path.mkdir(parents=True, exist_ok=True)
-            catalog = (
-                None
-                if force
-                else load_catalog(
-                    paths.catalog_db,
-                    md5=snapshot.parts_lst_md5,
-                    library_root=paths.parts_lst.parent,
-                    tree_fingerprint=snapshot.tree_fingerprint,
-                    on_progress=on_progress,
-                    cancellation=cancellation,
-                )
-            )
-            if catalog is not None:
-                parts = Parts.get(
-                    paths.parts_lst,
-                    tree_fingerprint=snapshot.tree_fingerprint,
-                )
-                parts.adopt_catalog(catalog)
-                # A generation step above may have just rebuilt and
-                # persisted the index this load came from.
-                outcome = (
-                    CatalogBuildOutcome.REBUILT
-                    if initial.needs_index_rebuild
-                    else CatalogBuildOutcome.LOADED
-                )
-                persisted = True
-            else:
-                # A memoized instance may hold a categorization from
-                # before an in-place ``.dat`` edit; rebuild from a fresh
-                # one so the new fingerprint never keys stale data.
-                parts = Parts.fresh(
-                    paths.parts_lst,
-                    tree_fingerprint=snapshot.tree_fingerprint,
-                )
-                catalog = parts.build_catalog(
-                    on_progress=on_progress,
-                    cancellation=cancellation,
-                )
-                try:
-                    _persist_catalog_atomically(
-                        paths=paths,
-                        parts=parts,
-                        catalog=catalog,
-                        fingerprint=snapshot,
-                        on_progress=on_progress,
-                        cancellation=cancellation,
-                    )
-                    outcome = CatalogBuildOutcome.REBUILT
-                    persisted = True
-                except (OSError, sqlite3.Error) as error:
-                    outcome = CatalogBuildOutcome.REBUILT_NOT_PERSISTED
-                    diagnostics.append(
-                        Diagnostic(
-                            message=f"Could not persist catalog index: {error}",
-                            severity=Severity.WARNING,
-                            code=DiagnosticCode.CATALOG_PERSIST_FAILED,
-                            path=paths.catalog_db,
-                            cause=error,
-                        ),
-                    )
-        else:
-            parts = Parts.get(paths.parts_lst)
-            outcome = CatalogBuildOutcome.LOADED
+        parts, outcome, persisted = self._catalog_parts(
+            required=required,
+            force=force,
+            snapshot=snapshot,
+            initial=initial,
+            diagnostics=diagnostics,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
 
         final = self.state(capabilities=required, fingerprint=snapshot)
         report = CatalogBuildReport(
@@ -432,10 +373,8 @@ class LDrawSession:
             fingerprint=snapshot,
             entry_count=(
                 len(parts.catalog.by_code)
-                if parts is not None and LDrawCapability.CATALOG in required
+                if LDrawCapability.CATALOG in required
                 else len(parts.by_code)
-                if parts is not None
-                else 0
             ),
             outcome=outcome,
             persisted=persisted,
@@ -451,6 +390,85 @@ class LDrawSession:
             report=report,
             diagnostics=tuple(diagnostics),
         )
+
+    def _catalog_parts(  # noqa: PLR0913 - orchestration state is explicit
+        self,
+        *,
+        required: frozenset[LDrawCapability],
+        force: bool,
+        snapshot: CatalogFingerprint,
+        initial: LDrawState,
+        diagnostics: list[Diagnostic],
+        on_progress: ProgressCallback | None,
+        cancellation: CancellationToken | None,
+    ) -> tuple[Parts, CatalogBuildOutcome, bool]:
+        """Load or rebuild catalog parts as (parts, outcome, persisted)."""
+        paths = self.paths
+        if LDrawCapability.CATALOG not in required:
+            parts = Parts.get(
+                paths.parts_lst,
+                tree_fingerprint=snapshot.tree_fingerprint,
+            )
+            return parts, CatalogBuildOutcome.LOADED, False
+        paths.generated_path.mkdir(parents=True, exist_ok=True)
+        catalog = (
+            None
+            if force
+            else load_catalog(
+                paths.catalog_db,
+                md5=snapshot.parts_lst_md5,
+                library_root=paths.parts_lst.parent,
+                tree_fingerprint=snapshot.tree_fingerprint,
+                on_progress=on_progress,
+                cancellation=cancellation,
+            )
+        )
+        if catalog is not None:
+            parts = Parts.get(
+                paths.parts_lst,
+                tree_fingerprint=snapshot.tree_fingerprint,
+            )
+            parts.adopt_catalog(catalog)
+            # A generation step in ``prepare_catalog`` may have just
+            # rebuilt and persisted the index this load came from.
+            outcome = (
+                CatalogBuildOutcome.REBUILT
+                if initial.needs_index_rebuild
+                else CatalogBuildOutcome.LOADED
+            )
+            return parts, outcome, True
+        # A memoized instance may hold a categorization from before an
+        # in-place ``.dat`` edit; rebuild from a fresh one so the new
+        # fingerprint never keys stale data.
+        parts = Parts.fresh(
+            paths.parts_lst,
+            tree_fingerprint=snapshot.tree_fingerprint,
+        )
+        catalog = parts.build_catalog(
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+        try:
+            _persist_catalog_atomically(
+                paths=paths,
+                parts=parts,
+                catalog=catalog,
+                fingerprint=snapshot,
+                on_progress=on_progress,
+                cancellation=cancellation,
+            )
+        except (OSError, sqlite3.Error) as error:
+            diagnostics.append(
+                Diagnostic(
+                    message=f"Could not persist catalog index: {error}",
+                    severity=Severity.WARNING,
+                    code=DiagnosticCode.CATALOG_PERSIST_FAILED,
+                    path=paths.catalog_db,
+                    cause=error,
+                ),
+            )
+            return parts, CatalogBuildOutcome.REBUILT_NOT_PERSISTED, False
+        return parts, CatalogBuildOutcome.REBUILT, True
 
     def rebuild_index(
         self,
