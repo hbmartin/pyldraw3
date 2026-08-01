@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call
@@ -647,6 +648,42 @@ def test_preview_cache_pruning_preserves_active_temporary_files(
     assert temporary.exists()
 
 
+def test_preview_cache_pruning_ignores_missing_cache_directory(
+    tmp_path: Path,
+) -> None:
+    missing_cache = tmp_path / "missing-previews"
+
+    rendering._prune_preview_cache(missing_cache)  # noqa: SLF001
+
+    assert not missing_cache.exists()
+
+
+def test_preview_cache_pruning_ignores_candidate_stat_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    unreadable = cache / "unreadable.png"
+    unreadable.write_bytes(b"png!")
+    original_stat = Path.stat
+
+    def fail_unreadable_stat(
+        path: Path,
+        *,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        if path == unreadable:
+            raise OSError
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", fail_unreadable_stat)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert unreadable.read_bytes() == b"png!"
+
+
 def test_preview_cache_pruning_checks_cancellation_during_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -776,6 +813,60 @@ def test_preview_cache_prune_is_throttled_by_marker(
     rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
 
     assert not second.exists()
+
+
+def test_preview_cache_prune_skips_when_thread_claim_is_held(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    prune = MagicMock()
+    monkeypatch.setattr("ldraw.rendering._prune_preview_cache", prune)
+
+    with rendering._CACHE_PRUNE_THREAD_LOCK:  # noqa: SLF001
+        rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    prune.assert_not_called()
+
+
+def test_preview_cache_prune_skips_when_process_claim_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    prune = MagicMock()
+    monkeypatch.setattr("ldraw.rendering._prune_preview_cache", prune)
+    monkeypatch.setattr(
+        "ldraw.rendering._preview_cache_prune_claim",
+        lambda _cache_root: nullcontext(enter_result=False),
+    )
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    prune.assert_not_called()
+
+
+def test_preview_cache_prune_rechecks_marker_after_process_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    prune = MagicMock()
+    is_due = MagicMock(side_effect=(True, False))
+    monkeypatch.setattr("ldraw.rendering._prune_preview_cache", prune)
+    monkeypatch.setattr("ldraw.rendering._preview_cache_prune_is_due", is_due)
+    monkeypatch.setattr(
+        "ldraw.rendering._preview_cache_prune_claim",
+        lambda _cache_root: nullcontext(enter_result=True),
+    )
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    assert is_due.call_count == 2
+    prune.assert_not_called()
 
 
 def test_preview_cache_prune_releases_cache_lock_before_sweep(

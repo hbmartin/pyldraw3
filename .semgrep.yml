@@ -46,6 +46,8 @@ rules:
       - pattern-either:
           - pattern: _response_validator_matches(...) is False
           - pattern: _response_validator_matches(...) is not False
+          - pattern: _response_validator_matches(...) == False
+          - pattern: _response_validator_matches(...) != False
           - patterns:
               - pattern-inside: |
                   $MATCHED = _response_validator_matches(...)
@@ -53,6 +55,8 @@ rules:
               - pattern-either:
                   - pattern: $MATCHED is False
                   - pattern: $MATCHED is not False
+                  - pattern: $MATCHED == False
+                  - pattern: $MATCHED != False
 
   - id: pyldraw-renderer-shutdown-must-bound-communicate
     languages:
@@ -69,8 +73,11 @@ rules:
       - metavariable-regex:
           metavariable: $SHUTDOWN_HELPER
           regex: ^_(stop|drain_forced)_renderer$
-      - pattern: $PROCESS.communicate(...)
-      - pattern-not: $PROCESS.communicate(..., timeout=$TIMEOUT, ...)
+      - pattern-either:
+          - patterns:
+              - pattern: $PROCESS.communicate(...)
+              - pattern-not: $PROCESS.communicate(..., timeout=$TIMEOUT, ...)
+          - pattern: $PROCESS.communicate(..., timeout=None, ...)
 
   - id: pyldraw-preview-cache-prune-requires-process-claim
     languages:

@@ -12,7 +12,9 @@ class Process:
 
 def _stop_renderer(process: Process) -> tuple[str, str]:
     # ruleid: pyldraw-renderer-shutdown-must-bound-communicate
-    return process.communicate(input=b"quit")
+    process.communicate(input=b"quit")
+    # ruleid: pyldraw-renderer-shutdown-must-bound-communicate
+    return process.communicate(input=b"quit", timeout=None)
 
 
 def _drain_forced_renderer(process: Process) -> tuple[str, str]:
@@ -25,8 +27,8 @@ def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
     yield cache_root.is_dir()
 
 
-def _prune_preview_cache(cache_root: Path) -> None:
-    del cache_root
+def _prune_preview_cache(_cache_root: Path) -> None:
+    pass
 
 
 def _maybe_prune_preview_cache(cache_root: Path, other: Path) -> None:
