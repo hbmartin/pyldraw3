@@ -38,6 +38,15 @@ class _ModelLike(Protocol):
         raise NotImplementedError
 
 
+def _model_occurrences(model: _ModelLike) -> Iterator[ModelOccurrence]:
+    """Yield BOM occurrences, tolerating cycles for concrete Models."""
+    from ldraw.model import Model, _iter_occurrences_skip_cycles  # noqa: PLC0415
+
+    if isinstance(model, Model):
+        return _iter_occurrences_skip_cycles(model, include_steps=False)
+    return model.iter_occurrences(include_steps=False)
+
+
 @dataclass(frozen=True, slots=True)
 class BomRow:
     """One line of a bill of materials."""
@@ -96,11 +105,7 @@ def bill_of_materials(
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"
         raise ValueError(message)
-    source = (
-        model.iter_occurrences(include_steps=False)
-        if model is not None
-        else occurrences
-    )
+    source = _model_occurrences(model) if model is not None else occurrences
     if source is None:  # pragma: no cover - guarded above
         raise AssertionError
     counts: Counter[tuple[str, Colour]] = Counter()

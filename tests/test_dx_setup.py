@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
+import time
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -501,8 +503,10 @@ def test_render_preview_timeout_reports_captured_renderer_output(
     )
     monkeypatch.setattr("ldraw.rendering._RENDER_TIMEOUT_SECONDS", 1)
 
+    started = time.monotonic()
     result = render_preview(model, cache_path=tmp_path / "cache")
 
+    assert time.monotonic() - started < 5
     assert result.complete is False
     assert result.diagnostics[0].code is DiagnosticCode.RENDER_FAILED
     assert "timed out" in result.diagnostics[0].message
@@ -535,3 +539,31 @@ def test_render_preview_rejects_non_png_renderer_output(
     assert "not a PNG" in result.diagnostics[0].message
     assert "junk-warning" in result.diagnostics[0].message
     assert list((tmp_path / "cache").glob("*.png")) == []
+
+
+def test_preview_cache_pruning_removes_aged_and_excess_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    aged = cache / "aged.png"
+    overflow = cache / "overflow.png"
+    newest = cache / "newest.png"
+    unrelated = cache / "notes.txt"
+    for path in (aged, overflow, newest):
+        path.write_bytes(b"png!")
+    unrelated.write_text("keep", encoding="utf-8")
+    os.utime(aged, (100, 100))
+    os.utime(overflow, (800, 800))
+    os.utime(newest, (900, 900))
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 4)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert not aged.exists()
+    assert not overflow.exists()
+    assert newest.exists()
+    assert unrelated.exists()

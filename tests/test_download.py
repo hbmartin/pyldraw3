@@ -106,6 +106,14 @@ def test_download(
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
     zip_mock.return_value.__enter__.return_value.infolist.return_value = []
+    zip_mock.return_value.__enter__.return_value.testzip.return_value = None
+    retrieved = tmp_path / "complete.zip"
+
+    def retrieve(**_kwargs: object) -> Path:
+        retrieved.write_bytes(b"zip")
+        return retrieved
+
+    download_mock.side_effect = retrieve
 
     with patch(
         "ldraw.downloads.get_latest_release_id",
@@ -126,7 +134,13 @@ def test_download_versioned_uses_archive_url(
     download_mock: MagicMock,
     unpack_version_mock: MagicMock,
     generate_parts_lst_mock: MagicMock,
+    tmp_path: Path,
 ) -> None:
+    retrieved = tmp_path / "2018-02.zip"
+    with zipfile.ZipFile(retrieved, "w") as archive:
+        archive.writestr("ldraw/parts.lst", "parts")
+    download_mock.return_value = retrieved
+
     download(show_progress=False, version="2018-02")
 
     assert download_mock.call_args.kwargs["url"] == f"{ARCHIVE_URL}/2018-02.zip"
@@ -143,6 +157,10 @@ def test_download_complete_uses_ldraw_url(
     get_latest_release_id_mock: MagicMock,
     tmp_path: Path,
 ) -> None:
+    retrieved = tmp_path / "retrieved.zip"
+    with zipfile.ZipFile(retrieved, "w") as archive:
+        archive.writestr("ldraw/parts.lst", "parts")
+    download_mock.return_value = retrieved
     unpack_version_mock.return_value = tmp_path
 
     assert download(show_progress=False) == "2099-01"
@@ -166,14 +184,14 @@ def test_unpack_version_rejects_unsafe_zip_member(
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path / "cache")
 
     with pytest.raises(ValueError, match="Unsafe ZIP member path"):
-        unpack_version(version_zip, "2018-02")
+        unpack_version(version_zip=version_zip, version="2018-02")
 
     assert not (tmp_path / "escape.dat").exists()
 
 
 def test_unpack_version_rejects_invalid_version(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unsupported LDraw library version"):
-        unpack_version(tmp_path / "missing.zip", "../bad")
+        unpack_version(version_zip=tmp_path / "missing.zip", version="../bad")
 
 
 @patch("ldraw.downloads.requests.get")
@@ -187,7 +205,7 @@ def test_download_failure_leaves_no_cached_file(
     response.iter_content.side_effect = requests.ConnectionError("dropped")
 
     with pytest.raises(requests.ConnectionError):
-        _download("https://example.test/x.zip", "x.zip")
+        _download(url="https://example.test/x.zip", filename="x.zip")
 
     assert not (tmp_path / "x.zip").exists()
 
@@ -202,7 +220,7 @@ def test_download_success_replaces_partial_file(
     response = get_mock.return_value.__enter__.return_value
     response.iter_content.return_value = [b"zip-bytes"]
 
-    result = _download("https://example.test/x.zip", "x.zip")
+    result = _download(url="https://example.test/x.zip", filename="x.zip")
 
     assert result == tmp_path / "x.zip"
     assert result.read_bytes() == b"zip-bytes"
@@ -229,8 +247,8 @@ def test_download_resume_appends_partial_and_sends_range_with_if_range(
     )
 
     result = _download(
-        "https://example.test/x.zip",
-        "x.zip",
+        url="https://example.test/x.zip",
+        filename="x.zip",
         resume=True,
     )
 
@@ -252,7 +270,11 @@ def test_download_resume_without_stored_validator_restarts_from_scratch(
         [FakeResponse(headers={"content-length": "5"}, chunks=(b"fresh",))],
     )
 
-    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
 
     assert sent_headers == [None]
     assert result.read_bytes() == b"fresh"
@@ -271,7 +293,11 @@ def test_download_resume_200_response_truncates_and_restarts(
         [FakeResponse(headers={"content-length": "9"}, chunks=(b"full-body",))],
     )
 
-    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
 
     assert sent_headers == [{"Range": "bytes=6-", "If-Range": '"v1"'}]
     assert result.read_bytes() == b"full-body"
@@ -293,7 +319,11 @@ def test_download_resume_416_discards_partial_and_restarts_once(
         ],
     )
 
-    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
 
     assert len(sent_headers) == 2
     assert sent_headers[1] is None
@@ -314,16 +344,126 @@ def test_download_resume_416_finalizes_complete_partial(
         [
             FakeResponse(
                 status_code=416,
-                headers={"content-range": f"bytes */{len(b'complete-bytes')}"},
+                headers={
+                    "content-range": f"bytes */{len(b'complete-bytes')}",
+                    "etag": '"v1"',
+                },
             ),
         ],
     )
 
-    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
 
     assert len(sent_headers) == 1
     assert result.read_bytes() == b"complete-bytes"
     assert not partial.exists()
+
+
+def test_download_resume_416_remote_size_overrides_stale_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"stale")
+    _write_sidecar(partial, etag='"v1"', total=len(b"stale"))
+    fresh = b"new!"
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=416,
+                headers={"content-range": f"bytes */{len(fresh)}"},
+            ),
+            FakeResponse(
+                headers={"content-length": str(len(fresh))},
+                chunks=(fresh,),
+            ),
+        ],
+    )
+
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
+
+    assert len(sent_headers) == 2
+    assert sent_headers[1] is None
+    assert result.read_bytes() == fresh
+
+
+def test_download_resume_416_restarts_when_same_size_validator_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"stale")
+    _write_sidecar(partial, etag='"v1"', total=5)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=416,
+                headers={"content-range": "bytes */5", "etag": '"v2"'},
+            ),
+            FakeResponse(headers={"content-length": "5"}, chunks=(b"fresh",)),
+        ],
+    )
+
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
+
+    assert sent_headers == [
+        {"Range": "bytes=5-", "If-Range": '"v1"'},
+        None,
+    ]
+    assert result.read_bytes() == b"fresh"
+
+
+def test_download_resume_206_restarts_when_response_validator_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"old-")
+    _write_sidecar(partial, etag='"v1"', total=8)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=206,
+                headers={
+                    "content-length": "4",
+                    "content-range": "bytes 4-7/8",
+                    "etag": '"v2"',
+                },
+                chunks=(b"tail",),
+            ),
+            FakeResponse(headers={"content-length": "8"}, chunks=(b"new-file",)),
+        ],
+    )
+
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
+
+    assert sent_headers == [
+        {"Range": "bytes=4-", "If-Range": '"v1"'},
+        None,
+    ]
+    assert result.read_bytes() == b"new-file"
 
 
 def test_download_resume_content_range_mismatch_restarts(
@@ -346,7 +486,11 @@ def test_download_resume_content_range_mismatch_restarts(
         ],
     )
 
-    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
 
     assert len(sent_headers) == 2
     assert sent_headers[1] is None
@@ -370,7 +514,11 @@ def test_download_midstream_error_with_resume_preserves_partial_and_sidecar(
     )
 
     with pytest.raises(requests.ConnectionError):
-        _download("https://example.test/x.zip", "x.zip", resume=True)
+        _download(
+            url="https://example.test/x.zip",
+            filename="x.zip",
+            resume=True,
+        )
 
     partial = tmp_path / "x.zip.part"
     assert partial.read_bytes() == b"begin"
@@ -451,7 +599,7 @@ def test_download_timeout_is_set(
     response = get_mock.return_value.__enter__.return_value
     response.iter_content.return_value = [b"zip-bytes"]
 
-    _download("https://example.test/x.zip", "x.zip")
+    _download(url="https://example.test/x.zip", filename="x.zip")
 
     assert get_mock.call_args.kwargs["timeout"] == 30
 
@@ -467,7 +615,7 @@ def test_download_failure_cleans_up_part_file(
     response.iter_content.side_effect = requests.ConnectionError("dropped")
 
     with pytest.raises(requests.ConnectionError):
-        _download("https://example.test/x.zip", "x.zip")
+        _download(url="https://example.test/x.zip", filename="x.zip")
 
     assert not (tmp_path / "x.zip.part").exists()
 
@@ -537,6 +685,10 @@ def test_download_complete_discards_cached_zip(
         patch("ldraw.downloads._download") as download_mock,
     ):
         unpack_version_mock.return_value = tmp_path / "complete"
+        replacement = tmp_path / "replacement.zip"
+        with zipfile.ZipFile(replacement, "w") as archive:
+            archive.writestr("ldraw/parts.lst", "parts")
+        download_mock.return_value = replacement
         download(show_progress=False)
 
     assert not stale.exists()
@@ -557,6 +709,7 @@ def test_download_versioned_keeps_cached_zip(
     cached = tmp_path / "2018-02.zip"
     with zipfile.ZipFile(cached, "w") as archive:
         archive.writestr("ldraw/parts.lst", "parts")
+    download_mock.return_value = cached
 
     download(show_progress=False, version="2018-02")
 
@@ -576,11 +729,41 @@ def test_download_versioned_discards_corrupt_cached_zip(
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
     corrupt = tmp_path / "2018-02.zip"
     corrupt.write_bytes(b"definitely not a zip archive")
+    replacement = tmp_path / "replacement.zip"
+
+    def replacement_download(**_kwargs: object) -> Path:
+        with zipfile.ZipFile(replacement, "w") as archive:
+            archive.writestr("ldraw/parts.lst", "parts")
+        return replacement
+
+    download_mock.side_effect = replacement_download
 
     download(show_progress=False, version="2018-02")
 
     assert not corrupt.exists()
     download_mock.assert_called_once()
+
+
+@patch("ldraw.downloads.generate_parts_lst")
+@patch("ldraw.downloads.unpack_version")
+@patch("ldraw.downloads._download")
+def test_download_discards_corrupt_fresh_archive_before_unpacking(
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    corrupt = tmp_path / "2018-02.zip"
+    corrupt.write_bytes(b"definitely not a zip archive")
+    download_mock.return_value = corrupt
+
+    with pytest.raises(zipfile.BadZipFile, match="failed integrity check"):
+        download(show_progress=False, version="2018-02")
+
+    assert not corrupt.exists()
+    unpack_version_mock.assert_not_called()
 
 
 def test_unpack_version_discards_bad_zip_for_self_heal(
@@ -592,7 +775,11 @@ def test_unpack_version_discards_bad_zip_for_self_heal(
     version_zip.write_bytes(b"junk bytes, not a zip")
 
     with pytest.raises(zipfile.BadZipFile):
-        unpack_version(version_zip, "2018-02", show_progress=False)
+        unpack_version(
+            version_zip=version_zip,
+            version="2018-02",
+            show_progress=False,
+        )
 
     assert not version_zip.exists()
 
@@ -685,7 +872,11 @@ def test_unpack_version_show_progress_false_is_silent(
     version_zip = tmp_path / "2018-02.zip"
     version_zip.write_bytes(b"zip")
 
-    unpack_version(version_zip, "2018-02", show_progress=False)
+    unpack_version(
+        version_zip=version_zip,
+        version="2018-02",
+        show_progress=False,
+    )
 
     assert capsys.readouterr().out == ""
 

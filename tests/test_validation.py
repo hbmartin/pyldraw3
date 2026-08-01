@@ -306,15 +306,18 @@ def test_every_diagnostic_code_is_a_stable_enum_member(
     assert DiagnosticCode.MODEL_UNKNOWN_META.value == "model.unknown_meta"
 
 
+@pytest.mark.parametrize("suffix", ["ldr", "mpd"])
 def test_unresolved_sibling_reference_without_catalog_is_one_warning(
     tmp_path: Path,
+    suffix: str,
 ) -> None:
-    text = f"0 FILE main.ldr\n1 16 0 0 0 {IDENTITY} missing.ldr\n0 NOFILE\n"
+    text = f"0 FILE main.ldr\n1 16 0 0 0 {IDENTITY} missing.{suffix}\n0 NOFILE\n"
 
     issues = validate(tmp_path, text, None)
 
     assert [issue.code for issue in issues] == [DiagnosticCode.MPD_UNRESOLVED_SUBMODEL]
     assert issues[0].severity is Severity.WARNING
+    assert issues[0].section == "main.ldr"
     assert issues[0].line_number == 2
 
 
@@ -326,6 +329,8 @@ def test_unresolved_sibling_reference_with_catalog_is_not_double_reported(
 
     issues = validate(tmp_path, text, parts)
 
-    assert [issue.code for issue in issues] == [DiagnosticCode.MPD_UNRESOLVED_SUBMODEL]
+    assert [(issue.code, issue.section, issue.line_number) for issue in issues] == [
+        (DiagnosticCode.MPD_UNRESOLVED_SUBMODEL, "main.ldr", 2)
+    ]
     assert issues[0].severity is Severity.WARNING
     assert DiagnosticCode.MODEL_UNKNOWN_PART not in {issue.code for issue in issues}

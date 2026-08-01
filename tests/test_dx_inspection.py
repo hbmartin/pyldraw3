@@ -337,6 +337,21 @@ def test_diagnostics_and_part_inspection_are_machine_readable(tmp_path: Path) ->
     }
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(float("nan"), "nan"), (float("inf"), "inf"), (float("-inf"), "-inf")],
+)
+def test_diagnostic_serializes_non_finite_floats_as_strings(
+    value: float,
+    expected: str,
+) -> None:
+    encoded = Diagnostic(message="non-finite", offending_value=value).to_dict()
+
+    assert encoded["offending_value"] == expected
+    strict_json = json.dumps(encoded, allow_nan=False)
+    assert json.loads(strict_json)["offending_value"] == expected
+
+
 def test_cancellation_token_is_idempotent_and_observable() -> None:
     token = CancellationToken()
 

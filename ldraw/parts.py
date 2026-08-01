@@ -614,7 +614,11 @@ def _catalog_search_rank(entry: CatalogEntry, query: str) -> int:
 
 
 @lru_cache(maxsize=8)
-def _parts_for_stat(parts_lst: str, _stat_key: tuple[int, int]) -> Parts:
+def _parts_for_stat(
+    parts_lst: str,
+    _stat_key: tuple[int, int],
+    _tree_fingerprint: str | None,
+) -> Parts:
     return Parts(parts_lst)
 
 
@@ -637,13 +641,19 @@ class Parts:
     )
 
     @classmethod
-    def get(cls, parts_lst: str | Path) -> Parts:
-        """Get a memoized Parts instance, keyed by path, mtime, and size."""
+    def get(
+        cls,
+        parts_lst: str | Path,
+        *,
+        tree_fingerprint: str | None = None,
+    ) -> Parts:
+        """Get a memoized Parts keyed by list stat and optional tree fingerprint."""
         path = Path(parts_lst).expanduser()
         stat_result = path.stat()
         return _parts_for_stat(
             str(path),
             (stat_result.st_mtime_ns, stat_result.st_size),
+            tree_fingerprint,
         )
 
     @classmethod
@@ -652,7 +662,12 @@ class Parts:
         _parts_for_stat.cache_clear()
 
     @classmethod
-    def fresh(cls, parts_lst: str | Path) -> Parts:
+    def fresh(
+        cls,
+        parts_lst: str | Path,
+        *,
+        tree_fingerprint: str | None = None,
+    ) -> Parts:
         """Return a freshly constructed Parts, replacing the memoized one.
 
         ``get`` memoizes on the ``parts.lst`` stat key, so an in-place
@@ -662,7 +677,7 @@ class Parts:
         instance.
         """
         cls.clear_cache()
-        return cls.get(parts_lst)
+        return cls.get(parts_lst, tree_fingerprint=tree_fingerprint)
 
     def __init__(self, parts_lst: str | Path) -> None:
         logger.debug("reading parts %s", parts_lst)
