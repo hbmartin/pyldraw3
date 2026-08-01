@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import BinaryIO
 
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.dirs import get_cache_dir
@@ -37,6 +42,7 @@ _CACHE_MAX_AGE_SECONDS = 7_776_000
 _CACHE_MAX_BYTES = 536_870_912
 _CACHE_PRUNE_INTERVAL_SECONDS = 3_600
 _CACHE_PRUNE_MARKER = ".last-prune"
+_CACHE_PRUNE_LOCK = ".prune.lock"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _CACHE_LOCK = threading.RLock()
 
@@ -279,16 +285,74 @@ def _maybe_prune_preview_cache(
         if not cache_root.is_dir():
             return
         marker = cache_root / _CACHE_PRUNE_MARKER
-        try:
-            if time.time() - marker.stat().st_mtime < _CACHE_PRUNE_INTERVAL_SECONDS:
+        if not _preview_cache_prune_is_due(marker):
+            return
+        with _preview_cache_prune_claim(cache_root) as claimed:
+            if not claimed:
                 return
-        except OSError:
-            # A missing or unreadable marker means the cache is due for a sweep.
-            pass
-        _prune_preview_cache(cache_root, cancellation=cancellation)
-        # A failed marker only causes an earlier best-effort retry.
-        with contextlib.suppress(OSError):
-            marker.touch()
+            # Another process may have completed a sweep between the fast-path
+            # marker check and this process acquiring the filesystem claim.
+            if not _preview_cache_prune_is_due(marker):
+                return
+            _prune_preview_cache(cache_root, cancellation=cancellation)
+            # A failed marker only causes an earlier best-effort retry.
+            with contextlib.suppress(OSError):
+                marker.touch()
+
+
+def _preview_cache_prune_is_due(marker: Path) -> bool:
+    """Return whether the cache's best-effort pruning interval has elapsed."""
+    try:
+        return time.time() - marker.stat().st_mtime >= _CACHE_PRUNE_INTERVAL_SECONDS
+    except OSError:
+        # A missing or unreadable marker means the cache is due for a sweep.
+        return True
+
+
+@contextlib.contextmanager
+def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
+    """Yield whether this process owns the cache's non-blocking prune claim."""
+    try:
+        lock_file = (cache_root / _CACHE_PRUNE_LOCK).open("a+b")
+    except OSError:
+        yield False
+        return
+
+    with lock_file:
+        if not _try_lock_preview_cache_file(lock_file):
+            yield False
+            return
+        # Closing the file releases both flock and msvcrt locks, including
+        # when pruning raises or the process exits unexpectedly.
+        yield True
+
+
+def _try_lock_preview_cache_file(lock_file: BinaryIO) -> bool:
+    """Try to acquire one portable, process-scoped advisory file lock."""
+    match os.name:
+        case "nt":
+            import msvcrt  # noqa: PLC0415 - unavailable on POSIX
+
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            try:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return False
+        case _:
+            import fcntl  # noqa: PLC0415 - unavailable on Windows
+
+            try:
+                fcntl.flock(
+                    lock_file.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+            except OSError:
+                return False
+    return True
 
 
 def _prune_preview_cache(
