@@ -43,6 +43,7 @@ _CACHE_MAX_BYTES = 536_870_912
 _CACHE_PRUNE_INTERVAL_SECONDS = 3_600
 _CACHE_PRUNE_MARKER = ".last-prune"
 _CACHE_PRUNE_LOCK = ".prune.lock"
+_CACHE_MTIME_GRANULARITY_GUARD_NS = 5_000_000_000
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _CACHE_LOCK = threading.RLock()
 _CACHE_PRUNE_THREAD_LOCK = threading.Lock()
@@ -337,6 +338,25 @@ def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
 
 def _try_lock_preview_cache_file(lock_file: BinaryIO) -> bool:
     """Try to acquire one portable, process-scoped advisory file lock."""
+    return _lock_preview_cache_file(lock_file, blocking=False)
+
+
+@contextlib.contextmanager
+def _preview_cache_write_claim(cache_root: Path) -> Iterator[None]:
+    """Serialize cache publication with cross-process pruning."""
+    with (cache_root / _CACHE_PRUNE_LOCK).open("a+b") as lock_file:
+        _lock_preview_cache_file(lock_file, blocking=True)
+        # Closing the file releases both flock and msvcrt locks, including
+        # when publication raises or the process exits unexpectedly.
+        yield
+
+
+def _lock_preview_cache_file(
+    lock_file: BinaryIO,
+    *,
+    blocking: bool,
+) -> bool:
+    """Acquire the portable process lock, optionally without blocking."""
     match os.name:
         case "nt":
             import msvcrt  # noqa: PLC0415 - unavailable on POSIX
@@ -347,18 +367,26 @@ def _try_lock_preview_cache_file(lock_file: BinaryIO) -> bool:
                 lock_file.flush()
             lock_file.seek(0)
             try:
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+                msvcrt.locking(lock_file.fileno(), mode, 1)
             except OSError:
+                if blocking:
+                    raise
                 return False
         case _:
             import fcntl  # noqa: PLC0415 - unavailable on Windows
 
             try:
+                operation = fcntl.LOCK_EX
+                if not blocking:
+                    operation |= fcntl.LOCK_NB
                 fcntl.flock(
                     lock_file.fileno(),
-                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                    operation,
                 )
             except OSError:
+                if blocking:
+                    raise
                 return False
     return True
 
@@ -372,8 +400,10 @@ def _prune_preview_cache(
     check_cancelled(cancellation)
     if not cache_root.is_dir():
         return
+    sweep_started_ns = time.time_ns()
+    recent_cutoff_ns = sweep_started_ns - _CACHE_MTIME_GRANULARITY_GUARD_NS
     cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
-    retained: list[tuple[float, int, Path]] = []
+    retained: list[tuple[int, int, Path]] = []
     for candidate in cache_root.glob("*.png"):
         check_cancelled(cancellation)
         if candidate.name.startswith(".preview-"):
@@ -384,20 +414,24 @@ def _prune_preview_cache(
                 if metadata.st_mtime < cutoff:
                     candidate.unlink()
                 else:
-                    retained.append((metadata.st_mtime, metadata.st_size, candidate))
+                    retained.append(
+                        (metadata.st_mtime_ns, metadata.st_size, candidate),
+                    )
             except OSError:
                 continue
 
     total = sum(size for _, size, _ in retained)
-    for mtime, size, candidate in sorted(retained):
+    for mtime_ns, size, candidate in sorted(retained):
         check_cancelled(cancellation)
         if total <= _CACHE_MAX_BYTES:
             break
         with _CACHE_LOCK:
             try:
-                if candidate.stat().st_mtime != mtime:
-                    # Touched since the scan: recently used, so evict colder
-                    # entries instead.
+                current_mtime_ns = candidate.stat().st_mtime_ns
+                if current_mtime_ns != mtime_ns or current_mtime_ns >= recent_cutoff_ns:
+                    # Nanosecond comparison catches precise changes; the
+                    # recency guard covers filesystems that collapse a touch
+                    # into the same coarse timestamp bucket.
                     continue
                 candidate.unlink()
             except OSError:
@@ -432,6 +466,23 @@ def _cached_result(  # noqa: PLR0913 - result identity fields are explicit
             output=requested_output,
             cached=True,
         )
+
+
+def _publish_cached_preview(
+    *,
+    cache_root: Path,
+    temporary_path: Path,
+    cached_path: Path,
+    requested_output: Path,
+) -> None:
+    """Publish a completed preview without racing cross-process pruning."""
+    # Keep the process-lock-before-thread-lock order used by pruning.
+    with _preview_cache_write_claim(cache_root):  # noqa: SIM117 - lock order explicit
+        with _CACHE_LOCK:
+            temporary_path.replace(cached_path)
+            if requested_output != cached_path:
+                requested_output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cached_path, requested_output)
 
 
 def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
@@ -487,12 +538,13 @@ def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
                 message=f"Preview rendering failed: {failure}",
                 offending_value=backend.value,
             )
-        with _CACHE_LOCK:
-            temporary_path.replace(cached_path)
-            temporary_path = None
-            if requested_output != cached_path:
-                requested_output.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(cached_path, requested_output)
+        _publish_cached_preview(
+            cache_root=cache_root,
+            temporary_path=temporary_path,
+            cached_path=cached_path,
+            requested_output=requested_output,
+        )
+        temporary_path = None
         emit_progress(
             on_progress,
             ProgressEvent(
@@ -765,7 +817,9 @@ def _stop_renderer(
     else:
         # No escalation here: communicate() has reaped the child, so its PID
         # may already be recycled and killpg() could hit an unrelated process
-        # group. Descendants received the group-wide graceful signal above.
+        # group. Descendants received the group-wide graceful signal above
+        # when group signaling succeeded; the Windows fallback terminates only
+        # the direct child.
         return output
 
 

@@ -27,8 +27,39 @@ def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
     yield cache_root.is_dir()
 
 
-def _prune_preview_cache(_cache_root: Path) -> None:
-    pass
+@contextmanager
+def _preview_cache_write_claim(cache_root: Path) -> Iterator[None]:
+    del cache_root
+    yield
+
+
+def _prune_preview_cache(cache_root: Path) -> None:
+    metadata = cache_root.stat()
+    retained: list[tuple[float, int, Path]] = []
+    # ruleid: pyldraw-preview-cache-eviction-must-use-nanosecond-mtime
+    retained.append((metadata.st_mtime, metadata.st_size, cache_root))
+    mtime = metadata.st_mtime
+    # ruleid: pyldraw-preview-cache-eviction-must-use-nanosecond-mtime
+    if cache_root.stat().st_mtime != mtime:
+        return
+    # ok: pyldraw-preview-cache-eviction-must-use-nanosecond-mtime
+    retained.append((metadata.st_mtime_ns, metadata.st_size, cache_root))
+    mtime_ns = metadata.st_mtime_ns
+    # ok: pyldraw-preview-cache-eviction-must-use-nanosecond-mtime
+    if cache_root.stat().st_mtime_ns != mtime_ns:
+        return
+
+
+def _publish_cached_preview(
+    cache_root: Path,
+    temporary_path: Path,
+    cached_path: Path,
+) -> None:
+    # ruleid: pyldraw-preview-cache-publish-requires-process-claim
+    temporary_path.replace(cached_path)
+    with _preview_cache_write_claim(cache_root):
+        # ok: pyldraw-preview-cache-publish-requires-process-claim
+        temporary_path.replace(cached_path)
 
 
 def _maybe_prune_preview_cache(cache_root: Path, other: Path) -> None:

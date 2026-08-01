@@ -87,6 +87,23 @@ def _hold_preview_cache_prune_claim(
             time.sleep(0.01)
 
 
+def _publish_preview_after_claim(
+    cache: Path,
+    temporary: Path,
+    cached: Path,
+    started: Path,
+    finished: Path,
+) -> None:
+    started.touch()
+    rendering._publish_cached_preview(  # noqa: SLF001
+        cache_root=cache,
+        temporary_path=temporary,
+        cached_path=cached,
+        requested_output=cached,
+    )
+    finished.touch()
+
+
 def test_library_inspection_handles_direct_paths_and_unreadable_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -670,6 +687,70 @@ def test_preview_cache_size_eviction_keeps_files_touched_after_scan(
     assert not warmer.exists()
 
 
+def test_preview_cache_size_eviction_uses_nanosecond_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    coldest = cache / "coldest.png"
+    warmer = cache / "warmer.png"
+    coldest.write_bytes(b"a" * 10)
+    warmer.write_bytes(b"b" * 10)
+    os.utime(coldest, (600, 600))
+    os.utime(warmer, (700, 700))
+    original_stat = Path.stat
+    coldest_stats = [
+        MagicMock(st_mtime=600.0, st_mtime_ns=600_000_000_000, st_size=10),
+        MagicMock(st_mtime=600.0, st_mtime_ns=600_000_000_001, st_size=10),
+    ]
+
+    def precise_stat(
+        path: Path,
+        *,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result | MagicMock:
+        if path == coldest and coldest_stats:
+            return coldest_stats.pop(0)
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", precise_stat)
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 10)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert coldest.exists()
+    assert not warmer.exists()
+
+
+def test_preview_cache_size_eviction_defers_recent_coarse_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    cold = cache / "cold.png"
+    recent = cache / "recent.png"
+    cold.write_bytes(b"a" * 10)
+    recent.write_bytes(b"b" * 10)
+    os.utime(cold, (600, 600))
+    os.utime(recent, (998, 998))
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr(
+        "ldraw.rendering.time.time_ns",
+        lambda: 1_000_000_000_000,
+    )
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 0)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert not cold.exists()
+    assert recent.exists()
+
+
 def test_preview_cache_pruning_preserves_active_temporary_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -981,6 +1062,47 @@ def test_preview_cache_pruning_claim_is_cross_process(
     assert holder.exitcode == 0
     rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
     assert not aged.exists()
+
+
+@pytest.mark.integration
+def test_preview_cache_publication_waits_for_prune_claim(tmp_path: Path) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    cached = cache / "cached.png"
+    temporary = cache / ".preview-complete.png"
+    cached.write_bytes(b"old")
+    temporary.write_bytes(b"new")
+    started = tmp_path / "publish-started"
+    finished = tmp_path / "publish-finished"
+    context = multiprocessing.get_context("spawn")
+    publisher = context.Process(
+        target=_publish_preview_after_claim,
+        args=(cache, temporary, cached, started, finished),
+    )
+
+    try:
+        with rendering._preview_cache_prune_claim(cache) as claimed:  # noqa: SLF001
+            assert claimed
+            publisher.start()
+            deadline = time.monotonic() + 10
+            while not started.is_file() and publisher.is_alive():
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+
+            assert started.is_file()
+            time.sleep(0.05)
+            assert not finished.exists()
+            cached.unlink()
+    finally:
+        publisher.join(timeout=10)
+        if publisher.is_alive():
+            publisher.terminate()
+            publisher.join(timeout=5)
+
+    assert publisher.exitcode == 0
+    assert finished.is_file()
+    assert cached.read_bytes() == b"new"
 
 
 def test_stop_renderer_escalates_before_forced_drain(

@@ -1,6 +1,6 @@
-# The paths.include entries are root-anchored (leading slash), so the
-# intentionally-unsafe fixtures under tests/semgrep/ never match the
-# enforcing scan; CI exercises them separately via `semgrep scan --test`.
+# Root-anchored paths scope each rule, so intentionally unsafe fixtures under
+# tests/semgrep/ do not match enforcing rules limited to /ldraw/**. CI exercises
+# those fixtures separately with `semgrep scan --test`.
 rules:
   - id: pyldraw-unsafe-archive-extractall
     languages:
@@ -108,6 +108,44 @@ rules:
               if $CLAIMED:
                   ...
                   _prune_preview_cache($CACHE_ROOT, ...)
+
+  - id: pyldraw-preview-cache-publish-requires-process-claim
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/rendering.py
+    message: Guard preview-cache publication with the cross-process cache claim.
+    patterns:
+      - pattern: $TEMPORARY.replace($CACHED)
+      - metavariable-regex:
+          metavariable: $CACHED
+          regex: ^cached_path$
+      - pattern-not-inside: |
+          with _preview_cache_write_claim(...):
+              ...
+              $TEMPORARY.replace($CACHED)
+
+  - id: pyldraw-preview-cache-eviction-must-use-nanosecond-mtime
+    languages:
+      - python
+    severity: WARNING
+    paths:
+      include:
+        - /ldraw/rendering.py
+    message: Use st_mtime_ns when retaining or revalidating size-eviction candidates.
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              def _prune_preview_cache(...):
+                  ...
+          - pattern: $RETAINED.append(($METADATA.st_mtime, ...))
+      - patterns:
+          - pattern-inside: |
+              def _prune_preview_cache(...):
+                  ...
+          - pattern: $CANDIDATE.stat().st_mtime
 
   - id: pyldraw-no-model-bom-module-import-cycle
     languages:
