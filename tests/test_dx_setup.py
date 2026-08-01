@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
+from ldraw import rendering
 from ldraw.config import Config
 from ldraw.diagnostics import DiagnosticCode
 from ldraw.errors import CouldNotDetermineLatestVersionError, EmptyPartFileError
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from typing import Self
 
 _PIECE = "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_WRITE_PNG = "printf '\\211PNG\\r\\n\\032\\n'"
 
 
 def _write_library(root: Path, *, release: str | None = "2026-01") -> Path:
@@ -138,6 +141,48 @@ def test_discover_libraries_uses_config_and_cache_defaults(
     assert {item.ldraw_path for item in discovered} >= {configured, cached}
 
 
+def test_discover_libraries_tolerates_corrupt_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "config.yml"
+    config_file.write_text("ldraw_library_path: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr("ldraw.config.CONFIG_FILE", config_file)
+    cache = tmp_path / "cache"
+    cached = _write_library(cache / "cached")
+    monkeypatch.setattr("ldraw.library_setup.get_cache_dir", lambda: cache)
+
+    discovered = discover_libraries()
+
+    assert cached in {item.ldraw_path for item in discovered}
+
+
+def test_inspect_library_classifies_install_root_named_ldraw(tmp_path: Path) -> None:
+    root = tmp_path / "ldraw"
+    ldraw_path = _write_library(root)
+
+    inspection = inspect_library(root)
+
+    assert inspection.path == root
+    assert inspection.ldraw_path == ldraw_path
+    assert inspection.valid is True
+
+
+def test_inspect_library_classifies_data_directory_named_ldraw(
+    tmp_path: Path,
+) -> None:
+    direct = tmp_path / "install" / "ldraw"
+    (direct / "parts").mkdir(parents=True)
+    (direct / "p").mkdir()
+    (direct / "ldconfig.ldr").write_text("0 colours\n", encoding="utf-8")
+
+    inspection = inspect_library(direct)
+
+    assert inspection.path == direct.parent
+    assert inspection.ldraw_path == direct
+    assert inspection.missing_components == ("parts.lst",)
+
+
 def test_download_plans_cover_integrity_and_network_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -212,7 +257,7 @@ def test_download_plan_reports_bad_archive_member(
             return "parts/bad.dat"
 
     monkeypatch.setattr(
-        "ldraw.library_setup.zipfile.ZipFile",
+        "ldraw.downloads.zipfile.ZipFile",
         lambda path: CorruptArchive(),
     )
     monkeypatch.setattr(
@@ -338,7 +383,7 @@ def test_render_preview_supports_leocad_outputs_cache_copy_and_cancellation(
         '  if [ "$1" = "--image" ]; then shift; out="$1"; fi\n'
         "  shift\n"
         "done\n"
-        'printf png > "$out"',
+        f'{_WRITE_PNG} > "$out"',
     )
     monkeypatch.setattr(
         "ldraw.rendering.shutil.which",
@@ -368,7 +413,7 @@ def test_render_preview_supports_leocad_outputs_cache_copy_and_cancellation(
     assert first.cached is False
     assert second.output == second_output
     assert second.cached is True
-    assert second_output.read_bytes() == b"png"
+    assert second_output.read_bytes() == _PNG_SIGNATURE
     assert [event.current for event in events] == [0, 1]
 
     slow = _renderer(tmp_path / "ldview", "sleep 2")
@@ -413,3 +458,80 @@ def test_render_preview_catches_subprocess_errors(
 
     assert result.complete is False
     assert isinstance(result.diagnostics[0].cause, subprocess.SubprocessError)
+
+
+def test_run_renderer_drains_chatty_output_and_ignores_stdin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fail fast instead of stalling the suite if pipe draining regresses.
+    monkeypatch.setattr("ldraw.rendering._RENDER_TIMEOUT_SECONDS", 30)
+    chatty = _renderer(
+        tmp_path / "chatty",
+        "head -c 200000 /dev/zero | tr '\\000' x >&2\necho rendered",
+    )
+
+    completed = rendering._run_renderer(  # noqa: SLF001
+        [str(chatty)],
+        cancellation=None,
+    )
+
+    assert completed.returncode == 0
+    assert len(completed.stderr) >= 200_000
+    assert completed.stdout.strip() == "rendered"
+
+    prompting = _renderer(tmp_path / "prompting", "cat > /dev/null\necho done")
+    completed = rendering._run_renderer(  # noqa: SLF001
+        [str(prompting)],
+        cancellation=None,
+    )
+    assert completed.stdout.strip() == "done"
+
+
+def test_render_preview_timeout_reports_captured_renderer_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE, encoding="utf-8")
+    slow = _renderer(tmp_path / "ldview", "echo render-progress >&2\nsleep 30")
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(slow) if name == "ldview" else None,
+    )
+    monkeypatch.setattr("ldraw.rendering._RENDER_TIMEOUT_SECONDS", 1)
+
+    result = render_preview(model, cache_path=tmp_path / "cache")
+
+    assert result.complete is False
+    assert result.diagnostics[0].code is DiagnosticCode.RENDER_FAILED
+    assert "timed out" in result.diagnostics[0].message
+    assert "render-progress" in result.diagnostics[0].message
+
+
+def test_render_preview_rejects_non_png_renderer_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE, encoding="utf-8")
+    junk = _renderer(
+        tmp_path / "ldview",
+        'for value in "$@"; do\n'
+        '  case "$value" in -SaveSnapshot=*) out=${value#*=};; esac\n'
+        "done\n"
+        'printf junk-bytes > "$out"\n'
+        "echo junk-warning >&2",
+    )
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(junk) if name == "ldview" else None,
+    )
+
+    result = render_preview(model, cache_path=tmp_path / "cache")
+
+    assert result.complete is False
+    assert result.diagnostics[0].code is DiagnosticCode.RENDER_FAILED
+    assert "not a PNG" in result.diagnostics[0].message
+    assert "junk-warning" in result.diagnostics[0].message
+    assert list((tmp_path / "cache").glob("*.png")) == []

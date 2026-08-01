@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,6 +49,9 @@ def _inspection_parts(tmp_path: Path) -> Parts:
         "parts/9002.dat": "0 Test Support\n2 24 -5 -1 -5 5 1 5\n",
         "parts/9003.dat": "0 Empty Part\n0 Name: 9003.dat\n",
         "parts/9004.dat": b"\xff\xfe invalid header",
+        "parts/9006.dat": (
+            f"0 Hollow Part\n0 Name: 9006.dat\n1 16 0 0 0 {_IDENTITY} missing.dat\n"
+        ),
     }
     for name, content in files.items():
         target = ldraw_path / name
@@ -60,7 +64,8 @@ def _inspection_parts(tmp_path: Path) -> Parts:
         "9001.dat                       Test Studded Part\n"
         "9002.dat                       Test Support\n"
         "9003.dat                       Empty Part\n"
-        "9004.dat                       Invalid Part\n",
+        "9004.dat                       Invalid Part\n"
+        "9006.dat                       Hollow Part\n",
         encoding="utf-8",
     )
     (ldraw_path / "p.lst").write_text(
@@ -208,6 +213,88 @@ def test_analysis_reuses_occurrences_and_preserves_diagnostics(tmp_path: Path) -
     assert ModelLoadResult(None, (), complete=False).analyze() is None
 
 
+def test_analysis_emits_each_geometry_diagnostic_once(tmp_path: Path) -> None:
+    parts = _inspection_parts(tmp_path)
+    model = _inspection_model()
+
+    analysis = analyze_model(model, parts=parts)
+
+    incomplete = [
+        diagnostic
+        for diagnostic in analysis.diagnostics
+        if diagnostic.code is DiagnosticCode.GEOMETRY_INCOMPLETE
+    ]
+    # Exactly one diagnostic for the single skipped 9003 placement — not
+    # one from the summary plus an identical one from the inspection.
+    assert len(incomplete) == 1
+    assert incomplete[0].offending_value == "9003"
+
+
+def test_repeated_part_reports_unresolved_reference_once(tmp_path: Path) -> None:
+    parts = _inspection_parts(tmp_path)
+    text = f"1 4 0 0 0 {_IDENTITY} 9006.dat\n1 4 40 0 0 {_IDENTITY} 9006.dat\n"
+    result = parse_model_result(text, name="hollow.ldr")
+    assert result.model is not None
+
+    inspection = inspect_model(result.model, parts)
+
+    unresolved = [
+        diagnostic
+        for diagnostic in inspection.diagnostics
+        if diagnostic.code is DiagnosticCode.PART_REFERENCE_UNRESOLVED
+    ]
+    incomplete = [
+        diagnostic
+        for diagnostic in inspection.diagnostics
+        if diagnostic.code is DiagnosticCode.GEOMETRY_INCOMPLETE
+    ]
+    # The part's cached unresolved-subfile cause is surfaced once per
+    # part, while each skipped placement keeps its own skip diagnostic.
+    assert len(unresolved) == 1
+    assert len(incomplete) == 2
+    assert len(inspection.skipped_geometry) == 2
+
+
+def test_skipped_occurrences_surface_root_cause_diagnostics(tmp_path: Path) -> None:
+    parts = _inspection_parts(tmp_path)
+    result = parse_model_result(
+        f"1 4 0 0 0 {_IDENTITY} 9006.dat\n",
+        name="hollow.ldr",
+    )
+    assert result.model is not None
+
+    inspection = inspect_model(result.model, parts)
+
+    assert len(inspection.skipped_geometry) == 1
+    codes = [diagnostic.code for diagnostic in inspection.diagnostics]
+    assert DiagnosticCode.PART_REFERENCE_UNRESOLVED in codes
+    assert DiagnosticCode.GEOMETRY_INCOMPLETE in codes
+
+
+def test_analysis_computes_exact_geometry_once_per_occurrence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parts = _inspection_parts(tmp_path)
+    model = _inspection_model()
+    calls: list[str] = []
+    original_geometry = Parts.geometry
+
+    def counting_geometry(self: Parts, code: str) -> object:
+        calls.append(code)
+        return original_geometry(self, code)
+
+    monkeypatch.setattr(Parts, "geometry", counting_geometry)
+
+    analysis = analyze_model(model, parts=parts)
+
+    assert analysis.summary.occurrence_count == 4
+    assert analysis.inspection is not None
+    # One geometry expansion per occurrence: the summary reuses the
+    # bounds the inspection already computed.
+    assert len(calls) == 4
+
+
 def test_diagnostics_and_part_inspection_are_machine_readable(tmp_path: Path) -> None:
     parts = _inspection_parts(tmp_path)
     cause = ValueError("bad value")
@@ -227,6 +314,11 @@ def test_diagnostics_and_part_inspection_are_machine_readable(tmp_path: Path) ->
     assert serialized["code"] == "part.header_invalid"
     assert serialized["severity"] == "warning"
     assert serialized["cause"] == {"type": "ValueError", "message": "bad value"}
+
+    binary = Diagnostic(message="undecodable", offending_value=b"\xff\xfe")
+    encoded = binary.to_dict()
+    assert encoded["offending_value"] == repr(b"\xff\xfe")
+    assert json.loads(json.dumps(encoded))["message"] == "undecodable"
 
     complete = parts.inspect_part("9001", include_geometry=False)
     assert complete.complete is True

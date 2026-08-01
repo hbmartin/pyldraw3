@@ -35,8 +35,9 @@ Generated Python modules are no longer checked unless
 default tolerant parser skips malformed lines, retains surrounding valid
 objects, and reports stable codes, path, MPD section, source line, severity,
 offending value, suggestions, and underlying cause. Duplicate MPD sections,
-misplaced/content-after `NOFILE`, unresolved submodels, and cycles are
-diagnosed as structure errors.
+misplaced `NOFILE`, and cycles are diagnosed as structure errors; content
+after `NOFILE` and unresolved `.ldr`/`.mpd` references are warnings because
+both are legal in multi-file layouts.
 
 ```python
 from ldraw import load_model
@@ -64,7 +65,7 @@ and deterministic relevance ranking. The CLI uses the same implementation.
 Each catalog entry can retain a `PartMetadata` value parsed from official and
 unofficial headers: file kind, origin, alias/moved/obsolete status,
 replacement, author, license, BFC certification, history, category, keywords,
-and preview transform. Catalog schema v5 persists this data; older indexes are
+and preview transform. Catalog schema v6 persists this data; older indexes are
 rebuilt automatically.
 
 `Parts.library_root` exposes the resolved data directory and
@@ -95,4 +96,21 @@ unpacking.
 Preview rendering is an optional boundary. `render_capabilities()` detects
 LDView/LeoCAD and `render_preview()` renders one named view through a
 content-addressed cache with progress and cancellation. No renderer is a
-warning result, not an import-time dependency or exception.
+warning result, not an import-time dependency or exception. Pass
+`refresh=True` to bypass the cache; the cache key covers the top-level
+source, backend, and view, not referenced sidecar files or the parts
+library itself.
+
+## Behavior notes
+
+- `iter_ldr_issues()` reports unreadable files as `IO_READ_FAILED`
+  diagnostics instead of raising `FileNotFoundError`/`OSError`, and yields
+  diagnostics in source-line order.
+- `Parts.bounding_box()` and `parts.geometry(code)` report unreadable part
+  files through `NoGeometryError` and geometry diagnostics instead of
+  propagating `OSError`/`UnicodeError`.
+- `OperationCancelled` derives directly from `Exception`, not
+  `RuntimeError`, so failure handling written as `except RuntimeError:`
+  does not swallow a user-initiated cancellation.
+- All warning and error codes emitted by validation are `DiagnosticCode`
+  members, so `is`-comparison and `match`/`case` work for every diagnostic.

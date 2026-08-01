@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ldraw.bom import BomRow, bill_of_materials
-from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
+from ldraw.model import _iter_occurrences_skip_cycles
 from ldraw.model_summary import ModelSummary
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ldraw.diagnostics import Diagnostic
     from ldraw.inspection import ModelInspection
     from ldraw.instructions import InstructionStep
     from ldraw.model import Model, ModelOccurrence
@@ -36,27 +37,37 @@ def analyze_model(
     parts: Parts | None = None,
     diagnostics: Iterable[Diagnostic] = (),
 ) -> ModelAnalysis:
-    """Traverse leaf occurrences once and reuse them for all derived views."""
-    occurrences = tuple(model.iter_occurrences(include_steps=True))
-    summary = ModelSummary.from_occurrences(occurrences, parts)
-    combined = list(diagnostics)
-    combined.extend(
-        Diagnostic(
-            line_number=skipped.source_line,
-            message=skipped.reason,
-            severity=Severity.WARNING,
-            code=DiagnosticCode.GEOMETRY_INCOMPLETE,
-            section=skipped.source_model,
-            offending_value=skipped.part,
-        )
-        for skipped in summary.skipped_geometry
+    """Traverse leaf occurrences once and reuse them for all derived views.
+
+    Cyclic submodel references (possible in tolerantly-loaded models) are
+    skipped rather than raising; each skipped reference surfaces as an
+    ``MPD_CYCLE`` diagnostic unless an equal one was already passed in via
+    ``diagnostics``.
+    """
+    cycle_diagnostics: list[Diagnostic] = []
+    occurrences = tuple(
+        _iter_occurrences_skip_cycles(
+            model,
+            include_steps=True,
+            diagnostics=cycle_diagnostics,
+        ),
     )
-    inspection = None
+    combined = list(diagnostics)
+    for cycle_diagnostic in cycle_diagnostics:
+        if cycle_diagnostic not in combined:
+            combined.append(cycle_diagnostic)
+    inspection: ModelInspection | None = None
     if parts is not None:
         from ldraw.inspection import inspect_model  # noqa: PLC0415
 
         inspection = inspect_model(model, parts, occurrences=occurrences)
+        # The inspection already transformed every occurrence's expanded
+        # geometry and recorded per-occurrence skip diagnostics, so the
+        # summary reuses its bounds and the diagnostics are emitted once.
+        summary = ModelSummary.from_inspection(inspection)
         combined.extend(inspection.diagnostics)
+    else:
+        summary = ModelSummary.from_occurrences(occurrences, parts)
     document = model.instruction_document(parts=parts)
     return ModelAnalysis(
         occurrences=occurrences,

@@ -9,19 +9,10 @@ import pytest
 
 import ldraw
 from ldraw import (
-    bom,
-    colour,
-    figure,
-    geometry,
-    instructions,
-    model,
-    model_summary,
+    diagnostics,
     part_geometry,
     part_geometry_types,
     parts,
-    pieces,
-    progress,
-    session,
     validation,
 )
 
@@ -80,6 +71,7 @@ EXPECTED_ALL = [
     "PartReferenceKind",
     "PartStatus",
     "Parts",
+    "PartsCatalog",
     "Person",
     "Piece",
     "PreviewTransform",
@@ -135,44 +127,117 @@ def test_every_exported_name_resolves() -> None:
         assert getattr(ldraw, name) is not None
 
 
+EXPORT_ORIGINS: dict[str, str] = {
+    "ALL_CATALOG_SEARCH_FIELDS": "parts",
+    "BfcCertification": "part_metadata",
+    "BomRow": "bom",
+    "BoundingBox": "part_geometry_types",
+    "BoundsGap": "inspection",
+    "CameraState": "instructions",
+    "CancellationToken": "operations",
+    "CatalogBuildOutcome": "session",
+    "CatalogBuildReport": "session",
+    "CatalogEntry": "parts",
+    "CatalogPreparationResult": "session",
+    "CatalogSearchField": "parts",
+    "Colour": "colour",
+    "Diagnostic": "diagnostics",
+    "DiagnosticCode": "diagnostics",
+    "DownloadPlan": "library_setup",
+    "Group": "pieces",
+    "Identity": "geometry",
+    "InstructionBuilder": "instructions",
+    "InstructionDocument": "instructions",
+    "InstructionIssue": "instructions",
+    "InstructionSection": "instructions",
+    "InstructionStep": "instructions",
+    "LDrawCapability": "session",
+    "LDrawPaths": "session",
+    "LDrawSession": "session",
+    "LDrawState": "session",
+    "LDrawStateReason": "session",
+    "LibraryComponent": "library_setup",
+    "LibraryInspection": "library_setup",
+    "LibraryOrigin": "part_metadata",
+    "Matrix": "geometry",
+    "MinifigSection": "parts",
+    "Model": "model",
+    "ModelAnalysis": "analysis",
+    "ModelInspection": "inspection",
+    "ModelLoadResult": "model",
+    "ModelOccurrence": "model",
+    "ModelSummary": "model_summary",
+    "OccurrenceAttribution": "inspection",
+    "OccurrenceContact": "inspection",
+    "OccurrenceGeometry": "inspection",
+    "OccurrencePathItem": "model",
+    "OperationCancelled": "operations",
+    "PartCategory": "parts",
+    "PartFileKind": "part_metadata",
+    "PartGeometry": "part_geometry_types",
+    "PartHistoryEntry": "part_metadata",
+    "PartInspection": "parts",
+    "PartMetadata": "part_metadata",
+    "PartReference": "parts",
+    "PartReferenceKind": "parts",
+    "PartStatus": "part_metadata",
+    "Parts": "parts",
+    "PartsCatalog": "parts",
+    "Person": "figure",
+    "Piece": "pieces",
+    "PreviewTransform": "part_metadata",
+    "ProgressEvent": "progress",
+    "ProgressStage": "progress",
+    "ProgressUnit": "progress",
+    "RenderBackend": "rendering",
+    "RenderCapability": "rendering",
+    "RenderResult": "rendering",
+    "RenderView": "rendering",
+    "RotationMode": "instructions",
+    "RotationStep": "instructions",
+    "Severity": "diagnostics",
+    "SkippedGeometry": "model_summary",
+    "SkippedOccurrenceGeometry": "inspection",
+    "StudContact": "inspection",
+    "StudReference": "part_geometry_types",
+    "ValidationIssue": "validation",
+    "Vector": "geometry",
+    "XAxis": "geometry",
+    "YAxis": "geometry",
+    "ZAxis": "geometry",
+    "analyze_model": "analysis",
+    "bill_of_materials": "bom",
+    "bounds_gap": "inspection",
+    "discover_libraries": "library_setup",
+    "download": "downloads",
+    "ensure_library": "session",
+    "generate": "generation",
+    "inspect_library": "library_setup",
+    "inspect_model": "inspection",
+    "iter_instruction_issues": "instructions",
+    "iter_ldr_issues": "validation",
+    "load_model": "model",
+    "model_bounds": "model_summary",
+    "parse_model": "model",
+    "parse_model_result": "model",
+    "plan_download": "library_setup",
+    "prepare_catalog": "session",
+    "read_model": "model",
+    "render_capabilities": "rendering",
+    "render_preview": "rendering",
+}
+
+
+def test_every_export_has_a_pinned_origin_module() -> None:
+    assert sorted(EXPORT_ORIGINS) == EXPECTED_ALL
+
+
 def test_top_level_names_are_the_submodule_objects() -> None:
-    assert ldraw.Model is model.Model
-    assert ldraw.Piece is pieces.Piece
-    assert ldraw.Group is pieces.Group
-    assert ldraw.Person is figure.Person
-    assert ldraw.Colour is colour.Colour
-    assert ldraw.Vector is geometry.Vector
-    assert ldraw.Matrix is geometry.Matrix
-    assert ldraw.Parts is parts.Parts
-    assert ldraw.PartReference is parts.PartReference
-    assert ldraw.PartReferenceKind is parts.PartReferenceKind
-    assert ldraw.BomRow is bom.BomRow
-    assert ldraw.bill_of_materials is bom.bill_of_materials
-    assert ldraw.LDrawSession is session.LDrawSession
-    assert ldraw.LDrawPaths is session.LDrawPaths
-    assert ldraw.LDrawState is session.LDrawState
-    assert ldraw.LDrawStateReason is session.LDrawStateReason
-    assert ldraw.ensure_library is session.ensure_library
-    assert ldraw.ProgressEvent is progress.ProgressEvent
-    assert ldraw.ProgressStage is progress.ProgressStage
-    assert ldraw.ModelOccurrence is model.ModelOccurrence
-    assert ldraw.ModelSummary is model_summary.ModelSummary
-    assert ldraw.SkippedGeometry is model_summary.SkippedGeometry
-    assert ldraw.model_bounds is model_summary.model_bounds
-    assert ldraw.ValidationIssue is validation.ValidationIssue
+    for name, module_name in EXPORT_ORIGINS.items():
+        origin = getattr(ldraw, module_name)
+        assert getattr(ldraw, name) is getattr(origin, name), name
     assert ldraw.Severity is validation.Severity
-    assert ldraw.iter_ldr_issues is validation.iter_ldr_issues
-    assert ldraw.InstructionDocument is instructions.InstructionDocument
-    assert ldraw.InstructionSection is instructions.InstructionSection
-    assert ldraw.InstructionStep is instructions.InstructionStep
-    assert ldraw.InstructionBuilder is instructions.InstructionBuilder
-    assert ldraw.InstructionIssue is instructions.InstructionIssue
-    assert ldraw.CameraState is instructions.CameraState
-    assert ldraw.RotationStep is instructions.RotationStep
-    assert ldraw.RotationMode is instructions.RotationMode
-    assert ldraw.iter_instruction_issues is instructions.iter_instruction_issues
-    assert ldraw.BoundingBox is part_geometry_types.BoundingBox
-    assert ldraw.StudReference is part_geometry_types.StudReference
+    assert ldraw.ValidationIssue is diagnostics.Diagnostic
     assert part_geometry.BoundingBox is part_geometry_types.BoundingBox
     assert part_geometry.StudReference is part_geometry_types.StudReference
 

@@ -225,10 +225,24 @@ def inspect_model(
         if occurrences is None
         else occurrences
     )
+    noted_parts: set[str] = set()
+
+    def note_part_diagnostics(code: str, local: PartGeometry) -> None:
+        """Surface a part's own diagnostics once per part, not per placement."""
+        key = code.replace("\\", "/").casefold()
+        if key in noted_parts:
+            return
+        noted_parts.add(key)
+        diagnostics.extend(local.diagnostics)
+
     for index, occurrence in enumerate(all_occurrences):
         attribution = _attribution(occurrence, index=index, piece_pages=piece_pages)
         try:
             local = parts.geometry(occurrence.part_code)
+            # Recorded before the bounds checks so the root-cause
+            # diagnostics (e.g. an unresolved subfile) survive even when
+            # the occurrence is skipped below.
+            note_part_diagnostics(occurrence.part_code, local)
             if local.bounds is None:
                 raise NoGeometryError(occurrence.part_code)
             bounds = transformed_bounds(
@@ -256,7 +270,6 @@ def inspect_model(
             )
             diagnostics.append(diagnostic)
             continue
-        diagnostics.extend(local.diagnostics)
         geometry = OccurrenceGeometry(
             attribution=attribution,
             local=local,

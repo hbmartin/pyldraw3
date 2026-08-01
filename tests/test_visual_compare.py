@@ -46,6 +46,14 @@ if TYPE_CHECKING:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# Since Python 3.14 argparse derives the ``python -m package.module`` prog for
+# module execution; older interpreters fall back to the module file's basename.
+_MODULE_USAGE = (
+    f"usage: {Path(sys.executable).name} -m ldraw.visual_compare"
+    if sys.version_info >= (3, 14)
+    else "usage: visual_compare.py"
+)
+
 
 def _load_visual_compare_script() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
@@ -144,11 +152,11 @@ def test_repository_script_explains_missing_optional_dependency(
         ),
         (
             [sys.executable, "-m", "ldraw.visual_compare", "--help"],
-            f"usage: {Path(sys.executable).name} -m ldraw.visual_compare",
+            _MODULE_USAGE,
         ),
     ],
 )
-def test_help_uses_the_actual_invocation_name(command, usage: str) -> None:
+def test_help_uses_the_actual_invocation_name(command: list[str], usage: str) -> None:
     process = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -338,6 +346,34 @@ def test_coarse_registration_matches_the_exhaustive_full_resolution_result(
     assert alignment == exhaustive
 
 
+def test_coarse_tie_pruning_keeps_the_tied_optimum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sizes 13-17 all collapse to the same 3x3 coarse mask and tie at coarse
+    # IoU 1.0; the true optimum (size 17, index 7) sits past the window the
+    # old top-3-indices-plus-radius selection kept, so it used to be pruned.
+    reference_mask = np.zeros((40, 40), dtype=np.bool_)
+    reference_mask[5:22, 5:22] = True
+    candidate_mask = np.ones((10, 10), dtype=np.bool_)
+    config = AlignmentConfig(min_scale=1.0, max_scale=2.0, scale_steps=11)
+    exhaustive = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=config,
+    )
+    monkeypatch.setattr(visual_compare, "_COARSE_MAX_DIMENSION", 8)
+
+    pruned = register_silhouettes(
+        reference_mask,
+        candidate_mask,
+        config=config,
+    )
+
+    assert exhaustive.scale == pytest.approx(1.7)
+    assert exhaustive.silhouette_iou == 1.0
+    assert pruned == exhaustive
+
+
 def test_registration_rejects_empty_or_oversized_candidates() -> None:
     reference = np.ones((20, 20), dtype=np.bool_)
     with pytest.raises(ValueError, match="no detectable foreground"):
@@ -441,6 +477,27 @@ def test_artifact_regions_must_match_the_comparison(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="regions must match"):
         write_comparison_artifacts(result, output)
+
+    assert not output.exists()
+
+
+def test_artifact_region_boxes_must_match_the_comparison(tmp_path: Path) -> None:
+    reference = _model_image()
+    candidate = _model_image()
+    result = compare(
+        reference,
+        candidate,
+        config=AlignmentConfig(min_scale=1, max_scale=1, scale_steps=1),
+        regions=[Region("cab", (0.2, 0.1, 0.5, 0.5))],
+    )
+    output = tmp_path / "box-mismatch"
+
+    with pytest.raises(ValueError, match="box does not match the comparison"):
+        write_comparison_artifacts(
+            result,
+            output,
+            regions=[Region("cab", (0.1, 0.1, 0.5, 0.5))],
+        )
 
     assert not output.exists()
 

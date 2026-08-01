@@ -26,6 +26,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _PIECE = "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
+_WRITE_PNG = "printf '\\211PNG\\r\\n\\032\\n'"
+
+
+def _install_ldview(path: Path, *, log: Path | None = None) -> Path:
+    lines = ["#!/bin/sh"]
+    if log is not None:
+        lines.append(f'echo run >> "{log}"')
+    lines.extend(
+        (
+            'for value in "$@"; do',
+            '  case "$value" in -SaveSnapshot=*) out=${value#*=};; esac',
+            "done",
+            f'{_WRITE_PNG} > "$out"',
+        ),
+    )
+    script = "\n".join(lines)
+    path.write_text(f"{script}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
 
 
 def test_tolerant_parse_keeps_valid_pieces_around_bad_lines() -> None:
@@ -201,6 +220,49 @@ def test_part_metadata_parses_relationships_and_provenance(tmp_path: Path) -> No
     )
 
 
+def test_part_metadata_parses_bare_ldraw_org_qualifiers(tmp_path: Path) -> None:
+    # Official headers write qualifiers without parentheses:
+    # ``0 !LDRAW_ORG Part Alias UPDATE 2013-02``.
+    alias = tmp_path / "alias.dat"
+    alias.write_text(
+        "0 Sticker Sheet Lookalike\n"
+        "0 Name: alias.dat\n"
+        "0 !LDRAW_ORG Part Alias UPDATE 2013-02\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    metadata = Part(alias).metadata
+
+    assert metadata.file_kind is PartFileKind.PART
+    assert metadata.origin is LibraryOrigin.OFFICIAL
+    assert metadata.qualifiers == ("Alias",)
+    assert metadata.release == "2013-02"
+    assert metadata.status is PartStatus.ALIAS
+    assert metadata.replacement == "3001.dat"
+
+    physical = tmp_path / "physical.dat"
+    physical.write_text(
+        "0 Brick 2 x 4 in Milky White\n"
+        "0 !LDRAW_ORG Part Physical_Colour UPDATE 2011-01\n",
+        encoding="utf-8",
+    )
+
+    physical_metadata = Part(physical).metadata
+
+    assert physical_metadata.qualifiers == ("Physical_Colour",)
+    assert physical_metadata.status is PartStatus.CURRENT
+    assert physical_metadata.release == "2011-01"
+
+    flexible = tmp_path / "flexible.dat"
+    flexible.write_text(
+        "0 Hose Flexible Section\n0 !LDRAW_ORG Part Flexible_Section\n",
+        encoding="utf-8",
+    )
+
+    assert Part(flexible).metadata.qualifiers == ("Flexible_Section",)
+
+
 def test_library_inspection_reports_missing_and_valid_components(
     tmp_path: Path,
 ) -> None:
@@ -262,16 +324,7 @@ def test_render_preview_detects_backend_and_uses_cache(
 ) -> None:
     model = tmp_path / "model.ldr"
     model.write_text(_PIECE)
-    renderer = tmp_path / "ldview"
-    renderer.write_text(
-        "#!/bin/sh\n"
-        'for value in "$@"; do\n'
-        '  case "$value" in -SaveSnapshot=*) out=${value#*=};; esac\n'
-        "done\n"
-        'printf png > "$out"\n',
-        encoding="utf-8",
-    )
-    renderer.chmod(0o755)
+    renderer = _install_ldview(tmp_path / "ldview")
     monkeypatch.setattr(
         "ldraw.rendering.shutil.which",
         lambda name: str(renderer) if name == "ldview" else None,
@@ -294,6 +347,66 @@ def test_render_preview_detects_backend_and_uses_cache(
     assert first.cached is False
     assert second.output == first.output
     assert second.cached is True
+
+
+def test_render_preview_refresh_forces_a_new_render_but_still_caches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE)
+    log = tmp_path / "calls.log"
+    renderer = _install_ldview(tmp_path / "ldview", log=log)
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(renderer) if name == "ldview" else None,
+    )
+    cache = tmp_path / "cache"
+
+    initial = render_preview(model, backend=RenderBackend.LDVIEW, cache_path=cache)
+    cached = render_preview(model, backend=RenderBackend.LDVIEW, cache_path=cache)
+    refreshed = render_preview(
+        model,
+        backend=RenderBackend.LDVIEW,
+        cache_path=cache,
+        refresh=True,
+    )
+    after = render_preview(model, backend=RenderBackend.LDVIEW, cache_path=cache)
+
+    assert initial.cached is False
+    assert cached.cached is True
+    assert refreshed.cached is False
+    assert after.cached is True
+    assert log.read_text(encoding="utf-8").count("run") == 2
+
+
+def test_render_preview_cache_misses_when_the_renderer_executable_moves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE)
+    log = tmp_path / "calls.log"
+    first_renderer = _install_ldview(tmp_path / "ldview-one", log=log)
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(first_renderer) if name == "ldview" else None,
+    )
+    cache = tmp_path / "cache"
+
+    first = render_preview(model, backend=RenderBackend.LDVIEW, cache_path=cache)
+
+    second_renderer = _install_ldview(tmp_path / "ldview-two", log=log)
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(second_renderer) if name == "ldview" else None,
+    )
+    moved = render_preview(model, backend=RenderBackend.LDVIEW, cache_path=cache)
+
+    assert first.cached is False
+    assert moved.cached is False
+    assert moved.output != first.output
+    assert log.read_text(encoding="utf-8").count("run") == 2
 
 
 def test_render_preview_reports_unavailable_backend(

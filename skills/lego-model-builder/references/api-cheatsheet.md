@@ -50,13 +50,13 @@ pieces = [
 ]
 ```
 
-### Gotcha: Vector scalar multiply is right-only
+### Vector scalar multiply works on either side
 
-`Vector` implements `__rmul__`, not `__mul__`. Write the scalar on the **left**:
+`Vector` implements both `__mul__` and `__rmul__` for `int | float` scalars:
 
 ```python
-20 * Vector(1, 0, 0)  # OK
-Vector(1, 0, 0) * 20  # TypeError
+20 * Vector(1, 0, 0)  # Vector(20, 0, 0)
+Vector(1, 0, 0) * 20  # Vector(20, 0, 0)
 ```
 
 ### Rotation

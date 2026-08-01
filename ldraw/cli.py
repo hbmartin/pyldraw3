@@ -104,9 +104,15 @@ def build_parser() -> ArgumentParser:
     )
     search_parser = parts_subparsers.add_parser(
         "search",
-        help="Search parts by description or code.",
+        help="Search parts by code, description, category, or keywords.",
     )
-    search_parser.add_argument("term", help="Case-insensitive substring to match.")
+    search_parser.add_argument(
+        "term",
+        help=(
+            "Case-insensitive search terms; every whitespace-separated token "
+            "must match, and results are ranked by relevance."
+        ),
+    )
     search_parser.add_argument(
         "--limit",
         type=int,
@@ -422,7 +428,8 @@ def validate_command(*, file: Path, strict: bool = False) -> int:
         print(f"{file}: error: {decode_issue.message}", file=sys.stderr)
         return 1
     for issue in issues:
-        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+        line = "" if issue.line_number is None else f":{issue.line_number}"
+        print(f"{file}{line}: {issue.severity}: {issue.message}")
     if not issues:
         print(f"{file}: OK")
         return 0
@@ -605,7 +612,8 @@ def instructions_validate_command(
         print(f"{file}: {exc}", file=sys.stderr)
         return 1
     for issue in ldraw_issues:
-        print(f"{file}:{issue.line_number}: {issue.severity}: {issue.message}")
+        line = "" if issue.line_number is None else f":{issue.line_number}"
+        print(f"{file}{line}: {issue.severity}: {issue.message}")
     for issue in instruction_issues:
         _print_instruction_issue(file, issue)
     severities = [

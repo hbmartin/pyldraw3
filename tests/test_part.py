@@ -186,6 +186,42 @@ def test_empty_part_file_description_raises(tmp_path: Path) -> None:
         _ = Part(path).description
 
 
+def test_empty_part_file_category_and_keywords_degrade(tmp_path: Path) -> None:
+    path = tmp_path / "empty.dat"
+    path.write_text("")
+    part = Part(path)
+
+    assert part.category is None
+    assert part.keywords == ()
+    with pytest.raises(EmptyPartFileError, match=r"empty"):
+        _ = part.metadata
+
+
+def test_header_commands_accept_tab_separation(tmp_path: Path) -> None:
+    path = tmp_path / "tabbed.dat"
+    path.write_text(
+        "0 Test Part\n"
+        "0\t!CATEGORY Brick\n"
+        "0\t!KEYWORDS Space, Castle\n"
+        "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+    )
+    part = Part(path)
+
+    assert part.category == "Brick"
+    assert part.keywords == ("Space", "Castle")
+
+
+def test_bare_zero_line_does_not_close_the_header(tmp_path: Path) -> None:
+    path = tmp_path / "bare.dat"
+    path.write_text(
+        "0 Test Part\n0\n0 !CATEGORY Brick\n0 !KEYWORDS Space\n",
+    )
+    part = Part(path)
+
+    assert part.category == "Brick"
+    assert part.keywords == ("Space",)
+
+
 def test_keywords_from_multiple_lines(tmp_path: Path) -> None:
     path = tmp_path / "keyworded.dat"
     path.write_text(

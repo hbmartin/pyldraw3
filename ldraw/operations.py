@@ -5,8 +5,14 @@ from __future__ import annotations
 from threading import Event
 
 
-class OperationCancelled(RuntimeError):  # noqa: N818 - public action/state spelling
-    """A caller requested cancellation of an in-progress operation."""
+class OperationCancelled(Exception):  # noqa: N818 - public action/state spelling
+    """A caller requested cancellation of an in-progress operation.
+
+    Deliberately derives from ``Exception`` rather than ``RuntimeError``:
+    setup helpers such as ``ensure_library`` wrap genuine failures in
+    ``RuntimeError``, so a caller's ``except RuntimeError`` must not
+    misreport a user-requested cancel as a failure.
+    """
 
     def __init__(self) -> None:
         super().__init__("operation cancelled")

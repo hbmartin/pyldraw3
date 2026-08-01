@@ -1,7 +1,10 @@
 """Tests for download functionality."""
 
+import json
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Self
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +20,78 @@ from ldraw.downloads import (
     _temporary_rename_path,
     unpack_version,
 )
+
+
+class FakeResponse:
+    """Minimal stand-in for a streamed ``requests`` response."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+        chunks: tuple[bytes, ...] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._chunks = chunks
+        self._error = error
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        """Raise ``HTTPError`` for 4xx/5xx status codes."""
+        if self.status_code >= 400:
+            message = f"status {self.status_code}"
+            raise requests.HTTPError(message)
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:  # noqa: ARG002
+        """Yield the queued chunks, then raise the queued error if any."""
+        yield from self._chunks
+        if self._error is not None:
+            raise self._error
+
+
+def _install_fake_get(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[FakeResponse],
+) -> list[dict[str, str] | None]:
+    """Serve queued responses from ``requests.get`` and record headers."""
+    sent_headers: list[dict[str, str] | None] = []
+
+    def fake_get(
+        *,
+        url: str,
+        stream: bool,
+        timeout: int,
+        headers: dict[str, str] | None,
+    ) -> FakeResponse:
+        assert stream is True
+        assert timeout == 30
+        sent_headers.append(headers)
+        return responses.pop(0)
+
+    monkeypatch.setattr("ldraw.downloads.requests.get", fake_get)
+    return sent_headers
+
+
+def _write_sidecar(
+    partial: Path,
+    *,
+    etag: str | None = '"v1"',
+    total: int | None = None,
+) -> Path:
+    sidecar = partial.with_name(f"{partial.name}.meta")
+    sidecar.write_text(
+        json.dumps({"etag": etag, "last_modified": None, "total": total}),
+        encoding="utf-8",
+    )
+    return sidecar
 
 
 @patch("zipfile.ZipFile", spec=zipfile.ZipFile)
@@ -134,19 +209,24 @@ def test_download_success_replaces_partial_file(
     assert not (tmp_path / "x.zip.part").exists()
 
 
-@patch("ldraw.downloads.requests.get")
-def test_download_resume_appends_partial_and_sends_range(
-    get_mock: MagicMock,
+def test_download_resume_appends_partial_and_sends_range_with_if_range(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
     partial = tmp_path / "x.zip.part"
     partial.write_bytes(b"first-")
-    response = get_mock.return_value.__enter__.return_value
-    response.status_code = 206
-    response.headers = {"content-length": "6"}
-    response.iter_content.return_value = [b"second"]
+    sidecar = _write_sidecar(partial, etag='"v1"', total=12)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=206,
+                headers={"content-length": "6", "content-range": "bytes 6-11/12"},
+                chunks=(b"second",),
+            ),
+        ],
+    )
 
     result = _download(
         "https://example.test/x.zip",
@@ -154,8 +234,151 @@ def test_download_resume_appends_partial_and_sends_range(
         resume=True,
     )
 
-    assert get_mock.call_args.kwargs["headers"] == {"Range": "bytes=6-"}
+    assert sent_headers == [{"Range": "bytes=6-", "If-Range": '"v1"'}]
     assert result.read_bytes() == b"first-second"
+    assert not partial.exists()
+    assert not sidecar.exists()
+
+
+def test_download_resume_without_stored_validator_restarts_from_scratch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"stale-bytes")
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [FakeResponse(headers={"content-length": "5"}, chunks=(b"fresh",))],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert sent_headers == [None]
+    assert result.read_bytes() == b"fresh"
+
+
+def test_download_resume_200_response_truncates_and_restarts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"first-")
+    _write_sidecar(partial, etag='"v1"', total=12)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [FakeResponse(headers={"content-length": "9"}, chunks=(b"full-body",))],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert sent_headers == [{"Range": "bytes=6-", "If-Range": '"v1"'}]
+    assert result.read_bytes() == b"full-body"
+
+
+def test_download_resume_416_discards_partial_and_restarts_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"oversized-partial")
+    sidecar = _write_sidecar(partial, etag='"v1"', total=4)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(status_code=416),
+            FakeResponse(headers={"content-length": "4"}, chunks=(b"good",)),
+        ],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert len(sent_headers) == 2
+    assert sent_headers[1] is None
+    assert result.read_bytes() == b"good"
+    assert not sidecar.exists()
+
+
+def test_download_resume_416_finalizes_complete_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"complete-bytes")
+    _write_sidecar(partial, etag='"v1"', total=len(b"complete-bytes"))
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=416,
+                headers={"content-range": f"bytes */{len(b'complete-bytes')}"},
+            ),
+        ],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert len(sent_headers) == 1
+    assert result.read_bytes() == b"complete-bytes"
+    assert not partial.exists()
+
+
+def test_download_resume_content_range_mismatch_restarts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"abc")
+    _write_sidecar(partial, etag='"v1"', total=10)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=206,
+                headers={"content-length": "10", "content-range": "bytes 0-9/10"},
+                chunks=(b"full-fresh",),
+            ),
+            FakeResponse(headers={"content-length": "10"}, chunks=(b"full-fresh",)),
+        ],
+    )
+
+    result = _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    assert len(sent_headers) == 2
+    assert sent_headers[1] is None
+    assert result.read_bytes() == b"full-fresh"
+
+
+def test_download_midstream_error_with_resume_preserves_partial_and_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                headers={"content-length": "10", "etag": '"v2"'},
+                chunks=(b"begin",),
+                error=requests.ConnectionError("dropped"),
+            ),
+        ],
+    )
+
+    with pytest.raises(requests.ConnectionError):
+        _download("https://example.test/x.zip", "x.zip", resume=True)
+
+    partial = tmp_path / "x.zip.part"
+    assert partial.read_bytes() == b"begin"
+    sidecar = json.loads(
+        (tmp_path / "x.zip.part.meta").read_text(encoding="utf-8"),
+    )
+    assert sidecar["etag"] == '"v2"'
+    assert sidecar["total"] == 10
 
 
 def test_temporary_rename_path_skips_existing(tmp_path: Path) -> None:
@@ -299,24 +522,22 @@ def test_latest_release_id_unparseable_pan_raises(get_mock: MagicMock) -> None:
         get_latest_release_id()
 
 
-@patch("ldraw.downloads.get_latest_release_id", return_value="2099-01")
-@patch("ldraw.downloads.generate_parts_lst")
-@patch("ldraw.downloads.unpack_version")
-@patch("ldraw.downloads._download")
-def test_download_complete_discards_cached_zip(  # noqa: PLR0913, PLR0917
-    download_mock: MagicMock,
-    unpack_version_mock: MagicMock,
-    generate_parts_lst_mock: MagicMock,
-    get_latest_release_id_mock: MagicMock,
+def test_download_complete_discards_cached_zip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
-    unpack_version_mock.return_value = tmp_path / "complete"
     stale = tmp_path / "complete.zip"
     stale.write_bytes(b"stale bytes")
 
-    download(show_progress=False)
+    with (
+        patch("ldraw.downloads.get_latest_release_id", return_value="2099-01"),
+        patch("ldraw.downloads.generate_parts_lst"),
+        patch("ldraw.downloads.unpack_version") as unpack_version_mock,
+        patch("ldraw.downloads._download") as download_mock,
+    ):
+        unpack_version_mock.return_value = tmp_path / "complete"
+        download(show_progress=False)
 
     assert not stale.exists()
     download_mock.assert_called_once()
@@ -334,11 +555,46 @@ def test_download_versioned_keeps_cached_zip(
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
     cached = tmp_path / "2018-02.zip"
-    cached.write_bytes(b"immutable tag archive")
+    with zipfile.ZipFile(cached, "w") as archive:
+        archive.writestr("ldraw/parts.lst", "parts")
 
     download(show_progress=False, version="2018-02")
 
     assert cached.exists()
+
+
+@patch("ldraw.downloads.generate_parts_lst")
+@patch("ldraw.downloads.unpack_version")
+@patch("ldraw.downloads._download")
+def test_download_versioned_discards_corrupt_cached_zip(
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    corrupt = tmp_path / "2018-02.zip"
+    corrupt.write_bytes(b"definitely not a zip archive")
+
+    download(show_progress=False, version="2018-02")
+
+    assert not corrupt.exists()
+    download_mock.assert_called_once()
+
+
+def test_unpack_version_discards_bad_zip_for_self_heal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path / "cache")
+    version_zip = tmp_path / "2018-02.zip"
+    version_zip.write_bytes(b"junk bytes, not a zip")
+
+    with pytest.raises(zipfile.BadZipFile):
+        unpack_version(version_zip, "2018-02", show_progress=False)
+
+    assert not version_zip.exists()
 
 
 def test_normalize_tree_raises_on_case_collision(tmp_path: Path) -> None:
