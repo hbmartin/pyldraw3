@@ -337,6 +337,24 @@ def _content_range_complete_size(header: str | None) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _response_validator_matches(
+    response: requests.Response,
+    validator: _ResumeValidator,
+) -> bool | None:
+    """Compare an echoed response validator with the stored resume validator."""
+    if validator.etag is not None:
+        response_etag = response.headers.get("etag")
+        return response_etag == validator.etag if response_etag is not None else None
+    if validator.last_modified is not None:
+        response_modified = response.headers.get("last-modified")
+        return (
+            response_modified == validator.last_modified
+            if response_modified is not None
+            else None
+        )
+    return None
+
+
 def _download(  # noqa: PLR0913 - streaming state and controls are explicit
     url: str,
     filename: str,
@@ -436,14 +454,27 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
             )
             stored_total = validator.total if validator is not None else None
             expected_size = complete_size if complete_size is not None else stored_total
-            if offset and offset == expected_size:
-                # The validator matched and the partial already holds the
-                # complete, still-current file: finalize it as-is.
+            if (
+                offset
+                and offset == expected_size
+                and validator is not None
+                and _response_validator_matches(response, validator) is True
+            ):
+                # Only an explicitly echoed matching validator proves that
+                # the complete partial still represents the current file.
                 return True
             _discard_partial(partial)
             return False
         response.raise_for_status()
         accepted_resume = offset > 0 and response.status_code == _HTTP_PARTIAL_CONTENT
+        if (
+            accepted_resume
+            and validator is not None
+            and _response_validator_matches(response, validator) is False
+        ):
+            # A server that ignored If-Range can otherwise splice two releases.
+            _discard_partial(partial)
+            return False
         if (
             accepted_resume
             and _content_range_start(
@@ -565,6 +596,7 @@ def download(
     )
     cache_ldraw.mkdir(parents=True, exist_ok=True)
     cached = cache_ldraw / filename
+    cached_archive_valid = False
     if version == COMPLETE_VERSION and cached.exists():
         # A leftover complete.zip only exists after a failed unpack, and the
         # complete release is a moving target — never reuse it. Versioned
@@ -574,15 +606,19 @@ def download(
             cached,
         )
         cached.unlink()
-    elif cached.exists() and not (integrity := check_archive_integrity(cached)).valid:
-        # A corrupt cached archive would otherwise fail identically on
-        # every run; discard it and download again.
-        logger.warning(
-            "Discarding corrupt cached archive %s: %s",
-            cached,
-            integrity.bad_member or integrity.error,
-        )
-        cached.unlink()
+    elif cached.exists():
+        integrity = check_archive_integrity(cached)
+        if integrity.valid:
+            cached_archive_valid = True
+        else:
+            # A corrupt cached archive would otherwise fail identically on
+            # every run; discard it and download again.
+            logger.warning(
+                "Discarding corrupt cached archive %s: %s",
+                cached,
+                integrity.bad_member or integrity.error,
+            )
+            cached.unlink()
     retrieved = _download(
         url=url,
         filename=filename,
@@ -591,6 +627,20 @@ def download(
         resume=resume,
         cancellation=cancellation,
     )
+    if (retrieved != cached or not cached_archive_valid) and not (
+        integrity := check_archive_integrity(retrieved)
+    ).valid:
+        logger.warning(
+            "Discarding corrupt downloaded archive %s: %s",
+            retrieved,
+            integrity.bad_member or integrity.error,
+        )
+        retrieved.unlink(missing_ok=True)
+        detail = integrity.bad_member or integrity.error or "unknown integrity error"
+        message = (
+            f"Downloaded archive {retrieved.name} failed integrity check: {detail}"
+        )
+        raise zipfile.BadZipFile(message)
 
     version_dir = unpack_version(
         version_zip=retrieved,

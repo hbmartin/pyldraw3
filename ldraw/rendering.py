@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -26,6 +28,8 @@ from ldraw.progress import (
 _RENDER_TIMEOUT_SECONDS = 240
 _RENDER_POLL_SECONDS = 0.05
 _CACHE_SCHEMA = "preview-cache-v2"
+_CACHE_MAX_AGE_SECONDS = 7_776_000
+_CACHE_MAX_BYTES = 536_870_912
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -110,7 +114,9 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
     sidecar part files) and the parts-library state are NOT part of the key,
     so edits to them do not invalidate cached previews; pass ``refresh=True``
     to skip the cache read and force a re-render (the fresh image is still
-    written back to the cache).
+    written back to the cache). The managed default cache evicts PNGs older
+    than 90 days and caps retained data at 512 MiB; caller-provided cache
+    directories are never pruned automatically.
     """
     source_path = Path(source).expanduser().resolve()
     if not source_path.is_file():
@@ -153,6 +159,8 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
             output=output,
             cache_path=cache_path,
         )
+        if cache_path is None:
+            _prune_preview_cache(cache_root)
         if not refresh and (
             cached := _cached_result(
                 source=source_path,
@@ -238,6 +246,33 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
     cached_path = cache_root / f"{digest.hexdigest()}.png"
     requested_output = Path(output).expanduser() if output is not None else cached_path
     return cache_root, cached_path, requested_output
+
+
+def _prune_preview_cache(cache_root: Path) -> None:
+    """Best-effort age and size eviction for the managed preview cache."""
+    if not cache_root.is_dir():
+        return
+    cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
+    retained: list[tuple[float, int, Path]] = []
+    for candidate in cache_root.glob("*.png"):
+        try:
+            metadata = candidate.stat()
+            if metadata.st_mtime < cutoff:
+                candidate.unlink()
+            else:
+                retained.append((metadata.st_mtime, metadata.st_size, candidate))
+        except OSError:
+            continue
+
+    total = sum(size for _, size, _ in retained)
+    for _, size, candidate in sorted(retained):
+        if total <= _CACHE_MAX_BYTES:
+            break
+        try:
+            candidate.unlink()
+        except OSError:
+            continue
+        total -= size
 
 
 def _cached_result(  # noqa: PLR0913 - result identity fields are explicit
@@ -478,6 +513,11 @@ def _run_renderer(
     and deadlock.  Partial output survives each timed-out ``communicate`` call
     and is attached to the ``TimeoutExpired`` raised on the deadline.
     """
+    creation_flags = (
+        int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        if os.name == "nt"
+        else 0
+    )
     process = subprocess.Popen(  # noqa: S603
         command,
         stdin=subprocess.DEVNULL,
@@ -485,6 +525,8 @@ def _run_renderer(
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        start_new_session=os.name == "posix",
+        creationflags=creation_flags,
     )
     deadline = time.monotonic() + _RENDER_TIMEOUT_SECONDS
     while True:
@@ -495,8 +537,7 @@ def _run_renderer(
             raise
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            process.kill()
-            stdout, stderr = process.communicate()
+            stdout, stderr = _stop_renderer(process, force=True)
             raise subprocess.TimeoutExpired(
                 cmd=command,
                 timeout=_RENDER_TIMEOUT_SECONDS,
@@ -517,14 +558,61 @@ def _run_renderer(
         )
 
 
-def _stop_renderer(process: subprocess.Popen[str]) -> None:
-    """Terminate a renderer, escalating to kill, and drain its pipes."""
-    process.terminate()
-    try:
-        process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
+def _signal_renderer_tree(
+    process: subprocess.Popen[str],
+    *,
+    force: bool,
+) -> None:
+    """Signal a renderer and descendants started by its process group."""
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        return
+    if os.name == "nt":
+        if not force:
+            try:
+                process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+            except (OSError, ValueError):
+                process.terminate()
+            return
+        try:
+            subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "taskkill",
+                    "/PID",
+                    str(process.pid),
+                    "/T",
+                    "/F",
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            process.kill()
+        return
+    if force:
         process.kill()
-        process.communicate()
+    else:
+        process.terminate()
+
+
+def _stop_renderer(
+    process: subprocess.Popen[str],
+    *,
+    force: bool = False,
+) -> tuple[str, str]:
+    """Stop a renderer process group, escalating to kill, and drain its pipes."""
+    _signal_renderer_tree(process, force=force)
+    if force:
+        return process.communicate()
+    try:
+        return process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_renderer_tree(process, force=True)
+        return process.communicate()
 
 
 __all__ = [

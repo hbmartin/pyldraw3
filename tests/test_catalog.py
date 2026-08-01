@@ -413,7 +413,9 @@ def test_dat_header_edit_invalidates_index(
     generated = tmp_path / "generated"
     Parts.clear_cache()
     first = load_parts(parts_lst, generated, build_index=True)
-    assert "edited" not in first.get_entry_by_code("3005").keywords
+    first_entry = first.get_entry_by_code("3005")
+    assert first_entry is not None
+    assert "edited" not in first_entry.keywords
 
     target = library / "parts" / "3005.dat"
     text = target.read_text()

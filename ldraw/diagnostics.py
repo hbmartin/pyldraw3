@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -114,6 +115,8 @@ class Diagnostic:
 def _json_safe(value: object | None) -> str | int | float | bool | None:
     """Pass JSON-native scalars through; coerce everything else via repr."""
     match value:
+        case float() if not isfinite(value):
+            return repr(value)
         case str() | int() | float() | bool() | None:
             return value
         case _:
