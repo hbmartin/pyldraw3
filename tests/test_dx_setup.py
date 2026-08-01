@@ -10,7 +10,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 import requests
@@ -653,7 +653,9 @@ def test_preview_cache_pruning_checks_cancellation_during_scan(
 ) -> None:
     cache = tmp_path / "previews"
     cache.mkdir()
-    (cache / "first.png").write_bytes(b"png!")
+    first = cache / "first.png"
+    first.write_bytes(b"png!")
+    os.utime(first, (100, 100))
     token = CancellationToken()
     checks = 0
     original_check = rendering.check_cancelled
@@ -665,6 +667,8 @@ def test_preview_cache_pruning_checks_cancellation_during_scan(
             token.cancel()
         original_check(cancellation)
 
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
     monkeypatch.setattr("ldraw.rendering.check_cancelled", cancel_during_scan)
 
     with pytest.raises(OperationCancelled):
@@ -673,7 +677,7 @@ def test_preview_cache_pruning_checks_cancellation_during_scan(
             cancellation=token,
         )
 
-    assert checks == 2
+    assert first.exists()
 
 
 def test_render_preview_rechecks_cancellation_before_cached_return(
@@ -774,6 +778,38 @@ def test_preview_cache_prune_is_throttled_by_marker(
     assert not second.exists()
 
 
+def test_preview_cache_prune_releases_cache_lock_before_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    lock_was_available = threading.Event()
+
+    def observe_lock(
+        _cache_root: Path,
+        *,
+        cancellation: CancellationToken | None = None,
+    ) -> None:
+        del cancellation
+
+        def acquire_cache_lock() -> None:
+            with rendering._CACHE_LOCK:  # noqa: SLF001
+                lock_was_available.set()
+
+        worker = threading.Thread(target=acquire_cache_lock)
+        worker.start()
+        worker.join(timeout=1)
+        assert lock_was_available.is_set()
+
+    monkeypatch.setattr("ldraw.rendering._prune_preview_cache", observe_lock)
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    assert lock_was_available.is_set()
+
+
+@pytest.mark.integration
 def test_preview_cache_pruning_claim_is_cross_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -816,23 +852,34 @@ def test_preview_cache_pruning_claim_is_cross_process(
     assert not aged.exists()
 
 
-def test_stop_renderer_escalates_after_graceful_parent_exit(
+def test_stop_renderer_escalates_before_forced_drain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process = MagicMock()
-    process.communicate.return_value = ("stdout", "stderr")
-    signals: list[bool] = []
+    process.communicate.side_effect = (
+        subprocess.TimeoutExpired(
+            cmd=["renderer"],
+            timeout=rendering._RENDER_STOP_TIMEOUT_SECONDS,  # noqa: SLF001
+        ),
+        ("stdout", "stderr"),
+    )
+    signals: list[tuple[bool, int]] = []
 
     def record_signal(_process: object, *, force: bool) -> None:
-        signals.append(force)
+        signals.append((force, process.communicate.call_count))
 
     monkeypatch.setattr("ldraw.rendering._signal_renderer_tree", record_signal)
 
     assert rendering._stop_renderer(process) == ("stdout", "stderr")  # noqa: SLF001
-    assert signals == [False, True]
-    process.communicate.assert_called_once_with(
-        timeout=rendering._RENDER_STOP_TIMEOUT_SECONDS,  # noqa: SLF001
-    )
+    assert signals == [(False, 0), (True, 1)]
+    assert process.communicate.call_args_list == [
+        call(
+            timeout=rendering._RENDER_STOP_TIMEOUT_SECONDS,  # noqa: SLF001
+        ),
+        call(
+            timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
+        ),
+    ]
 
 
 def test_stop_renderer_forced_drain_is_bounded(
@@ -844,8 +891,8 @@ def test_stop_renderer_forced_drain_is_bounded(
     process.communicate.side_effect = subprocess.TimeoutExpired(
         cmd=["renderer"],
         timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
-        output="stdout",
-        stderr="stderr",
+        output=b"stdout\xff",
+        stderr=b"stderr",
     )
     monkeypatch.setattr(
         "ldraw.rendering._signal_renderer_tree",
@@ -853,7 +900,7 @@ def test_stop_renderer_forced_drain_is_bounded(
     )
 
     assert rendering._stop_renderer(process, force=True) == (  # noqa: SLF001
-        "stdout",
+        "stdout�",
         "stderr",
     )
     process.communicate.assert_called_once_with(

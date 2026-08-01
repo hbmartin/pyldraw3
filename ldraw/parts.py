@@ -618,6 +618,7 @@ def _parts_for_stat(
     parts_lst: str,
     _stat_key: tuple[int, int],
     _tree_fingerprint: str | None,
+    _parts_lst_md5: str | None,
 ) -> Parts:
     return Parts(parts_lst)
 
@@ -646,14 +647,16 @@ class Parts:
         parts_lst: str | Path,
         *,
         tree_fingerprint: str | None = None,
+        parts_lst_md5: str | None = None,
     ) -> Parts:
-        """Get a memoized Parts keyed by list stat and optional tree fingerprint."""
+        """Get a memoized Parts keyed by list and optional content fingerprints."""
         path = Path(parts_lst).expanduser()
         stat_result = path.stat()
         return _parts_for_stat(
             str(path),
             (stat_result.st_mtime_ns, stat_result.st_size),
             tree_fingerprint,
+            parts_lst_md5,
         )
 
     @classmethod
@@ -667,17 +670,19 @@ class Parts:
         parts_lst: str | Path,
         *,
         tree_fingerprint: str | None = None,
+        parts_lst_md5: str | None = None,
     ) -> Parts:
         """Return a freshly constructed Parts, replacing the memoized one.
 
-        ``get`` memoizes on the ``parts.lst`` stat key, so an in-place
-        ``.dat`` header edit can leave a memoized instance holding a stale
-        categorization. Rebuild paths call this to guarantee a genuinely
-        fresh categorization; the memo is repopulated with the fresh
-        instance.
+        Explicit rebuild paths call this to guarantee a genuinely fresh
+        categorization; the memo is repopulated with the fresh instance.
         """
         cls.clear_cache()
-        return cls.get(parts_lst, tree_fingerprint=tree_fingerprint)
+        return cls.get(
+            parts_lst,
+            tree_fingerprint=tree_fingerprint,
+            parts_lst_md5=parts_lst_md5,
+        )
 
     def __init__(self, parts_lst: str | Path) -> None:
         logger.debug("reading parts %s", parts_lst)
