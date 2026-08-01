@@ -1,14 +1,14 @@
 # CLI Reference
 
 The `ldraw` executable downloads LDraw libraries, generates importable Python
-modules, queries parts, validates model files, exports bills of materials, and
-produces renderer-neutral instruction data.
+modules, queries parts, validates and inspects model files, renders standard
+preview views, exports bills of materials, and produces renderer-neutral
+instruction data.
 
 ```text
 usage: ldraw [-h] command ...
 
-Download the LDraw parts library and generate the ldraw.library Python
-modules.
+Manage LDraw libraries and create, inspect, validate, and render LDraw models.
 
 positional arguments:
   command
@@ -17,6 +17,8 @@ positional arguments:
     parts     Query the parts catalog.
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
+    inspect   Inspect exact world bounds, provenance, contacts, and gaps.
+    render    Render a deterministic set of standard preview views.
     stubs     Write a type-stub package for ldraw.library into your project.
     instructions
               Inspect, validate, and export renderer-neutral instructions.
@@ -40,12 +42,22 @@ options:
   relevance. It exits with code 1 when nothing matches.
 - `ldraw parts info CODE` shows a part's description, category, file path, and
   the generated-library import to use.
+- `ldraw parts geometry CODE [--format table|json]` expands the part's
+  drawable subfile tree and reports exact local bounds, points, connectors,
+  completeness, and structured diagnostics.
 - `ldraw validate FILE [--strict]` lints `.ldr`, `.mpd`, and `.dat` files.
   Malformed lines, unknown parts, and unknown colour codes are errors.
   Suspect matrices, legacy dithered colours, and unknown meta-commands are
   warnings. `--strict` makes warnings fail.
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` prints a bill of
   materials counted by part and colour, with submodels expanded.
+- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU]
+  [--chronological] [--page-marker-prefix TEXT] [-o OUT]` reports exact
+  transformed occurrence geometry, provenance, stud contacts, nearest AABB
+  gaps, skipped geometry, and structured diagnostics.
+- `ldraw render FILE [--view front|isometric|top] [--size WIDTHxHEIGHT]
+  [--backend auto|ldview|leocad] [--output-dir DIR] [--prefix NAME]
+  [--refresh] [--overwrite]` renders a safely staged standard-view set.
 - `ldraw stubs [--out PATH]` writes an `ldraw-stubs/` PEP 561 stub package for
   IDE autocompletion of generated `ldraw.library.*` imports.
 - `ldraw instructions inspect FILE [--section NAME] [--parts]` prints one row
@@ -60,6 +72,49 @@ options:
 - `ldraw version` prints the installed `pyldraw3` version.
 
 Run `ldraw <command> --help` for a command's full option list.
+
+## Geometry and model inspection
+
+`parts geometry` returns useful partial geometry when a part references a
+missing or unreadable child. Table output labels the result incomplete; JSON
+adds `complete` and serialized diagnostics alongside the original bounds,
+point, and stud fields. An unavailable library or unknown root part exits 1,
+while reportable incomplete geometry exits 0.
+
+`inspect` loads models tolerantly and preserves valid occurrences around
+malformed lines. Its table and JSON reports include root-to-leaf model,
+reference, source-line, step, and attributed-page paths; exact world bounds;
+skipped geometry; stud contacts; and nearest AABB gaps. The default page
+marker is `0 // PDF_PAGE NNN`, controlled by `--page-marker-prefix`.
+
+```console
+$ ldraw parts geometry 3001 --format json
+$ ldraw inspect model.mpd --chronological --gap-threshold 5 -o inspection.txt
+```
+
+When a partial inspection contains error diagnostics the report is still
+written, but the command exits 1. Warnings alone exit 0. Missing or undecodable
+files that cannot produce a model are diagnosed on stderr and also exit 1.
+
+## Rendering previews
+
+`render` uses the same optional, cached preview boundary as `render_preview()`.
+With no `--view`, it renders `front`, `isometric`, and `top` at `800x600`.
+Repeat `--view` to choose an ordered subset. `--backend auto` prefers the first
+available current backend; an explicit `ldview` or `leocad` fails if that
+backend is unavailable. `--refresh` bypasses cache reads.
+
+Outputs are named `PREFIX.VIEW.png`, using the model stem as the default
+prefix. Every requested view is first completed in destination-local temporary
+storage. Final files are promoted only after all views succeed, and existing
+files are restored if promotion fails. Existing outputs are rejected before
+rendering unless `--overwrite` is supplied.
+
+```console
+$ ldraw render model.mpd --view front --view top --output-dir renders
+RENDERED: /work/renders/model.front.png
+RENDERED: /work/renders/model.top.png
+```
 
 ## Validating files
 

@@ -12,10 +12,14 @@ import requests
 
 from ldraw.cli import _confirm, _suggested_import, build_parser, main
 from ldraw.config import Config
+from ldraw.diagnostics import Diagnostic, DiagnosticCode
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.errors import ConfigLoadError, CouldNotDetermineLatestVersionError
 from ldraw.generation.exceptions import UnwritableOutputError
+from ldraw.geometry import Vector
+from ldraw.part_geometry_types import PartGeometry
 from ldraw.parts import CatalogEntry, MinifigSection, PartCategory
+from ldraw.rendering import RenderBackend, RenderResult, RenderView
 
 TESTS_DIR = Path(__file__).resolve().parent
 
@@ -311,6 +315,10 @@ def test_parts_commands_without_library_return_one(
 
     assert main(["parts", "search", "brick"]) == 1
     assert main(["parts", "info", "3001"]) == 1
+    assert main(["parts", "geometry", "3001"]) == 1
+    model = tmp_path / "model.ldr"
+    model.touch()
+    assert main(["inspect", str(model)]) == 1
 
     assert "run `ldraw download` first" in capsys.readouterr().err
 
@@ -815,6 +823,446 @@ def test_parts_search_normalizes_whitespace(
     assert main(["parts", "search", "brick 2 x 4"]) == 0
 
     assert "3001" in capsys.readouterr().out
+
+
+def _successful_render(  # noqa: PLR0913 - mirrors render_preview
+    source: str | Path,
+    *,
+    view: RenderView,
+    size: tuple[int, int],
+    backend: RenderBackend | None,
+    output: str | Path | None,
+    refresh: bool,
+) -> RenderResult:
+    assert output is not None
+    output_path = Path(output)
+    output_path.write_bytes(f"{view.value}:{refresh}".encode())
+    return RenderResult(
+        source=Path(source),
+        view=view,
+        size=size,
+        backend=backend,
+        output=output_path,
+        cached=False,
+    )
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_parts_geometry_reports_modern_table_and_json(
+    config_load_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["parts", "geometry", "3001", "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "3001"
+    assert payload["complete"] is False
+    assert payload["point_count"] > 0
+    assert payload["bounds"]["min"] == [-40.0, 0.0, -20.0]
+    assert payload["top_stud_count"] == 8
+    assert payload["receptacle_count"] >= 0
+    assert {item["code"] for item in payload["diagnostics"]} == {
+        "part.reference_unresolved"
+    }
+
+    assert main(["parts", "geometry", "3001"]) == 0
+    table = capsys.readouterr().out
+    assert "complete: no" in table
+    assert "expanded points:" in table
+    assert "receptacles" in table
+
+    assert main(["parts", "geometry", "missing"]) == 1
+    assert "not found" in capsys.readouterr().err.casefold()
+
+
+@patch("ldraw.cli._load_parts")
+def test_parts_geometry_returns_report_for_incomplete_geometry(
+    load_parts_mock: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    load_parts_mock.return_value.geometry.return_value = PartGeometry(
+        code="partial",
+        description="Partial",
+        bounds=None,
+        points=(Vector(0, 0, 0),),
+        studs=(),
+        diagnostics=(
+            Diagnostic(
+                message="missing child",
+                code=DiagnosticCode.PART_REFERENCE_UNRESOLVED,
+            ),
+        ),
+    )
+
+    assert main(["parts", "geometry", "partial", "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["complete"] is False
+    assert payload["bounds"] is None
+    assert payload["diagnostics"][0]["code"] == "part.reference_unresolved"
+
+
+def test_build_parser_geometry_inspect_and_render_defaults() -> None:
+    geometry = build_parser().parse_args(["parts", "geometry", "3001", "--format=json"])
+    assert geometry.parts_command == "geometry"
+    assert geometry.format == "json"
+
+    inspection = build_parser().parse_args(["inspect", "model.mpd"])
+    assert inspection.gap_threshold == 5
+    assert inspection.chronological is False
+    assert inspection.page_marker_prefix == "// PDF_PAGE "
+
+    render = build_parser().parse_args(["render", "model.mpd"])
+    assert render.view is None
+    assert render.size == "800x600"
+    assert render.backend == "auto"
+    assert render.refresh is False
+    assert render.overwrite is False
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "0 // PDF_PAGE 007\n"
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n"
+        "1 4 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    assert main(["inspect", str(model), "--format", "json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["complete"] is False
+    assert payload["occurrence_count"] == 2
+    assert payload["geometry_count"] == 2
+    assert payload["occurrences"][0]["installation_page"] == 7
+    assert payload["occurrences"][0]["source_page"] == 7
+    assert payload["occurrences"][0]["bounds"]["min"] == [-40.0, 0.0, -20.0]
+    assert payload["stud_contacts"]
+    assert {item["code"] for item in payload["diagnostics"]} == {
+        "part.reference_unresolved"
+    }
+
+    report = tmp_path / "inspection.txt"
+    assert (
+        main(
+            [
+                "inspect",
+                str(model),
+                "--chronological",
+                "--output",
+                str(report),
+            ]
+        )
+        == 0
+    )
+    rendered = report.read_text(encoding="utf-8")
+    assert "world bounds:" in rendered
+    assert "chronological" in rendered
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_emits_partial_report_and_fails_on_load_errors(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "partial.ldr"
+    model.write_text(
+        "9 invalid\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+
+    assert main(["inspect", str(model), "--format", "json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["complete"] is False
+    assert payload["occurrence_count"] == 1
+    assert payload["diagnostics"][0]["code"] == "parse.invalid_line"
+    assert payload["diagnostics"][0]["severity"] == "error"
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_inspect_rejects_invalid_inputs_and_output_errors(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_path / "missing.mpd"
+    assert main(["inspect", str(missing)]) == 1
+    assert "io.read_failed" in capsys.readouterr().err
+
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+    assert main(["inspect", str(model), "--gap-threshold=-1"]) == 1
+    assert "non-negative" in capsys.readouterr().err
+
+    assert main(["inspect", str(model), "--output", str(tmp_path)]) == 1
+    assert "Could not write" in capsys.readouterr().err
+
+
+@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+def test_render_writes_named_views_with_current_backend_options(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+    output_dir = tmp_path / "renders"
+
+    assert (
+        main(
+            [
+                "render",
+                str(model),
+                "--view",
+                "front",
+                "--view",
+                "top",
+                "--size",
+                "1024x768",
+                "--backend",
+                "leocad",
+                "--output-dir",
+                str(output_dir),
+                "--prefix",
+                "proof",
+                "--refresh",
+            ]
+        )
+        == 0
+    )
+
+    assert [call.kwargs["view"] for call in render_mock.call_args_list] == [
+        RenderView.FRONT,
+        RenderView.TOP,
+    ]
+    assert all(
+        call.kwargs["backend"] is RenderBackend.LEOCAD
+        for call in render_mock.call_args_list
+    )
+    assert all(
+        call.kwargs["size"] == (1_024, 768) for call in render_mock.call_args_list
+    )
+    assert (output_dir / "proof.front.png").read_bytes() == b"front:True"
+    assert (output_dir / "proof.top.png").read_bytes() == b"top:True"
+    assert "RENDERED:" in capsys.readouterr().out
+
+
+@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+def test_render_defaults_to_all_standard_views(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+
+    assert main(["render", str(model)]) == 0
+
+    assert [call.kwargs["view"] for call in render_mock.call_args_list] == [
+        RenderView.FRONT,
+        RenderView.ISOMETRIC,
+        RenderView.TOP,
+    ]
+    assert all(call.kwargs["size"] == (800, 600) for call in render_mock.call_args_list)
+    assert all(call.kwargs["backend"] is None for call in render_mock.call_args_list)
+    assert all(call.kwargs["refresh"] is False for call in render_mock.call_args_list)
+    for view in RenderView:
+        output = tmp_path / f"model.{view.value}.png"
+        assert output.read_bytes() == f"{view.value}:False".encode()
+    assert capsys.readouterr().out.count("RENDERED:") == len(RenderView)
+
+
+def test_render_promotes_and_reports_cached_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+
+    def cached_render(  # noqa: PLR0913 - mirrors render_preview
+        source: str | Path,
+        *,
+        view: RenderView,
+        size: tuple[int, int],
+        backend: RenderBackend | None,
+        output: str | Path | None,
+        refresh: bool,
+    ) -> RenderResult:
+        fresh = _successful_render(
+            source=source,
+            view=view,
+            size=size,
+            backend=backend,
+            output=output,
+            refresh=refresh,
+        )
+        return RenderResult(
+            source=fresh.source,
+            view=fresh.view,
+            size=fresh.size,
+            backend=fresh.backend,
+            output=fresh.output,
+            cached=True,
+        )
+
+    monkeypatch.setattr("ldraw.cli.render_preview", cached_render)
+
+    assert main(["render", str(model), "--view", "front"]) == 0
+
+    output = tmp_path / "model.front.png"
+    assert output.read_bytes() == b"front:False"
+    assert capsys.readouterr().out == f"CACHED: {output}\n"
+
+
+@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+def test_render_preflights_conflicts_and_validates_request(
+    render_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+    existing = tmp_path / "model.front.png"
+    existing.write_text("keep", encoding="utf-8")
+
+    assert main(["render", str(model), "--view", "front"]) == 1
+    assert existing.read_text(encoding="utf-8") == "keep"
+    render_mock.assert_not_called()
+    assert "already exists" in capsys.readouterr().err
+
+    assert main(["render", str(model), "--size", "wide"]) == 1
+    assert "bad size" in capsys.readouterr().err
+    assert main(["render", str(model), "--prefix", "../escape"]) == 1
+    assert "render prefix" in capsys.readouterr().err
+    assert (
+        main(
+            [
+                "render",
+                str(model),
+                "--view",
+                "top",
+                "--view",
+                "top",
+            ]
+        )
+        == 1
+    )
+    assert "unique" in capsys.readouterr().err
+
+
+def test_render_failure_preserves_all_existing_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+    front = tmp_path / "proof.front.png"
+    top = tmp_path / "proof.top.png"
+    front.write_text("old front", encoding="utf-8")
+    top.write_text("old top", encoding="utf-8")
+
+    def fail_top(*args, view: RenderView, **kwargs) -> RenderResult:
+        if view is RenderView.TOP:
+            return RenderResult(
+                source=model,
+                view=view,
+                size=kwargs["size"],
+                backend=kwargs["backend"],
+                output=None,
+                cached=False,
+                diagnostics=(
+                    Diagnostic(
+                        message="renderer failed",
+                        code=DiagnosticCode.RENDER_FAILED,
+                    ),
+                ),
+            )
+        return _successful_render(*args, view=view, **kwargs)
+
+    monkeypatch.setattr("ldraw.cli.render_preview", fail_top)
+
+    assert (
+        main(
+            [
+                "render",
+                str(model),
+                "--view",
+                "front",
+                "--view",
+                "top",
+                "--prefix",
+                "proof",
+                "--overwrite",
+            ]
+        )
+        == 1
+    )
+    assert front.read_text(encoding="utf-8") == "old front"
+    assert top.read_text(encoding="utf-8") == "old top"
+    assert "render.failed" in capsys.readouterr().err
+    assert not tuple(tmp_path.glob(".pyldraw-render-*"))
+
+
+def test_render_promotion_failure_rolls_back_overwritten_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.mpd"
+    model.touch()
+    front = tmp_path / "proof.front.png"
+    top = tmp_path / "proof.top.png"
+    front.write_text("old front", encoding="utf-8")
+    top.write_text("old top", encoding="utf-8")
+    monkeypatch.setattr("ldraw.cli.render_preview", _successful_render)
+    original_replace = Path.replace
+
+    def fail_top_promotion(self: Path, target: str | Path) -> Path:
+        target_path = Path(target)
+        if (
+            self.name == "proof.top.png"
+            and self.parent.name.startswith(".pyldraw-render-")
+            and target_path == top
+        ):
+            message = "promotion failed"
+            raise OSError(message)
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_top_promotion)
+
+    assert (
+        main(
+            [
+                "render",
+                str(model),
+                "--view",
+                "front",
+                "--view",
+                "top",
+                "--prefix",
+                "proof",
+                "--overwrite",
+            ]
+        )
+        == 1
+    )
+    assert front.read_text(encoding="utf-8") == "old front"
+    assert top.read_text(encoding="utf-8") == "old top"
+    assert "promotion failed" in capsys.readouterr().err
+    assert not tuple(tmp_path.glob(".pyldraw-render-*"))
 
 
 @patch(

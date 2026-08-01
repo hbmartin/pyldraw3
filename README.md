@@ -229,6 +229,17 @@ exact geometry, root-to-leaf occurrence provenance, and explicit failures.
 First-run clients can call `discover_libraries()`, `inspect_library()`, and
 `plan_download()` before changing anything. Preview rendering remains
 optional: `render_capabilities()` reports whether LDView or LeoCAD is present.
+The same report-oriented workflows are available from the CLI:
+
+```bash
+ldraw parts geometry 3001 --format json
+ldraw inspect model.mpd --format json -o inspection.json
+ldraw render model.mpd --view front --view top --backend auto
+```
+
+Inspection retains valid occurrences from partially malformed input and
+includes structured diagnostics in JSON. It exits non-zero when those
+diagnostics contain errors; geometry warnings remain reportable successes.
 
 ### Building Instructions
 
@@ -298,7 +309,9 @@ for stud in parts.studs("3062b"):  # every stud primitive, tubes included
 studs/connectors, and completeness diagnostics together. `bounding_box()`
 remains as the compact compatibility helper. Stud queries expand stud group
 primitives down to individual `stud*` references; `is_top_stud` distinguishes
-upward connectors from underside tubes.
+upward connectors from underside tubes. Use
+`ldraw parts geometry CODE [--format table|json]` for the same query without
+writing Python.
 
 ### IDE Autocompletion and Type Checking
 
@@ -357,8 +370,7 @@ The published docs include a standalone [CLI reference](https://hbmartin.github.
 ```
 usage: ldraw [-h] command ...
 
-Download the LDraw parts library and generate the ldraw.library Python
-modules.
+Manage LDraw libraries and create, inspect, validate, and render LDraw models.
 
 positional arguments:
   command
@@ -367,6 +379,8 @@ positional arguments:
     parts     Query the parts catalog.
     validate  Validate an LDraw file (.ldr, .mpd, or .dat).
     bom       Print a bill of materials for an LDraw model file.
+    inspect   Inspect exact world bounds, provenance, contacts, and gaps.
+    render    Render a deterministic set of standard preview views.
     stubs     Write a type-stub package for ldraw.library into your project.
     instructions
               Inspect, validate, and export renderer-neutral instructions.
@@ -381,8 +395,11 @@ options:
 - `ldraw generate [--yes] [--force]` - (re)generate `ldraw.library.*` from the currently configured release; `--force` regenerates even if already up to date
 - `ldraw parts search TERM [--limit N]` - search the catalog by description or code substring (exit code 1 when nothing matches)
 - `ldraw parts info CODE` - show a part's description, category, file path, and the generated-library import to use
+- `ldraw parts geometry CODE [--format table|json]` - report exact expanded bounds, studs/connectors, and completeness diagnostics
 - `ldraw validate FILE [--strict]` - lint a file: malformed lines, unknown parts and colour codes are errors; suspect matrices, legacy dithered colours, and unknown meta-commands are warnings (`--strict` makes warnings fail; exit code 1 on errors)
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` - print a bill of materials counted by part and colour, submodels expanded
+- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU] [--chronological] [-o OUT]` - report exact occurrence geometry, provenance, structured diagnostics, stud contacts, and nearest AABB gaps
+- `ldraw render FILE [--view front|isometric|top] [--backend auto|ldview|leocad] [--output-dir DIR] [--overwrite]` - render a safely staged named view set through the optional preview backends
 - `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
 - `ldraw instructions inspect|validate|export|snapshots ...` - inspect semantic steps, validate instruction structure, export JSON, or write cumulative MPD/LDR snapshot bundles (requires a configured parts catalog)
 - `ldraw config` - print the current configuration as YAML
@@ -451,7 +468,7 @@ instead of the Zensical workflow artifact.
 
 ### Core Components
 
-- **CLI Interface** (`ldraw/cli.py`): Command-line interface with catalog, validation, BOM, instruction, generation, and configuration commands
+- **CLI Interface** (`ldraw/cli.py`): Command-line interface with catalog, validation, inspection, rendering, BOM, instruction, generation, and configuration commands
 - **Instruction Semantics** (`ldraw/instructions.py`): Sectioned STEP/ROTSTEP and LPub3D interpretation, authoring, inventory, and validation
 - **Instruction Artifacts** (`ldraw/instruction_artifacts.py`): Deterministic JSON manifests and cumulative MPD/LDR snapshots
 - **Dynamic Library Generation** (`ldraw/generation/`): Converts LDraw libraries to Python modules (with `.pyi` stubs)
