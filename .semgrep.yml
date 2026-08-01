@@ -43,7 +43,16 @@ rules:
       - pattern-inside: |
           def _resume_is_consistent(...):
               ...
-      - pattern: _response_validator_matches(...) is False
+      - pattern-either:
+          - pattern: _response_validator_matches(...) is False
+          - pattern: _response_validator_matches(...) is not False
+          - patterns:
+              - pattern-inside: |
+                  $MATCHED = _response_validator_matches(...)
+                  ...
+              - pattern-either:
+                  - pattern: $MATCHED is False
+                  - pattern: $MATCHED is not False
 
   - id: pyldraw-renderer-shutdown-must-bound-communicate
     languages:
@@ -55,9 +64,13 @@ rules:
     message: Bound communicate() calls in renderer shutdown paths.
     patterns:
       - pattern-inside: |
-          def _stop_renderer(...):
+          def $SHUTDOWN_HELPER(...):
               ...
-      - pattern: $PROCESS.communicate()
+      - metavariable-regex:
+          metavariable: $SHUTDOWN_HELPER
+          regex: ^_(stop|drain_forced)_renderer$
+      - pattern: $PROCESS.communicate(...)
+      - pattern-not: $PROCESS.communicate(..., timeout=$TIMEOUT, ...)
 
   - id: pyldraw-preview-cache-prune-requires-process-claim
     languages:
@@ -71,11 +84,20 @@ rules:
       - pattern-inside: |
           def _maybe_prune_preview_cache(...):
               ...
-      - pattern: _prune_preview_cache(...)
+      - pattern: _prune_preview_cache($CACHE_ROOT, ...)
       - pattern-not-inside: |
-          with _preview_cache_prune_claim(...) as $CLAIMED:
+          with _preview_cache_prune_claim($CACHE_ROOT) as $CLAIMED:
               ...
-              _prune_preview_cache(...)
+              if not $CLAIMED:
+                  return
+              ...
+              _prune_preview_cache($CACHE_ROOT, ...)
+      - pattern-not-inside: |
+          with _preview_cache_prune_claim($CACHE_ROOT) as $CLAIMED:
+              ...
+              if $CLAIMED:
+                  ...
+                  _prune_preview_cache($CACHE_ROOT, ...)
 
   - id: pyldraw-no-model-bom-module-import-cycle
     languages:

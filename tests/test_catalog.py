@@ -1,5 +1,6 @@
 """Tests for the persistent SQLite parts index."""
 
+import os
 import shutil
 import sqlite3
 from contextlib import closing
@@ -473,6 +474,37 @@ def test_dat_header_edit_invalidates_memo_without_index(tmp_path: Path) -> None:
     assert entry is not None
     assert "edited" in entry.keywords
     assert second is not first
+
+
+def test_parts_lst_md5_invalidates_memo_when_stat_key_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "ldraw"
+    shutil.copytree(LIBRARY_ROOT, library)
+    parts_lst = library / "parts.lst"
+    generated = tmp_path / "generated"
+    Parts.clear_cache()
+    first = load_parts(parts_lst, generated, build_index=True)
+    assert first.by_code["3005"] == "Brick  1 x  1"
+    unrelated = Parts.get(PARTS_LST, tree_fingerprint=TREE)
+
+    original_stat = parts_lst.stat()
+    original = parts_lst.read_bytes()
+    edited = original.replace(b"Brick  1 x  1", b"Brick  1 x  9", 1)
+    assert len(edited) == len(original)
+    parts_lst.write_bytes(edited)
+    os.utime(
+        parts_lst,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    assert parts_lst.stat().st_size == original_stat.st_size
+    assert parts_lst.stat().st_mtime_ns == original_stat.st_mtime_ns
+
+    second = load_parts(parts_lst, generated)
+
+    assert second is not first
+    assert second.by_code["3005"] == "Brick  1 x  9"
+    assert Parts.get(PARTS_LST, tree_fingerprint=TREE) is unrelated
 
 
 def test_tree_fingerprint_includes_relative_paths(tmp_path: Path) -> None:

@@ -60,7 +60,10 @@ jobs:
       with:
         python-version: '3.12'
     - name: Run repository Semgrep rules
-      run: pipx run semgrep scan --config .semgrep.yml --error
+      run: |
+        pipx run semgrep scan --config .semgrep.yml --error
+        pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/downloads.py
+        pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/rendering.py
 
   safety:
     name: Safety Check

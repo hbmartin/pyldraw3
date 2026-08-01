@@ -45,6 +45,7 @@ _CACHE_PRUNE_MARKER = ".last-prune"
 _CACHE_PRUNE_LOCK = ".prune.lock"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _CACHE_LOCK = threading.RLock()
+_CACHE_PRUNE_THREAD_LOCK = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -280,24 +281,31 @@ def _maybe_prune_preview_cache(
     The sweep stats every cached PNG, so running it on each render would
     tax hot paths (e.g. a TUI rendering many previews) for no benefit.
     """
-    with _CACHE_LOCK:
-        check_cancelled(cancellation)
-        if not cache_root.is_dir():
-            return
-        marker = cache_root / _CACHE_PRUNE_MARKER
-        if not _preview_cache_prune_is_due(marker):
-            return
+    check_cancelled(cancellation)
+    if not _CACHE_PRUNE_THREAD_LOCK.acquire(blocking=False):
+        return
+    try:
+        with _CACHE_LOCK:
+            if not cache_root.is_dir():
+                return
+            marker = cache_root / _CACHE_PRUNE_MARKER
+            if not _preview_cache_prune_is_due(marker):
+                return
         with _preview_cache_prune_claim(cache_root) as claimed:
             if not claimed:
                 return
             # Another process may have completed a sweep between the fast-path
             # marker check and this process acquiring the filesystem claim.
-            if not _preview_cache_prune_is_due(marker):
-                return
+            with _CACHE_LOCK:
+                check_cancelled(cancellation)
+                if not _preview_cache_prune_is_due(marker):
+                    return
             _prune_preview_cache(cache_root, cancellation=cancellation)
             # A failed marker only causes an earlier best-effort retry.
-            with contextlib.suppress(OSError):
+            with _CACHE_LOCK, contextlib.suppress(OSError):
                 marker.touch()
+    finally:
+        _CACHE_PRUNE_THREAD_LOCK.release()
 
 
 def _preview_cache_prune_is_due(marker: Path) -> bool:
@@ -361,16 +369,16 @@ def _prune_preview_cache(
     cancellation: CancellationToken | None = None,
 ) -> None:
     """Best-effort age and size eviction for the managed preview cache."""
-    with _CACHE_LOCK:
+    check_cancelled(cancellation)
+    if not cache_root.is_dir():
+        return
+    cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
+    retained: list[tuple[float, int, Path]] = []
+    for candidate in cache_root.glob("*.png"):
         check_cancelled(cancellation)
-        if not cache_root.is_dir():
-            return
-        cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
-        retained: list[tuple[float, int, Path]] = []
-        for candidate in cache_root.glob("*.png"):
-            check_cancelled(cancellation)
-            if candidate.name.startswith(".preview-"):
-                continue
+        if candidate.name.startswith(".preview-"):
+            continue
+        with _CACHE_LOCK:
             try:
                 metadata = candidate.stat()
                 if metadata.st_mtime < cutoff:
@@ -380,16 +388,17 @@ def _prune_preview_cache(
             except OSError:
                 continue
 
-        total = sum(size for _, size, _ in retained)
-        for _, size, candidate in sorted(retained):
-            check_cancelled(cancellation)
-            if total <= _CACHE_MAX_BYTES:
-                break
+    total = sum(size for _, size, _ in retained)
+    for _, size, candidate in sorted(retained):
+        check_cancelled(cancellation)
+        if total <= _CACHE_MAX_BYTES:
+            break
+        with _CACHE_LOCK:
             try:
                 candidate.unlink()
             except OSError:
                 continue
-            total -= size
+        total -= size
 
 
 def _cached_result(  # noqa: PLR0913 - result identity fields are explicit
@@ -543,8 +552,19 @@ def _captured_process_output(exc: subprocess.TimeoutExpired) -> str:
     return "\n".join(
         stripped
         for stream in (exc.stderr, exc.output)
-        if isinstance(stream, str) and (stripped := stream.strip())
+        if (stripped := _decode_process_output(stream).strip())
     )
+
+
+def _decode_process_output(output: bytes | str | None) -> str:
+    """Normalize partial subprocess output, which is bytes even in text mode."""
+    match output:
+        case bytes():
+            return output.decode("utf-8", errors="replace")
+        case str():
+            return output
+        case _:
+            return ""
 
 
 def _render_error_result(  # noqa: PLR0913 - diagnostic context is explicit
@@ -738,11 +758,8 @@ def _stop_renderer(
     except subprocess.TimeoutExpired:
         _signal_renderer_tree(process, force=True)
         return _drain_forced_renderer(process)
-    # The direct renderer can exit while a descendant ignores the graceful
-    # signal and closes its inherited pipes. Escalate the process group even
-    # after communicate() succeeds so the descendant is not orphaned.
-    _signal_renderer_tree(process, force=True)
-    return output
+    else:
+        return output
 
 
 def _drain_forced_renderer(process: subprocess.Popen[str]) -> tuple[str, str]:
@@ -755,8 +772,8 @@ def _drain_forced_renderer(process: subprocess.Popen[str]) -> tuple[str, str]:
             process.pid,
         )
         return (
-            exc.output if isinstance(exc.output, str) else "",
-            exc.stderr if isinstance(exc.stderr, str) else "",
+            _decode_process_output(exc.output),
+            _decode_process_output(exc.stderr),
         )
 
 

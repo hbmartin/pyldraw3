@@ -424,16 +424,28 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
         cancellation=cancellation,
     )
     if catalog is not None:
-        parts = Parts.get(parts_lst_path, tree_fingerprint=tree)
+        parts = Parts.get(
+            parts_lst_path,
+            tree_fingerprint=tree,
+            parts_lst_md5=md5,
+        )
         parts.adopt_catalog(catalog)
         return parts
-    # The tree fingerprint participates in the memo key, so an in-place
-    # ``.dat`` edit selects a new lazy instance even when a stale index file
-    # exists. Only an explicit rebuild needs the cache-wide fresh path.
+    # Both fingerprints participate in the memo key: the tree catches in-place
+    # ``.dat`` edits, while the MD5 catches a changed ``parts.lst`` whose size
+    # and mtime were preserved. Only an explicit rebuild needs the fresh path.
     parts = (
-        Parts.fresh(parts_lst_path, tree_fingerprint=tree)
+        Parts.fresh(
+            parts_lst_path,
+            tree_fingerprint=tree,
+            parts_lst_md5=md5,
+        )
         if build_index
-        else Parts.get(parts_lst_path, tree_fingerprint=tree)
+        else Parts.get(
+            parts_lst_path,
+            tree_fingerprint=tree,
+            parts_lst_md5=md5,
+        )
     )
     if build_index:
         try:
