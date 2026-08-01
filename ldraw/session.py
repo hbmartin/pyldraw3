@@ -410,7 +410,6 @@ class LDrawSession:
                 tree_fingerprint=snapshot.tree_fingerprint,
             )
             return parts, CatalogBuildOutcome.LOADED, False
-        paths.generated_path.mkdir(parents=True, exist_ok=True)
         catalog = (
             None
             if force
@@ -449,6 +448,7 @@ class LDrawSession:
             cancellation=cancellation,
         )
         try:
+            paths.catalog_db.parent.mkdir(parents=True, exist_ok=True)
             _persist_catalog_atomically(
                 paths=paths,
                 parts=parts,

@@ -338,6 +338,7 @@ def _content_range_complete_size(header: str | None) -> int | None:
 
 
 def _response_validator_matches(
+    *,
     response: requests.Response,
     validator: _ResumeValidator,
 ) -> bool | None:
@@ -391,7 +392,11 @@ def _finalize_unsatisfiable_range(
         offset
         and offset == expected_size
         and validator is not None
-        and _response_validator_matches(response, validator) is True
+        and _response_validator_matches(
+            response=response,
+            validator=validator,
+        )
+        is True
     ):
         # Only an explicitly echoed matching validator proves that
         # the complete partial still represents the current file.
@@ -408,10 +413,15 @@ def _resume_is_consistent(
 ) -> bool:
     """Check that a 206 continues the local partial's exact current state."""
     if (
-        validator is not None
-        and _response_validator_matches(response, validator) is False
+        validator is None
+        or _response_validator_matches(
+            response=response,
+            validator=validator,
+        )
+        is not True
     ):
-        # A server that ignored If-Range can otherwise splice two releases.
+        # A server that ignored If-Range or omitted the echoed validator can
+        # otherwise splice two releases.
         return False
     # A 206 that resumes from a different position than the local partial
     # ends at would corrupt the archive when appended.
@@ -646,7 +656,7 @@ def download(
                 cached,
                 integrity.bad_member or integrity.error,
             )
-            cached.unlink()
+            cached.unlink(missing_ok=True)
     retrieved = _download(
         url=url,
         filename=filename,

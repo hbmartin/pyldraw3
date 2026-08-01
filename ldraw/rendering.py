@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import platform
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import BinaryIO
 
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.dirs import get_cache_dir
@@ -28,12 +35,18 @@ from ldraw.progress import (
 
 _RENDER_TIMEOUT_SECONDS = 240
 _RENDER_POLL_SECONDS = 0.05
+_RENDER_STOP_TIMEOUT_SECONDS = 5
+_RENDER_KILL_TIMEOUT_SECONDS = 5
 _CACHE_SCHEMA = "preview-cache-v2"
 _CACHE_MAX_AGE_SECONDS = 7_776_000
 _CACHE_MAX_BYTES = 536_870_912
 _CACHE_PRUNE_INTERVAL_SECONDS = 3_600
 _CACHE_PRUNE_MARKER = ".last-prune"
+_CACHE_PRUNE_LOCK = ".prune.lock"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_CACHE_LOCK = threading.RLock()
+
+logger = logging.getLogger(__name__)
 
 
 class RenderBackend(StrEnum):
@@ -164,7 +177,11 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
             cache_path=cache_path,
         )
         if cache_path is None:
-            _maybe_prune_preview_cache(cache_root)
+            _maybe_prune_preview_cache(
+                cache_root,
+                cancellation=cancellation,
+            )
+        check_cancelled(cancellation)
         if not refresh and (
             cached := _cached_result(
                 source=source_path,
@@ -175,6 +192,7 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
                 requested_output=requested_output,
             )
         ):
+            check_cancelled(cancellation)
             return cached
     except OSError as exc:
         return _render_error_result(
@@ -252,53 +270,126 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
     return cache_root, cached_path, requested_output
 
 
-def _maybe_prune_preview_cache(cache_root: Path) -> None:
+def _maybe_prune_preview_cache(
+    cache_root: Path,
+    *,
+    cancellation: CancellationToken | None = None,
+) -> None:
     """Prune at most once per interval, tracked by a marker file's mtime.
 
     The sweep stats every cached PNG, so running it on each render would
     tax hot paths (e.g. a TUI rendering many previews) for no benefit.
     """
-    if not cache_root.is_dir():
-        return
-    marker = cache_root / _CACHE_PRUNE_MARKER
-    try:
-        if time.time() - marker.stat().st_mtime < _CACHE_PRUNE_INTERVAL_SECONDS:
+    with _CACHE_LOCK:
+        check_cancelled(cancellation)
+        if not cache_root.is_dir():
             return
-    except OSError:
-        pass
+        marker = cache_root / _CACHE_PRUNE_MARKER
+        if not _preview_cache_prune_is_due(marker):
+            return
+        with _preview_cache_prune_claim(cache_root) as claimed:
+            if not claimed:
+                return
+            # Another process may have completed a sweep between the fast-path
+            # marker check and this process acquiring the filesystem claim.
+            if not _preview_cache_prune_is_due(marker):
+                return
+            _prune_preview_cache(cache_root, cancellation=cancellation)
+            # A failed marker only causes an earlier best-effort retry.
+            with contextlib.suppress(OSError):
+                marker.touch()
+
+
+def _preview_cache_prune_is_due(marker: Path) -> bool:
+    """Return whether the cache's best-effort pruning interval has elapsed."""
     try:
-        marker.touch()
+        return time.time() - marker.stat().st_mtime >= _CACHE_PRUNE_INTERVAL_SECONDS
     except OSError:
-        # An unwritable cache cannot be pruned either.
+        # A missing or unreadable marker means the cache is due for a sweep.
+        return True
+
+
+@contextlib.contextmanager
+def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
+    """Yield whether this process owns the cache's non-blocking prune claim."""
+    try:
+        lock_file = (cache_root / _CACHE_PRUNE_LOCK).open("a+b")
+    except OSError:
+        yield False
         return
-    _prune_preview_cache(cache_root)
+
+    with lock_file:
+        if not _try_lock_preview_cache_file(lock_file):
+            yield False
+            return
+        # Closing the file releases both flock and msvcrt locks, including
+        # when pruning raises or the process exits unexpectedly.
+        yield True
 
 
-def _prune_preview_cache(cache_root: Path) -> None:
+def _try_lock_preview_cache_file(lock_file: BinaryIO) -> bool:
+    """Try to acquire one portable, process-scoped advisory file lock."""
+    match os.name:
+        case "nt":
+            import msvcrt  # noqa: PLC0415 - unavailable on POSIX
+
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            try:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return False
+        case _:
+            import fcntl  # noqa: PLC0415 - unavailable on Windows
+
+            try:
+                fcntl.flock(
+                    lock_file.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+            except OSError:
+                return False
+    return True
+
+
+def _prune_preview_cache(
+    cache_root: Path,
+    *,
+    cancellation: CancellationToken | None = None,
+) -> None:
     """Best-effort age and size eviction for the managed preview cache."""
-    if not cache_root.is_dir():
-        return
-    cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
-    retained: list[tuple[float, int, Path]] = []
-    for candidate in cache_root.glob("*.png"):
-        try:
-            metadata = candidate.stat()
-            if metadata.st_mtime < cutoff:
-                candidate.unlink()
-            else:
-                retained.append((metadata.st_mtime, metadata.st_size, candidate))
-        except OSError:
-            continue
+    with _CACHE_LOCK:
+        check_cancelled(cancellation)
+        if not cache_root.is_dir():
+            return
+        cutoff = time.time() - _CACHE_MAX_AGE_SECONDS
+        retained: list[tuple[float, int, Path]] = []
+        for candidate in cache_root.glob("*.png"):
+            check_cancelled(cancellation)
+            if candidate.name.startswith(".preview-"):
+                continue
+            try:
+                metadata = candidate.stat()
+                if metadata.st_mtime < cutoff:
+                    candidate.unlink()
+                else:
+                    retained.append((metadata.st_mtime, metadata.st_size, candidate))
+            except OSError:
+                continue
 
-    total = sum(size for _, size, _ in retained)
-    for _, size, candidate in sorted(retained):
-        if total <= _CACHE_MAX_BYTES:
-            break
-        try:
-            candidate.unlink()
-        except OSError:
-            continue
-        total -= size
+        total = sum(size for _, size, _ in retained)
+        for _, size, candidate in sorted(retained):
+            check_cancelled(cancellation)
+            if total <= _CACHE_MAX_BYTES:
+                break
+            try:
+                candidate.unlink()
+            except OSError:
+                continue
+            total -= size
 
 
 def _cached_result(  # noqa: PLR0913 - result identity fields are explicit
@@ -310,19 +401,24 @@ def _cached_result(  # noqa: PLR0913 - result identity fields are explicit
     cached_path: Path,
     requested_output: Path,
 ) -> RenderResult | None:
-    if not cached_path.is_file() or not cached_path.stat().st_size:
-        return None
-    if requested_output != cached_path:
-        requested_output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(cached_path, requested_output)
-    return RenderResult(
-        source=source,
-        view=view,
-        size=size,
-        backend=backend,
-        output=requested_output,
-        cached=True,
-    )
+    with _CACHE_LOCK:
+        try:
+            if not cached_path.is_file() or not cached_path.stat().st_size:
+                return None
+            if requested_output != cached_path:
+                requested_output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cached_path, requested_output)
+        except FileNotFoundError:
+            # A concurrent cache eviction is a cache miss, not a render failure.
+            return None
+        return RenderResult(
+            source=source,
+            view=view,
+            size=size,
+            backend=backend,
+            output=requested_output,
+            cached=True,
+        )
 
 
 def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
@@ -378,11 +474,12 @@ def _render_uncached(  # noqa: PLR0913 - renderer operation state is explicit
                 message=f"Preview rendering failed: {failure}",
                 offending_value=backend.value,
             )
-        temporary_path.replace(cached_path)
-        temporary_path = None
-        if requested_output != cached_path:
-            requested_output.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(cached_path, requested_output)
+        with _CACHE_LOCK:
+            temporary_path.replace(cached_path)
+            temporary_path = None
+            if requested_output != cached_path:
+                requested_output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cached_path, requested_output)
         emit_progress(
             on_progress,
             ProgressEvent(
@@ -596,23 +693,26 @@ def _signal_renderer_tree(
                 os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
         case "nt" if force:
             try:
-                subprocess.run(  # noqa: S603
-                    [  # noqa: S607
-                        "taskkill",
-                        "/PID",
-                        str(process.pid),
-                        "/T",
-                        "/F",
-                    ],
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    subprocess.run(  # noqa: S603
+                        [  # noqa: S607
+                            "taskkill",
+                            "/PID",
+                            str(process.pid),
+                            "/T",
+                            "/F",
+                        ],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=_RENDER_KILL_TIMEOUT_SECONDS,
+                    )
             finally:
                 # taskkill reports failure (already-exited PID, access
                 # denied) only via its exit code; always kill the direct
                 # child so the following communicate() cannot block forever.
-                process.kill()
+                with contextlib.suppress(OSError):
+                    process.kill()
         case "nt":
             try:
                 process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
@@ -632,12 +732,32 @@ def _stop_renderer(
     """Stop a renderer process group, escalating to kill, and drain its pipes."""
     _signal_renderer_tree(process, force=force)
     if force:
-        return process.communicate()
+        return _drain_forced_renderer(process)
     try:
-        return process.communicate(timeout=5)
+        output = process.communicate(timeout=_RENDER_STOP_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         _signal_renderer_tree(process, force=True)
-        return process.communicate()
+        return _drain_forced_renderer(process)
+    # The direct renderer can exit while a descendant ignores the graceful
+    # signal and closes its inherited pipes. Escalate the process group even
+    # after communicate() succeeds so the descendant is not orphaned.
+    _signal_renderer_tree(process, force=True)
+    return output
+
+
+def _drain_forced_renderer(process: subprocess.Popen[str]) -> tuple[str, str]:
+    """Drain a force-stopped renderer without ever blocking indefinitely."""
+    try:
+        return process.communicate(timeout=_RENDER_KILL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "Renderer process %s did not exit after forced termination",
+            process.pid,
+        )
+        return (
+            exc.output if isinstance(exc.output, str) else "",
+            exc.stderr if isinstance(exc.stderr, str) else "",
+        )
 
 
 __all__ = [

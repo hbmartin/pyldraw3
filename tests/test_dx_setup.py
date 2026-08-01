@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import subprocess
 import threading
@@ -9,6 +10,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -31,7 +33,7 @@ from ldraw.part_metadata import (
     parse_part_metadata,
 )
 from ldraw.progress import ProgressStage
-from ldraw.rendering import RenderBackend, RenderView, render_preview
+from ldraw.rendering import RenderBackend, RenderCapability, RenderView, render_preview
 
 if TYPE_CHECKING:
     from typing import Self
@@ -39,6 +41,8 @@ if TYPE_CHECKING:
 _PIECE = "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _WRITE_PNG = "printf '\\211PNG\\r\\n\\032\\n'"
+_CLAIM_ACQUIRE_ERROR = "could not acquire preview-cache prune claim"
+_CLAIM_RELEASE_ERROR = "preview-cache prune claim was not released"
 
 
 def _write_library(root: Path, *, release: str | None = "2026-01") -> Path:
@@ -64,6 +68,22 @@ def _renderer(path: Path, body: str) -> Path:
     path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def _hold_preview_cache_prune_claim(
+    cache: Path,
+    acquired: Path,
+    release: Path,
+) -> None:
+    with rendering._preview_cache_prune_claim(cache) as claimed:  # noqa: SLF001
+        if not claimed:
+            raise RuntimeError(_CLAIM_ACQUIRE_ERROR)
+        acquired.touch()
+        deadline = time.monotonic() + 10
+        while not release.is_file():
+            if time.monotonic() >= deadline:
+                raise TimeoutError(_CLAIM_RELEASE_ERROR)
+            time.sleep(0.01)
 
 
 def test_library_inspection_handles_direct_paths_and_unreadable_files(
@@ -438,6 +458,46 @@ def test_render_preview_supports_leocad_outputs_cache_copy_and_cancellation(
         timer.cancel()
 
 
+def test_render_preview_does_not_prune_caller_provided_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE, encoding="utf-8")
+    executable = tmp_path / "ldview"
+    capability = RenderCapability(
+        backend=RenderBackend.LDVIEW,
+        available=True,
+        executable=executable,
+    )
+    prune = MagicMock()
+    rendered = rendering.RenderResult(
+        source=model.resolve(),
+        view=RenderView.ISOMETRIC,
+        size=(800, 600),
+        backend=RenderBackend.LDVIEW,
+        output=None,
+        cached=False,
+    )
+    render_uncached = MagicMock(return_value=rendered)
+    monkeypatch.setattr(
+        "ldraw.rendering._available_renderers",
+        lambda: {RenderBackend.LDVIEW: capability},
+    )
+    monkeypatch.setattr("ldraw.rendering._maybe_prune_preview_cache", prune)
+    monkeypatch.setattr("ldraw.rendering._render_uncached", render_uncached)
+
+    result = render_preview(
+        model,
+        backend=RenderBackend.LDVIEW,
+        cache_path=tmp_path / "caller-cache",
+    )
+
+    assert result is rendered
+    prune.assert_not_called()
+    render_uncached.assert_called_once()
+
+
 def test_render_preview_catches_subprocess_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -569,6 +629,116 @@ def test_preview_cache_pruning_removes_aged_and_excess_files(
     assert unrelated.exists()
 
 
+def test_preview_cache_pruning_preserves_active_temporary_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    temporary = cache / ".preview-active.png"
+    temporary.write_bytes(b"partial")
+    os.utime(temporary, (100, 100))
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 0)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert temporary.exists()
+
+
+def test_preview_cache_pruning_checks_cancellation_during_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    (cache / "first.png").write_bytes(b"png!")
+    token = CancellationToken()
+    checks = 0
+    original_check = rendering.check_cancelled
+
+    def cancel_during_scan(cancellation: CancellationToken | None) -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            token.cancel()
+        original_check(cancellation)
+
+    monkeypatch.setattr("ldraw.rendering.check_cancelled", cancel_during_scan)
+
+    with pytest.raises(OperationCancelled):
+        rendering._prune_preview_cache(  # noqa: SLF001
+            cache,
+            cancellation=token,
+        )
+
+    assert checks == 2
+
+
+def test_render_preview_rechecks_cancellation_before_cached_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE, encoding="utf-8")
+    renderer = _renderer(tmp_path / "ldview", "exit 0")
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(renderer) if name == "ldview" else None,
+    )
+    monkeypatch.setattr("ldraw.rendering.get_cache_dir", lambda: tmp_path / "cache")
+    token = CancellationToken()
+
+    def cancel_on_cache_hit(**_kwargs: object) -> rendering.RenderResult:
+        token.cancel()
+        return rendering.RenderResult(
+            source=model,
+            view=RenderView.ISOMETRIC,
+            size=(800, 600),
+            backend=RenderBackend.LDVIEW,
+            output=model,
+            cached=True,
+        )
+
+    monkeypatch.setattr("ldraw.rendering._cached_result", cancel_on_cache_hit)
+
+    with pytest.raises(OperationCancelled):
+        render_preview(
+            model,
+            backend=RenderBackend.LDVIEW,
+            cancellation=token,
+        )
+
+
+def test_concurrent_cached_preview_eviction_becomes_cache_miss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "model.ldr"
+    source.write_text(_PIECE, encoding="utf-8")
+    cached = tmp_path / "cached.png"
+    cached.write_bytes(_PNG_SIGNATURE)
+    requested = tmp_path / "output.png"
+
+    def evict_before_copy(_source: Path, _destination: Path) -> None:
+        cached.unlink()
+        raise FileNotFoundError(cached)
+
+    monkeypatch.setattr("ldraw.rendering.shutil.copy2", evict_before_copy)
+
+    result = rendering._cached_result(  # noqa: SLF001
+        source=source,
+        view=RenderView.ISOMETRIC,
+        size=(800, 600),
+        backend=RenderBackend.LDVIEW,
+        cached_path=cached,
+        requested_output=requested,
+    )
+
+    assert result is None
+
+
 def test_preview_cache_prune_is_throttled_by_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -602,3 +772,91 @@ def test_preview_cache_prune_is_throttled_by_marker(
     rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
 
     assert not second.exists()
+
+
+def test_preview_cache_pruning_claim_is_cross_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    aged = cache / "aged.png"
+    aged.write_bytes(b"png!")
+    os.utime(aged, (100, 100))
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+
+    acquired = tmp_path / "claim-acquired"
+    release = tmp_path / "release-claim"
+    context = multiprocessing.get_context("spawn")
+    holder = context.Process(
+        target=_hold_preview_cache_prune_claim,
+        args=(cache, acquired, release),
+    )
+    holder.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not acquired.is_file() and holder.is_alive():
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+
+        assert acquired.is_file()
+        rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+        assert aged.exists()
+    finally:
+        release.touch()
+        holder.join(timeout=10)
+        if holder.is_alive():
+            holder.terminate()
+            holder.join(timeout=5)
+
+    assert holder.exitcode == 0
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+    assert not aged.exists()
+
+
+def test_stop_renderer_escalates_after_graceful_parent_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = MagicMock()
+    process.communicate.return_value = ("stdout", "stderr")
+    signals: list[bool] = []
+
+    def record_signal(_process: object, *, force: bool) -> None:
+        signals.append(force)
+
+    monkeypatch.setattr("ldraw.rendering._signal_renderer_tree", record_signal)
+
+    assert rendering._stop_renderer(process) == ("stdout", "stderr")  # noqa: SLF001
+    assert signals == [False, True]
+    process.communicate.assert_called_once_with(
+        timeout=rendering._RENDER_STOP_TIMEOUT_SECONDS,  # noqa: SLF001
+    )
+
+
+def test_stop_renderer_forced_drain_is_bounded(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = MagicMock()
+    process.pid = 42
+    process.communicate.side_effect = subprocess.TimeoutExpired(
+        cmd=["renderer"],
+        timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
+        output="stdout",
+        stderr="stderr",
+    )
+    monkeypatch.setattr(
+        "ldraw.rendering._signal_renderer_tree",
+        lambda _process, *, force: None,
+    )
+
+    assert rendering._stop_renderer(process, force=True) == (  # noqa: SLF001
+        "stdout",
+        "stderr",
+    )
+    process.communicate.assert_called_once_with(
+        timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
+    )
+    assert "did not exit after forced termination" in caplog.text

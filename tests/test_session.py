@@ -475,6 +475,30 @@ def test_prepare_catalog_returns_parts_when_index_cannot_be_persisted(
     assert result.diagnostics[0].severity.value == "warning"
 
 
+def test_prepare_catalog_returns_parts_when_index_directory_cannot_be_created(
+    tmp_path: Path,
+) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    generated_path = tmp_path / "generated"
+    generated_path.write_text("not a directory", encoding="utf-8")
+    session = LDrawSession(
+        Config(
+            ldraw_library_path=str(parts_lst.parents[1]),
+            generated_path=str(generated_path),
+        ),
+    )
+
+    result = session.prepare_catalog()
+
+    assert result.complete is True
+    assert result.parts is not None
+    assert result.parts.get_entry_by_code("3001") is not None
+    assert result.report.outcome is CatalogBuildOutcome.REBUILT_NOT_PERSISTED
+    assert result.report.persisted is False
+    assert result.diagnostics[0].code is DiagnosticCode.CATALOG_PERSIST_FAILED
+    assert result.diagnostics[0].path == generated_path / "catalog.sqlite"
+
+
 def test_session_uses_existing_index_and_structured_model_loader(
     tmp_path: Path,
 ) -> None:

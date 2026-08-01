@@ -105,7 +105,9 @@ def bill_of_materials(
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"
         raise ValueError(message)
-    source = _model_occurrences(model) if model is not None else occurrences
+    source: Iterable[ModelOccurrence] | None = (
+        _model_occurrences(model) if model is not None else occurrences
+    )
     if source is None:  # pragma: no cover - guarded above
         raise AssertionError
     counts: Counter[tuple[str, Colour]] = Counter()

@@ -14,10 +14,12 @@ from ldraw import download
 from ldraw.downloads import (
     ARCHIVE_URL,
     LDRAW_URL,
+    ArchiveIntegrity,
     _case_safe_rename,
     _download,
     _normalize_tree,
     _temporary_rename_path,
+    check_archive_integrity,
     unpack_version,
 )
 
@@ -240,7 +242,11 @@ def test_download_resume_appends_partial_and_sends_range_with_if_range(
         [
             FakeResponse(
                 status_code=206,
-                headers={"content-length": "6", "content-range": "bytes 6-11/12"},
+                headers={
+                    "content-length": "6",
+                    "content-range": "bytes 6-11/12",
+                    "etag": '"v1"',
+                },
                 chunks=(b"second",),
             ),
         ],
@@ -446,6 +452,42 @@ def test_download_resume_206_restarts_when_response_validator_changed(
                     "content-length": "4",
                     "content-range": "bytes 4-7/8",
                     "etag": '"v2"',
+                },
+                chunks=(b"tail",),
+            ),
+            FakeResponse(headers={"content-length": "8"}, chunks=(b"new-file",)),
+        ],
+    )
+
+    result = _download(
+        url="https://example.test/x.zip",
+        filename="x.zip",
+        resume=True,
+    )
+
+    assert sent_headers == [
+        {"Range": "bytes=4-", "If-Range": '"v1"'},
+        None,
+    ]
+    assert result.read_bytes() == b"new-file"
+
+
+def test_download_resume_206_restarts_when_response_validator_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    partial = tmp_path / "x.zip.part"
+    partial.write_bytes(b"old-")
+    _write_sidecar(partial, etag='"v1"', total=8)
+    sent_headers = _install_fake_get(
+        monkeypatch,
+        [
+            FakeResponse(
+                status_code=206,
+                headers={
+                    "content-length": "4",
+                    "content-range": "bytes 4-7/8",
                 },
                 chunks=(b"tail",),
             ),
@@ -747,7 +789,7 @@ def test_download_versioned_discards_corrupt_cached_zip(
 @patch("ldraw.downloads.generate_parts_lst")
 @patch("ldraw.downloads.unpack_version")
 @patch("ldraw.downloads._download")
-def test_download_discards_corrupt_fresh_archive_before_unpacking(
+def test_download_tolerates_concurrent_corrupt_cache_deletion(
     download_mock: MagicMock,
     unpack_version_mock: MagicMock,
     generate_parts_lst_mock: MagicMock,
@@ -757,7 +799,49 @@ def test_download_discards_corrupt_fresh_archive_before_unpacking(
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
     corrupt = tmp_path / "2018-02.zip"
     corrupt.write_bytes(b"definitely not a zip archive")
-    download_mock.return_value = corrupt
+    replacement = tmp_path / "replacement.zip"
+
+    def delete_corrupt_during_check(path: Path) -> ArchiveIntegrity:
+        if path == corrupt:
+            path.unlink()
+            return ArchiveIntegrity(valid=False, error=zipfile.BadZipFile("corrupt"))
+        return check_archive_integrity(path)
+
+    def replacement_download(**_kwargs: object) -> Path:
+        with zipfile.ZipFile(replacement, "w") as archive:
+            archive.writestr("ldraw/parts.lst", "parts")
+        return replacement
+
+    monkeypatch.setattr(
+        "ldraw.downloads.check_archive_integrity",
+        delete_corrupt_during_check,
+    )
+    download_mock.side_effect = replacement_download
+
+    download(show_progress=False, version="2018-02")
+
+    download_mock.assert_called_once()
+    unpack_version_mock.assert_called_once()
+
+
+@patch("ldraw.downloads.generate_parts_lst")
+@patch("ldraw.downloads.unpack_version")
+@patch("ldraw.downloads._download")
+def test_download_discards_corrupt_fresh_archive_before_unpacking(
+    download_mock: MagicMock,
+    unpack_version_mock: MagicMock,
+    generate_parts_lst_mock: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    corrupt = tmp_path / "2018-02.zip"
+
+    def redownload_corrupt(**_kwargs: object) -> Path:
+        corrupt.write_bytes(b"definitely not a zip archive")
+        return corrupt
+
+    download_mock.side_effect = redownload_corrupt
 
     with pytest.raises(zipfile.BadZipFile, match="failed integrity check"):
         download(show_progress=False, version="2018-02")

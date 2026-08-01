@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ldraw.analysis import analyze_model
-from ldraw.bom import bill_of_materials
+from ldraw.bom import BomRow, bill_of_materials
 from ldraw.cli import main
 from ldraw.config import Config
 from ldraw.diagnostics import DiagnosticCode, Severity
@@ -92,8 +92,8 @@ def test_cyclic_model_bill_of_materials_and_summary_succeed(tmp_path: Path) -> N
     _, result = _load_cyclic(tmp_path)
     assert result.model is not None
 
-    method_rows = result.model.bill_of_materials()
-    function_rows = bill_of_materials(result.model)
+    method_rows: list[BomRow] = result.model.bill_of_materials()
+    function_rows: list[BomRow] = bill_of_materials(result.model)
     assert [(row.part, row.quantity) for row in method_rows] == [("3001", 1)]
     assert function_rows == method_rows
 
