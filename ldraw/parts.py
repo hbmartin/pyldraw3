@@ -649,7 +649,11 @@ class Parts:
         tree_fingerprint: str | None = None,
         parts_lst_md5: str | None = None,
     ) -> Parts:
-        """Get a memoized Parts keyed by list and optional content fingerprints."""
+        """Get a memoized Parts keyed by list and optional content fingerprints.
+
+        Omitting ``parts_lst_md5`` memoizes under a different key than
+        passing it, so mixing both styles for one file parses it twice.
+        """
         path = Path(parts_lst).expanduser()
         stat_result = path.stat()
         return _parts_for_stat(

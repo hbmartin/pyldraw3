@@ -389,12 +389,16 @@ def _prune_preview_cache(
                 continue
 
     total = sum(size for _, size, _ in retained)
-    for _, size, candidate in sorted(retained):
+    for mtime, size, candidate in sorted(retained):
         check_cancelled(cancellation)
         if total <= _CACHE_MAX_BYTES:
             break
         with _CACHE_LOCK:
             try:
+                if candidate.stat().st_mtime != mtime:
+                    # Touched since the scan: recently used, so evict colder
+                    # entries instead.
+                    continue
                 candidate.unlink()
             except OSError:
                 continue
@@ -759,6 +763,9 @@ def _stop_renderer(
         _signal_renderer_tree(process, force=True)
         return _drain_forced_renderer(process)
     else:
+        # No escalation here: communicate() has reaped the child, so its PID
+        # may already be recycled and killpg() could hit an unrelated process
+        # group. Descendants received the group-wide graceful signal above.
         return output
 
 
