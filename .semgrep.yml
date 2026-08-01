@@ -31,6 +31,34 @@ rules:
               ...
               cache_ldraw / version
 
+  - id: pyldraw-resume-validation-must-fail-closed
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/downloads.py
+    message: Accept resumed content only when the response validator explicitly matches.
+    patterns:
+      - pattern-inside: |
+          def _resume_is_consistent(...):
+              ...
+      - pattern: _response_validator_matches(...) is False
+
+  - id: pyldraw-renderer-shutdown-must-bound-communicate
+    languages:
+      - python
+    severity: ERROR
+    paths:
+      include:
+        - /ldraw/rendering.py
+    message: Bound communicate() calls in renderer shutdown paths.
+    patterns:
+      - pattern-inside: |
+          def _stop_renderer(...):
+              ...
+      - pattern: $PROCESS.communicate()
+
   - id: pyldraw-no-model-bom-module-import-cycle
     languages:
       - python

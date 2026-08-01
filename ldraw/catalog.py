@@ -427,15 +427,12 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
         parts = Parts.get(parts_lst_path, tree_fingerprint=tree)
         parts.adopt_catalog(catalog)
         return parts
-    # The index is stale or unusable. A memoized instance may still hold a
-    # categorization from before an in-place ``.dat`` edit (the memo is
-    # keyed on the ``parts.lst`` stat, which such edits leave unchanged),
-    # so every stale-index path must return a fresh lazy catalog. With no
-    # persisted index, the tree fingerprint still participates in the memo
-    # key so later in-place edits select a new instance.
+    # The tree fingerprint participates in the memo key, so an in-place
+    # ``.dat`` edit selects a new lazy instance even when a stale index file
+    # exists. Only an explicit rebuild needs the cache-wide fresh path.
     parts = (
         Parts.fresh(parts_lst_path, tree_fingerprint=tree)
-        if build_index or db_path.is_file()
+        if build_index
         else Parts.get(parts_lst_path, tree_fingerprint=tree)
     )
     if build_index:

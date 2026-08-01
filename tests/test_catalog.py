@@ -1,5 +1,6 @@
 """Tests for the persistent SQLite parts index."""
 
+import shutil
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -282,7 +283,9 @@ def test_paths_outside_library_root_stay_absolute(tmp_path) -> None:
     )
 
     assert loaded is not None
-    assert loaded.by_code["3001"].part.path == outside
+    loaded_part = loaded.by_code["3001"].part
+    assert loaded_part is not None
+    assert loaded_part.path == outside
 
 
 def test_save_catalog_handles_entries_without_part(tmp_path) -> None:
@@ -405,8 +408,6 @@ def test_dat_header_edit_invalidates_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import shutil
-
     library = tmp_path / "ldraw"
     shutil.copytree(LIBRARY_ROOT, library)
     parts_lst = library / "parts.lst"
@@ -416,6 +417,7 @@ def test_dat_header_edit_invalidates_index(
     first_entry = first.get_entry_by_code("3005")
     assert first_entry is not None
     assert "edited" not in first_entry.keywords
+    unrelated = Parts.get(PARTS_LST, tree_fingerprint=TREE)
 
     target = library / "parts" / "3005.dat"
     text = target.read_text()
@@ -441,6 +443,36 @@ def test_dat_header_edit_invalidates_index(
     assert "edited" in entry.keywords
     assert parts is not first
     assert calls["count"] == 1
+    assert Parts.get(PARTS_LST, tree_fingerprint=TREE) is unrelated
+
+
+def test_dat_header_edit_invalidates_memo_without_index(tmp_path: Path) -> None:
+    library = tmp_path / "ldraw"
+    shutil.copytree(LIBRARY_ROOT, library)
+    parts_lst = library / "parts.lst"
+    generated = tmp_path / "generated"
+    Parts.clear_cache()
+    first = load_parts(parts_lst, generated, build_index=False)
+    first_entry = first.get_entry_by_code("3005")
+    assert first_entry is not None
+    assert "edited" not in first_entry.keywords
+    assert not catalog_db_path(generated).is_file()
+
+    target = library / "parts" / "3005.dat"
+    text = target.read_text()
+    target.write_text(
+        text.replace(
+            "0 !LICENSE Redistributable",
+            "0 !KEYWORDS edited\n0 !LICENSE Redistributable",
+            1,
+        ),
+    )
+
+    second = load_parts(parts_lst, generated, build_index=False)
+    entry = second.get_entry_by_code("3005")
+    assert entry is not None
+    assert "edited" in entry.keywords
+    assert second is not first
 
 
 def test_tree_fingerprint_includes_relative_paths(tmp_path: Path) -> None:

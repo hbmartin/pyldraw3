@@ -9,6 +9,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -569,6 +570,116 @@ def test_preview_cache_pruning_removes_aged_and_excess_files(
     assert unrelated.exists()
 
 
+def test_preview_cache_pruning_preserves_active_temporary_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    temporary = cache / ".preview-active.png"
+    temporary.write_bytes(b"partial")
+    os.utime(temporary, (100, 100))
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 0)
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert temporary.exists()
+
+
+def test_preview_cache_pruning_checks_cancellation_during_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    (cache / "first.png").write_bytes(b"png!")
+    token = CancellationToken()
+    checks = 0
+    original_check = rendering.check_cancelled
+
+    def cancel_during_scan(cancellation: CancellationToken | None) -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            token.cancel()
+        original_check(cancellation)
+
+    monkeypatch.setattr("ldraw.rendering.check_cancelled", cancel_during_scan)
+
+    with pytest.raises(OperationCancelled):
+        rendering._prune_preview_cache(  # noqa: SLF001
+            cache,
+            cancellation=token,
+        )
+
+    assert checks == 2
+
+
+def test_render_preview_rechecks_cancellation_before_cached_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(_PIECE, encoding="utf-8")
+    renderer = _renderer(tmp_path / "ldview", "exit 0")
+    monkeypatch.setattr(
+        "ldraw.rendering.shutil.which",
+        lambda name: str(renderer) if name == "ldview" else None,
+    )
+    monkeypatch.setattr("ldraw.rendering.get_cache_dir", lambda: tmp_path / "cache")
+    token = CancellationToken()
+
+    def cancel_on_cache_hit(**_kwargs: object) -> rendering.RenderResult:
+        token.cancel()
+        return rendering.RenderResult(
+            source=model,
+            view=RenderView.ISOMETRIC,
+            size=(800, 600),
+            backend=RenderBackend.LDVIEW,
+            output=model,
+            cached=True,
+        )
+
+    monkeypatch.setattr("ldraw.rendering._cached_result", cancel_on_cache_hit)
+
+    with pytest.raises(OperationCancelled):
+        render_preview(
+            model,
+            backend=RenderBackend.LDVIEW,
+            cancellation=token,
+        )
+
+
+def test_concurrent_cached_preview_eviction_becomes_cache_miss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "model.ldr"
+    source.write_text(_PIECE, encoding="utf-8")
+    cached = tmp_path / "cached.png"
+    cached.write_bytes(_PNG_SIGNATURE)
+    requested = tmp_path / "output.png"
+
+    def evict_before_copy(_source: Path, _destination: Path) -> None:
+        cached.unlink()
+        raise FileNotFoundError(cached)
+
+    monkeypatch.setattr("ldraw.rendering.shutil.copy2", evict_before_copy)
+
+    result = rendering._cached_result(  # noqa: SLF001
+        source=source,
+        view=RenderView.ISOMETRIC,
+        size=(800, 600),
+        backend=RenderBackend.LDVIEW,
+        cached_path=cached,
+        requested_output=requested,
+    )
+
+    assert result is None
+
+
 def test_preview_cache_prune_is_throttled_by_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -602,3 +713,49 @@ def test_preview_cache_prune_is_throttled_by_marker(
     rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
 
     assert not second.exists()
+
+
+def test_stop_renderer_escalates_after_graceful_parent_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = MagicMock()
+    process.communicate.return_value = ("stdout", "stderr")
+    signals: list[bool] = []
+
+    def record_signal(_process: object, *, force: bool) -> None:
+        signals.append(force)
+
+    monkeypatch.setattr("ldraw.rendering._signal_renderer_tree", record_signal)
+
+    assert rendering._stop_renderer(process) == ("stdout", "stderr")  # noqa: SLF001
+    assert signals == [False, True]
+    process.communicate.assert_called_once_with(
+        timeout=rendering._RENDER_STOP_TIMEOUT_SECONDS,  # noqa: SLF001
+    )
+
+
+def test_stop_renderer_forced_drain_is_bounded(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = MagicMock()
+    process.pid = 42
+    process.communicate.side_effect = subprocess.TimeoutExpired(
+        cmd=["renderer"],
+        timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
+        output="stdout",
+        stderr="stderr",
+    )
+    monkeypatch.setattr(
+        "ldraw.rendering._signal_renderer_tree",
+        lambda _process, *, force: None,
+    )
+
+    assert rendering._stop_renderer(process, force=True) == (  # noqa: SLF001
+        "stdout",
+        "stderr",
+    )
+    process.communicate.assert_called_once_with(
+        timeout=rendering._RENDER_KILL_TIMEOUT_SECONDS,  # noqa: SLF001
+    )
+    assert "did not exit after forced termination" in caplog.text
