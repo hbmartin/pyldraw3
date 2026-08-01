@@ -630,6 +630,46 @@ def test_preview_cache_pruning_removes_aged_and_excess_files(
     assert unrelated.exists()
 
 
+def test_preview_cache_size_eviction_keeps_files_touched_after_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    coldest = cache / "coldest.png"
+    warmer = cache / "warmer.png"
+    coldest.write_bytes(b"a" * 10)
+    warmer.write_bytes(b"b" * 10)
+    os.utime(coldest, (600, 600))
+    os.utime(warmer, (700, 700))
+    checks = 0
+    original_check = rendering.check_cancelled
+
+    def touch_coldest_before_eviction(
+        cancellation: CancellationToken | None,
+    ) -> None:
+        nonlocal checks
+        checks += 1
+        # Call 4 is the first size-eviction iteration: one check at the top
+        # of the sweep plus one per scanned candidate precede it.
+        if checks == 4:
+            os.utime(coldest, (800, 800))
+        original_check(cancellation)
+
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_BYTES", 10)
+    monkeypatch.setattr(
+        "ldraw.rendering.check_cancelled",
+        touch_coldest_before_eviction,
+    )
+
+    rendering._prune_preview_cache(cache)  # noqa: SLF001
+
+    assert coldest.exists()
+    assert not warmer.exists()
+
+
 def test_preview_cache_pruning_preserves_active_temporary_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

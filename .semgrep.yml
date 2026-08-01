@@ -1,3 +1,6 @@
+# The paths.include entries are root-anchored (leading slash), so the
+# intentionally-unsafe fixtures under tests/semgrep/ never match the
+# enforcing scan; CI exercises them separately via `semgrep scan --test`.
 rules:
   - id: pyldraw-unsafe-archive-extractall
     languages:
