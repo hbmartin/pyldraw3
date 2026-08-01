@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import platform
@@ -30,6 +31,8 @@ _RENDER_POLL_SECONDS = 0.05
 _CACHE_SCHEMA = "preview-cache-v2"
 _CACHE_MAX_AGE_SECONDS = 7_776_000
 _CACHE_MAX_BYTES = 536_870_912
+_CACHE_PRUNE_INTERVAL_SECONDS = 3_600
+_CACHE_PRUNE_MARKER = ".last-prune"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -115,8 +118,9 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
     so edits to them do not invalidate cached previews; pass ``refresh=True``
     to skip the cache read and force a re-render (the fresh image is still
     written back to the cache). The managed default cache evicts PNGs older
-    than 90 days and caps retained data at 512 MiB; caller-provided cache
-    directories are never pruned automatically.
+    than 90 days and caps retained data at 512 MiB, checking at most once
+    per hour; caller-provided cache directories are never pruned
+    automatically.
     """
     source_path = Path(source).expanduser().resolve()
     if not source_path.is_file():
@@ -160,7 +164,7 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
             cache_path=cache_path,
         )
         if cache_path is None:
-            _prune_preview_cache(cache_root)
+            _maybe_prune_preview_cache(cache_root)
         if not refresh and (
             cached := _cached_result(
                 source=source_path,
@@ -246,6 +250,28 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
     cached_path = cache_root / f"{digest.hexdigest()}.png"
     requested_output = Path(output).expanduser() if output is not None else cached_path
     return cache_root, cached_path, requested_output
+
+
+def _maybe_prune_preview_cache(cache_root: Path) -> None:
+    """Prune at most once per interval, tracked by a marker file's mtime.
+
+    The sweep stats every cached PNG, so running it on each render would
+    tax hot paths (e.g. a TUI rendering many previews) for no benefit.
+    """
+    if not cache_root.is_dir():
+        return
+    marker = cache_root / _CACHE_PRUNE_MARKER
+    try:
+        if time.time() - marker.stat().st_mtime < _CACHE_PRUNE_INTERVAL_SECONDS:
+            return
+    except OSError:
+        pass
+    try:
+        marker.touch()
+    except OSError:
+        # An unwritable cache cannot be pruned either.
+        return
+    _prune_preview_cache(cache_root)
 
 
 def _prune_preview_cache(cache_root: Path) -> None:
@@ -564,39 +590,38 @@ def _signal_renderer_tree(
     force: bool,
 ) -> None:
     """Signal a renderer and descendants started by its process group."""
-    if os.name == "posix":
-        try:
-            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        return
-    if os.name == "nt":
-        if not force:
+    match os.name:
+        case "posix":
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        case "nt" if force:
+            try:
+                subprocess.run(  # noqa: S603
+                    [  # noqa: S607
+                        "taskkill",
+                        "/PID",
+                        str(process.pid),
+                        "/T",
+                        "/F",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            finally:
+                # taskkill reports failure (already-exited PID, access
+                # denied) only via its exit code; always kill the direct
+                # child so the following communicate() cannot block forever.
+                process.kill()
+        case "nt":
             try:
                 process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
             except (OSError, ValueError):
                 process.terminate()
-            return
-        try:
-            subprocess.run(  # noqa: S603
-                [  # noqa: S607
-                    "taskkill",
-                    "/PID",
-                    str(process.pid),
-                    "/T",
-                    "/F",
-                ],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
+        case _ if force:
             process.kill()
-        return
-    if force:
-        process.kill()
-    else:
-        process.terminate()
+        case _:
+            process.terminate()
 
 
 def _stop_renderer(

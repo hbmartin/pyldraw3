@@ -567,3 +567,38 @@ def test_preview_cache_pruning_removes_aged_and_excess_files(
     assert not overflow.exists()
     assert newest.exists()
     assert unrelated.exists()
+
+
+def test_preview_cache_prune_is_throttled_by_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "previews"
+    cache.mkdir()
+    monkeypatch.setattr("ldraw.rendering.time.time", lambda: 1_000)
+    monkeypatch.setattr("ldraw.rendering._CACHE_MAX_AGE_SECONDS", 500)
+    monkeypatch.setattr("ldraw.rendering._CACHE_PRUNE_INTERVAL_SECONDS", 500)
+    first = cache / "first.png"
+    first.write_bytes(b"png!")
+    os.utime(first, (100, 100))
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    marker = cache / ".last-prune"
+    assert not first.exists()
+    assert marker.is_file()
+
+    second = cache / "second.png"
+    second.write_bytes(b"png!")
+    os.utime(second, (100, 100))
+    os.utime(marker, (900, 900))
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    assert second.exists()
+
+    os.utime(marker, (400, 400))
+
+    rendering._maybe_prune_preview_cache(cache)  # noqa: SLF001
+
+    assert not second.exists()
