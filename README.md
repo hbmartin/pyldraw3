@@ -303,15 +303,47 @@ print(parts.stud_positions("3001"))  # centres of the 8 top studs
 
 for stud in parts.studs("3062b"):  # every stud primitive, tubes included
     print(stud.name, stud.description, stud.position, stud.is_top_stud)
+
+for connection in parts.connections("32000"):
+    print(connection.kind, connection.role, connection.position, connection.axis)
 ```
 
 `parts.geometry(code)` expands drawable points exactly and returns bounds,
-studs/connectors, and completeness diagnostics together. `bounding_box()`
+studs, typed physical connections, and completeness diagnostics together.
+Connection features cover studs/receptacles, bars/clips, pins/holes,
+Technic axles/axle holes, hinge fingers, and tyre/rim seats. Profiles retain
+diameter, axial span, cross-section, friction/sliding freedom, hinge detents,
+source, confidence, and occupancy rather than reducing every connection to a
+point. `bounding_box()`
 remains as the compact compatibility helper. Stud queries expand stud group
 primitives down to individual `stud*` references; `is_top_stud` distinguishes
 upward connectors from underside tubes. Use
 `ldraw parts geometry CODE [--format table|json]` for the same query without
 writing Python.
+
+Primitive-based inference is deliberately conservative. Projects that have
+LDCad shadow metadata can layer it on without making it a required dependency:
+
+```python
+parts.add_connection_shadow("~/ldcad/shadow")  # directory, .zip, or .csl
+```
+
+`SNAP_CYL`, `SNAP_CLP`, `SNAP_FGR`, `SNAP_GEN`, `SNAP_INCL`, and
+`SNAP_CLEAR` are supported; direct feature/clear commands embedded in custom
+part files are consumed as inline metadata too. `Parts.set_connection_overrides()`
+provides the final, authoritative layer for custom parts. Adding or clearing
+either source invalidates derived geometry automatically.
+
+Official complete wheel/tyre shortcuts provide evidence-backed pairing via
+`parts.tyre_rim_compatibility`, `compatible_tyres(rim_code)`, and
+`compatible_rims(tyre_code)`. Connections inherited by an already assembled
+wheel-and-tyre shortcut are marked occupied.
+
+`inspect_model(model, parts)` transforms connection frames into world space.
+Use `inspection.connection_contacts()` to find interfaces already mated and
+`inspection.snap_candidates(moving, fixed=...)` to obtain ranked rigid
+placements. Round interfaces preserve free roll; Technic axle profiles enforce
+their quarter-turn cross alignment.
 
 ### IDE Autocompletion and Type Checking
 

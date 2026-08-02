@@ -23,6 +23,26 @@ import sys
 from ldraw.analysis import ModelAnalysis, analyze_model
 from ldraw.bom import BomRow, bill_of_materials
 from ldraw.colour import Colour
+from ldraw.connection_metadata import LDCadShadowLibrary
+from ldraw.connection_types import (
+    AnnularProfile,
+    ConnectionFeature,
+    ConnectionFreedom,
+    ConnectionKind,
+    ConnectionResidual,
+    ConnectionRole,
+    ConnectionSource,
+    CylindricalProfile,
+    CylindricalSection,
+    FingerProfile,
+    GenericProfile,
+    PartCompatibility,
+    SectionShape,
+    SnapTransform,
+    connection_residual,
+    connections_compatible,
+    snap_transform,
+)
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.downloads import download
 from ldraw.figure import Person
@@ -31,11 +51,13 @@ from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.imports import LibraryImporter
 from ldraw.inspection import (
     BoundsGap,
+    ConnectionContact,
     ModelInspection,
     OccurrenceAttribution,
     OccurrenceContact,
     OccurrenceGeometry,
     SkippedOccurrenceGeometry,
+    SnapCandidate,
     StudContact,
     bounds_gap,
     inspect_model,
@@ -119,6 +141,7 @@ from ldraw.validation import ValidationIssue, iter_ldr_issues
 
 __all__ = [
     "ALL_CATALOG_SEARCH_FIELDS",
+    "AnnularProfile",
     "BfcCertification",
     "BomRow",
     "BoundingBox",
@@ -131,9 +154,20 @@ __all__ = [
     "CatalogPreparationResult",
     "CatalogSearchField",
     "Colour",
+    "ConnectionContact",
+    "ConnectionFeature",
+    "ConnectionFreedom",
+    "ConnectionKind",
+    "ConnectionResidual",
+    "ConnectionRole",
+    "ConnectionSource",
+    "CylindricalProfile",
+    "CylindricalSection",
     "Diagnostic",
     "DiagnosticCode",
     "DownloadPlan",
+    "FingerProfile",
+    "GenericProfile",
     "Group",
     "Identity",
     "InstructionBuilder",
@@ -141,6 +175,7 @@ __all__ = [
     "InstructionIssue",
     "InstructionSection",
     "InstructionStep",
+    "LDCadShadowLibrary",
     "LDrawCapability",
     "LDrawPaths",
     "LDrawSession",
@@ -163,6 +198,7 @@ __all__ = [
     "OccurrencePathItem",
     "OperationCancelled",
     "PartCategory",
+    "PartCompatibility",
     "PartFileKind",
     "PartGeometry",
     "PartHistoryEntry",
@@ -185,9 +221,12 @@ __all__ = [
     "RenderView",
     "RotationMode",
     "RotationStep",
+    "SectionShape",
     "Severity",
     "SkippedGeometry",
     "SkippedOccurrenceGeometry",
+    "SnapCandidate",
+    "SnapTransform",
     "StudContact",
     "StudReference",
     "ValidationIssue",
@@ -198,6 +237,8 @@ __all__ = [
     "analyze_model",
     "bill_of_materials",
     "bounds_gap",
+    "connection_residual",
+    "connections_compatible",
     "discover_libraries",
     "download",
     "ensure_library",
@@ -215,6 +256,7 @@ __all__ = [
     "read_model",
     "render_capabilities",
     "render_preview",
+    "snap_transform",
 ]
 
 # Modern import hook registration: use an instance, not the class

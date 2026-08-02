@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ldraw.geometry import Vector
 
 if TYPE_CHECKING:
+    from ldraw.connection_types import ConnectionFeature
     from ldraw.diagnostics import Diagnostic
 
 __all__ = ["BoundingBox", "PartGeometry", "StudReference"]
@@ -57,6 +58,7 @@ class PartGeometry:
     bounds: BoundingBox | None
     points: tuple[Vector, ...]
     studs: tuple[StudReference, ...]
+    connections: tuple[ConnectionFeature, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
 
     @property

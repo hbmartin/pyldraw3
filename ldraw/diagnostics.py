@@ -49,6 +49,7 @@ class DiagnosticCode(StrEnum):
     PART_REFERENCE_UNRESOLVED = "part.reference_unresolved"
     PART_REFERENCE_CYCLE = "part.reference_cycle"
     GEOMETRY_INCOMPLETE = "geometry.incomplete"
+    CONNECTION_METADATA_INVALID = "connection.metadata_invalid"
     DISCOVERY_INVALID_LIBRARY = "discovery.invalid_library"
     DOWNLOAD_PLAN_FAILED = "download.plan_failed"
     DOWNLOAD_INTEGRITY_FAILED = "download.integrity_failed"

@@ -6,6 +6,15 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ldraw.connection_types import (
+    ConnectionFeature,
+    ConnectionResidual,
+    SnapTransform,
+    angular_alignment_within,
+    connection_residual,
+    connections_compatible,
+    snap_transform,
+)
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
@@ -60,6 +69,7 @@ class OccurrenceGeometry:
     local: PartGeometry
     bounds: BoundingBox
     studs: tuple[StudReference, ...]
+    connections: tuple[ConnectionFeature, ...] = ()
 
     @property
     def occurrence(self) -> ModelOccurrence:
@@ -118,6 +128,29 @@ class StudContact:
 
 
 @dataclass(frozen=True, slots=True)
+class ConnectionContact:
+    """Two placed connection features that are aligned and overlapping."""
+
+    first_occurrence: OccurrenceGeometry
+    second_occurrence: OccurrenceGeometry
+    first: ConnectionFeature
+    second: ConnectionFeature
+    residual: ConnectionResidual
+
+
+@dataclass(frozen=True, slots=True)
+class SnapCandidate:
+    """Compatible feature pair and the resulting moving-part placement."""
+
+    moving_occurrence: OccurrenceGeometry
+    fixed_occurrence: OccurrenceGeometry
+    moving: ConnectionFeature
+    fixed: ConnectionFeature
+    transform: SnapTransform
+    residual: ConnectionResidual
+
+
+@dataclass(frozen=True, slots=True)
 class ModelInspection:
     """Exact bounds, resolved occurrences, failures, and source attribution."""
 
@@ -167,6 +200,142 @@ class ModelInspection:
                     and _box_contains(candidate.bounds, probe, tolerance)
                 )
         return tuple(contacts)
+
+    def connection_contacts(
+        self,
+        *,
+        tolerance: float = 0.25,
+        angular_tolerance: float = 2.0,
+    ) -> tuple[ConnectionContact, ...]:
+        """Return compatible connection features already mated in the model."""
+        if tolerance < 0:
+            message = "tolerance must be non-negative"
+            raise ValueError(message)
+        if angular_tolerance < 0:
+            message = "angular_tolerance must be non-negative"
+            raise ValueError(message)
+        contacts: list[ConnectionContact] = []
+        for first_index, first_occurrence in enumerate(self.occurrences):
+            for second_occurrence in self.occurrences[first_index + 1 :]:
+                for first in first_occurrence.connections:
+                    for second in second_occurrence.connections:
+                        if not connections_compatible(first, second):
+                            continue
+                        residual = connection_residual(first, second)
+                        if (
+                            residual.distance <= tolerance
+                            and residual.axial_gap <= tolerance
+                            and angular_alignment_within(
+                                residual.alignment,
+                                angular_tolerance,
+                            )
+                            and angular_alignment_within(
+                                residual.roll_alignment,
+                                angular_tolerance,
+                            )
+                        ):
+                            contacts.append(
+                                ConnectionContact(
+                                    first_occurrence=first_occurrence,
+                                    second_occurrence=second_occurrence,
+                                    first=first,
+                                    second=second,
+                                    residual=residual,
+                                ),
+                            )
+        return tuple(contacts)
+
+    def snap_candidates(
+        self,
+        moving: OccurrenceGeometry | int,
+        *,
+        fixed: OccurrenceGeometry | int | None = None,
+        limit: int | None = None,
+    ) -> tuple[SnapCandidate, ...]:
+        """Return ranked placements for mating a moving occurrence's features.
+
+        ``moving`` and ``fixed`` accept either an occurrence geometry or its
+        stable inspection index. When ``fixed`` is omitted, every other
+        occurrence is considered.
+        """
+        if limit is not None and limit < 0:
+            message = "limit must be non-negative"
+            raise ValueError(message)
+        moving_occurrence = self._resolve_occurrence(moving)
+        fixed_occurrences = (
+            (self._resolve_occurrence(fixed),)
+            if fixed is not None
+            else tuple(
+                occurrence
+                for occurrence in self.occurrences
+                if occurrence.index != moving_occurrence.index
+            )
+        )
+        candidates: list[SnapCandidate] = []
+        for fixed_occurrence in fixed_occurrences:
+            if fixed_occurrence.index == moving_occurrence.index:
+                continue
+            for moving_feature in moving_occurrence.connections:
+                for fixed_feature in fixed_occurrence.connections:
+                    if not connections_compatible(moving_feature, fixed_feature):
+                        continue
+                    residual = connection_residual(moving_feature, fixed_feature)
+                    delta = snap_transform(moving_feature, fixed_feature)
+                    candidates.append(
+                        SnapCandidate(
+                            moving_occurrence=moving_occurrence,
+                            fixed_occurrence=fixed_occurrence,
+                            moving=moving_feature,
+                            fixed=fixed_feature,
+                            transform=SnapTransform(
+                                position=(
+                                    delta.position
+                                    + delta.matrix
+                                    * moving_occurrence.occurrence.position
+                                ),
+                                matrix=(
+                                    delta.matrix * moving_occurrence.occurrence.matrix
+                                ),
+                            ),
+                            residual=residual,
+                        ),
+                    )
+        ranked = tuple(
+            sorted(
+                candidates,
+                key=lambda candidate: (
+                    candidate.residual.distance + candidate.residual.axial_gap,
+                    -candidate.residual.alignment,
+                    -candidate.residual.roll_alignment,
+                    candidate.fixed_occurrence.index,
+                    candidate.moving.feature_id or "",
+                    candidate.fixed.feature_id or "",
+                ),
+            ),
+        )
+        return ranked if limit is None else ranked[:limit]
+
+    def _resolve_occurrence(
+        self,
+        value: OccurrenceGeometry | int,
+    ) -> OccurrenceGeometry:
+        if isinstance(value, OccurrenceGeometry):
+            if value not in self.occurrences:
+                message = "occurrence does not belong to this inspection"
+                raise ValueError(message)
+            return value
+        if not isinstance(value, int):
+            message = "occurrence must be an OccurrenceGeometry or integer index"
+            raise TypeError(message)
+        try:
+            return next(
+                occurrence
+                for occurrence in self.occurrences
+                if occurrence.index == value
+            )
+        except StopIteration:
+            message = f"inspection has no occurrence with index {value}"
+            raise IndexError(message) from None
 
     def contact_gaps(
         self,
@@ -282,6 +451,13 @@ def inspect_model(
                     up=occurrence.matrix * stud.up,
                 )
                 for stud in local.studs
+            ),
+            connections=tuple(
+                feature.transformed(
+                    position=occurrence.position,
+                    matrix=occurrence.matrix,
+                )
+                for feature in local.connections
             ),
         )
         inspected.append(geometry)
@@ -437,11 +613,13 @@ class _BoundsAccumulator:
 __all__ = [
     "DEFAULT_PAGE_MARKER_PREFIX",
     "BoundsGap",
+    "ConnectionContact",
     "ModelInspection",
     "OccurrenceAttribution",
     "OccurrenceContact",
     "OccurrenceGeometry",
     "SkippedOccurrenceGeometry",
+    "SnapCandidate",
     "StudContact",
     "bounds_gap",
     "inspect_model",

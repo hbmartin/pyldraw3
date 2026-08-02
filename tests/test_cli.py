@@ -858,6 +858,8 @@ def test_parts_geometry_reports_modern_table_and_json(
     assert payload["code"] == "3001"
     assert payload["complete"] is False
     assert payload["point_count"] > 0
+    assert payload["connection_count"] == len(payload["connections"])
+    assert any(connection["kind"] == "stud" for connection in payload["connections"])
     assert payload["bounds"]["min"] == [-40.0, 0.0, -20.0]
     assert payload["top_stud_count"] == 8
     assert payload["receptacle_count"] >= 0
@@ -869,6 +871,7 @@ def test_parts_geometry_reports_modern_table_and_json(
     table = capsys.readouterr().out
     assert "complete: no" in table
     assert "expanded points:" in table
+    assert "connections:" in table
     assert "receptacles" in table
 
     assert main(["parts", "geometry", "missing"]) == 1
@@ -943,6 +946,8 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert payload["occurrences"][0]["installation_page"] == 7
     assert payload["occurrences"][0]["source_page"] == 7
     assert payload["occurrences"][0]["bounds"]["min"] == [-40.0, 0.0, -20.0]
+    assert "connection_count" in payload["occurrences"][0]
+    assert "connection_contacts" in payload
     assert payload["stud_contacts"]
     assert {item["code"] for item in payload["diagnostics"]} == {
         "part.reference_unresolved"
