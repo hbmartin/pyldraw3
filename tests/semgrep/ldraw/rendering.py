@@ -1,8 +1,11 @@
 # ruff: noqa: D100, D101, D102, INP001
 
+import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+
+_CACHE_LOCK: AbstractContextManager[bool] = threading.RLock()
 
 
 class Process:
@@ -60,6 +63,10 @@ def _publish_cached_preview(
     with _preview_cache_write_claim(cache_root):
         # ok: pyldraw-preview-cache-publish-requires-process-claim
         temporary_path.replace(cached_path)
+    with _preview_cache_write_claim(cache_root):  # noqa: SIM117 - lock order explicit
+        with _CACHE_LOCK:
+            # ok: pyldraw-preview-cache-publish-requires-process-claim
+            temporary_path.replace(cached_path)
 
 
 def _maybe_prune_preview_cache(cache_root: Path, other: Path) -> None:

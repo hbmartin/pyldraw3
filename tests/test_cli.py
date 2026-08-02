@@ -1174,13 +1174,21 @@ def test_render_failure_preserves_all_existing_outputs(
     front.write_text("old front", encoding="utf-8")
     top.write_text("old top", encoding="utf-8")
 
-    def fail_top(*args, view: RenderView, **kwargs) -> RenderResult:
+    def fail_top(  # noqa: PLR0913 - mirrors render_preview
+        source: str | Path,
+        *,
+        view: RenderView,
+        size: tuple[int, int],
+        backend: RenderBackend | None,
+        output: str | Path | None,
+        refresh: bool,
+    ) -> RenderResult:
         if view is RenderView.TOP:
             return RenderResult(
-                source=model,
+                source=Path(source),
                 view=view,
-                size=kwargs["size"],
-                backend=kwargs["backend"],
+                size=size,
+                backend=backend,
                 output=None,
                 cached=False,
                 diagnostics=(
@@ -1190,7 +1198,14 @@ def test_render_failure_preserves_all_existing_outputs(
                     ),
                 ),
             )
-        return _successful_render(*args, view=view, **kwargs)
+        return _successful_render(
+            source=source,
+            view=view,
+            size=size,
+            backend=backend,
+            output=output,
+            refresh=refresh,
+        )
 
     monkeypatch.setattr("ldraw.cli.render_preview", fail_top)
 
