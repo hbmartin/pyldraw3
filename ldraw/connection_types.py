@@ -308,6 +308,7 @@ _KIND_PAIRS = {
     frozenset((ConnectionKind.AXLE, ConnectionKind.AXLE_HOLE)),
     frozenset((ConnectionKind.RIM_SEAT, ConnectionKind.TYRE_BEAD)),
 }
+_X_REFLECTION = Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
 def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explicit
@@ -416,10 +417,16 @@ def snap_transform(
 
     Cylindrical interfaces are direction-symmetric, so the target frame is
     flipped when that gives the smaller axis rotation. Cross-section roll is
-    preserved for axle profiles.
+    preserved for axle profiles. Candidate frames are matched to the moving
+    frame's handedness, so the delta is always a proper rotation and a part
+    placed with a mirroring matrix is never reflected.
     """
+    moving_left_handed = moving.frame.det() < 0
     target_frame = max(
-        _equivalent_target_frames(moving, target),
+        (
+            frame * _X_REFLECTION if (frame.det() < 0) != moving_left_handed else frame
+            for frame in _equivalent_target_frames(moving, target)
+        ),
         key=lambda frame: _frame_similarity(moving.frame, frame),
     )
     rotation = target_frame * moving.frame.transpose()

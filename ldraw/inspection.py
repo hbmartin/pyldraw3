@@ -23,7 +23,7 @@ from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from ldraw.geometry import Matrix
     from ldraw.model import Model, ModelOccurrence
@@ -214,35 +214,29 @@ class ModelInspection:
         if angular_tolerance < 0:
             message = "angular_tolerance must be non-negative"
             raise ValueError(message)
+        reaches = tuple(
+            _connection_reach(occurrence, tolerance=tolerance)
+            for occurrence in self.occurrences
+        )
         contacts: list[ConnectionContact] = []
         for first_index, first_occurrence in enumerate(self.occurrences):
-            for second_occurrence in self.occurrences[first_index + 1 :]:
-                for first in first_occurrence.connections:
-                    for second in second_occurrence.connections:
-                        if not connections_compatible(first, second):
-                            continue
-                        residual = connection_residual(first, second)
-                        if (
-                            residual.distance <= tolerance
-                            and residual.axial_gap <= tolerance
-                            and angular_alignment_within(
-                                residual.alignment,
-                                angular_tolerance,
-                            )
-                            and angular_alignment_within(
-                                residual.roll_alignment,
-                                angular_tolerance,
-                            )
-                        ):
-                            contacts.append(
-                                ConnectionContact(
-                                    first_occurrence=first_occurrence,
-                                    second_occurrence=second_occurrence,
-                                    first=first,
-                                    second=second,
-                                    residual=residual,
-                                ),
-                            )
+            first_reach = reaches[first_index]
+            if first_reach is None:
+                continue
+            for second_index, second_occurrence in enumerate(
+                self.occurrences[first_index + 1 :],
+                start=first_index + 1,
+            ):
+                if not _reach_overlap(first_reach, reaches[second_index]):
+                    continue
+                contacts.extend(
+                    _paired_contacts(
+                        first_occurrence,
+                        second_occurrence,
+                        tolerance=tolerance,
+                        angular_tolerance=angular_tolerance,
+                    ),
+                )
         return tuple(contacts)
 
     def snap_candidates(
@@ -535,6 +529,71 @@ def _box_contains(box: BoundingBox, point: Vector, tolerance: float) -> bool:
         and box.min.y - tolerance <= point.y <= box.max.y + tolerance
         and box.min.z - tolerance <= point.z <= box.max.z + tolerance
     )
+
+
+def _connection_reach(
+    occurrence: OccurrenceGeometry,
+    *,
+    tolerance: float,
+) -> BoundingBox | None:
+    """Box around feature positions, padded so any matable pair overlaps."""
+    if not occurrence.connections:
+        return None
+    positions = tuple(feature.position for feature in occurrence.connections)
+    margin = tolerance + max(feature.length for feature in occurrence.connections) / 2
+    pad = Vector(margin, margin, margin)
+    low = Vector(
+        min(position.x for position in positions),
+        min(position.y for position in positions),
+        min(position.z for position in positions),
+    )
+    high = Vector(
+        max(position.x for position in positions),
+        max(position.y for position in positions),
+        max(position.z for position in positions),
+    )
+    return BoundingBox(min=low - pad, max=high + pad)
+
+
+def _reach_overlap(left: BoundingBox, right: BoundingBox | None) -> bool:
+    return right is not None and (
+        left.min.x <= right.max.x
+        and right.min.x <= left.max.x
+        and left.min.y <= right.max.y
+        and right.min.y <= left.max.y
+        and left.min.z <= right.max.z
+        and right.min.z <= left.max.z
+    )
+
+
+def _paired_contacts(
+    first_occurrence: OccurrenceGeometry,
+    second_occurrence: OccurrenceGeometry,
+    *,
+    tolerance: float,
+    angular_tolerance: float,
+) -> Iterator[ConnectionContact]:
+    for first in first_occurrence.connections:
+        for second in second_occurrence.connections:
+            if not connections_compatible(first, second):
+                continue
+            residual = connection_residual(first, second)
+            if (
+                residual.distance <= tolerance
+                and residual.axial_gap <= tolerance
+                and angular_alignment_within(residual.alignment, angular_tolerance)
+                and angular_alignment_within(
+                    residual.roll_alignment,
+                    angular_tolerance,
+                )
+            ):
+                yield ConnectionContact(
+                    first_occurrence=first_occurrence,
+                    second_occurrence=second_occurrence,
+                    first=first,
+                    second=second,
+                    residual=residual,
+                )
 
 
 def _attribution(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
 from ldraw.connection_inference import (
@@ -42,6 +42,7 @@ __all__ = [
     "BoundingBox",
     "PartGeometry",
     "StudReference",
+    "clear_part_geometry_cache",
     "part_bounding_box",
     "part_connections",
     "part_geometry",
@@ -55,6 +56,31 @@ class _PartGeometryLibrary(Protocol):
         description: str | None = None,
         code: str | None = None,
     ) -> Part: ...
+
+
+@runtime_checkable
+class _CatalogDescriptionSource(Protocol):
+    def description_for(self, code: str) -> str | None: ...
+
+
+@runtime_checkable
+class _TyreRimCompatibilitySource(Protocol):
+    def compatible_tyres(self, rim_code: str) -> tuple[str, ...]: ...
+
+    def compatible_rims(self, tyre_code: str) -> tuple[str, ...]: ...
+
+
+@runtime_checkable
+class _ConnectionShadowSource(Protocol):
+    def _shadow_connections_for(self, code: str) -> ShadowConnectionResult: ...
+
+
+@runtime_checkable
+class _ConnectionOverrideSource(Protocol):
+    def _connection_overrides_for(
+        self,
+        code: str,
+    ) -> tuple[tuple[ConnectionFeature, ...], bool]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +358,16 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         position=piece.position,
         matrix=piece.matrix,
     )
+    connections.extend(inferred)
+    connections.extend(
+        _transformed_child_connection(
+            parts,
+            feature=feature,
+            piece=piece,
+            parent_code=parent_code,
+        )
+        for feature in local.connections
+    )
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -340,16 +376,6 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
                 position=piece.position.copy(),
                 up=piece.matrix * Vector(0, -1, 0),
             ),
-        )
-        connections.extend(inferred)
-        connections.extend(
-            _transformed_child_connection(
-                parts,
-                feature=feature,
-                piece=piece,
-                parent_code=parent_code,
-            )
-            for feature in local.connections
         )
         return
     studs.extend(
@@ -360,16 +386,6 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
             up=piece.matrix * stud.up,
         )
         for stud in local.studs
-    )
-    connections.extend(inferred)
-    connections.extend(
-        _transformed_child_connection(
-            parts,
-            feature=feature,
-            piece=piece,
-            parent_code=parent_code,
-        )
-        for feature in local.connections
     )
 
 
@@ -393,17 +409,14 @@ def _compatible_parts(
     code: str,
     description: str,
 ) -> tuple[str, ...]:
-    normalized = description.strip(" ~=_|-").casefold()
-    method_name = (
-        "compatible_tyres"
-        if normalized.startswith("wheel rim ")
-        else "compatible_rims"
-        if normalized.startswith("tyre ")
-        else None
-    )
-    if method_name is None or (method := getattr(parts, method_name, None)) is None:
+    if not isinstance(parts, _TyreRimCompatibilitySource):
         return ()
-    return tuple(method(code))
+    normalized = description.strip(" ~=_|-").casefold()
+    if normalized.startswith("wheel rim "):
+        return tuple(parts.compatible_tyres(code))
+    if normalized.startswith("tyre "):
+        return tuple(parts.compatible_rims(code))
+    return ()
 
 
 def _infer_catalog_connections(
@@ -428,8 +441,9 @@ def _infer_catalog_connections(
 
 
 def _is_catalog_part(parts: _PartGeometryLibrary, code: str) -> bool:
-    description_for = getattr(parts, "description_for", None)
-    return description_for is None or description_for(code) is not None
+    if not isinstance(parts, _CatalogDescriptionSource):
+        return True
+    return parts.description_for(code) is not None
 
 
 def _apply_shadow_connections(
@@ -438,10 +452,9 @@ def _apply_shadow_connections(
     code: str,
     connections: list[ConnectionFeature],
 ) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...]]:
-    method = getattr(parts, "_shadow_connections_for", None)
-    if method is None:
+    if not isinstance(parts, _ConnectionShadowSource):
         return connections, ()
-    result = method(code)
+    result = parts._shadow_connections_for(code)  # noqa: SLF001 - protocol member
     connections = _apply_connection_metadata_result(
         connections=connections,
         result=result,
@@ -471,10 +484,9 @@ def _apply_connection_overrides(
     code: str,
     connections: list[ConnectionFeature],
 ) -> list[ConnectionFeature]:
-    method = getattr(parts, "_connection_overrides_for", None)
-    if method is None:
+    if not isinstance(parts, _ConnectionOverrideSource):
         return connections
-    features, replace_existing = method(code)
+    features, replace_existing = parts._connection_overrides_for(code)  # noqa: SLF001
     values = list(features) if replace_existing else [*connections, *features]
     return list(normalize_connections(values))
 
