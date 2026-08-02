@@ -87,9 +87,9 @@ reference, source-line, step, and attributed-page paths; exact world bounds;
 skipped geometry; stud contacts; and nearest AABB gaps. The default page
 marker is `0 // PDF_PAGE NNN`, controlled by `--page-marker-prefix`.
 
-```console
-$ ldraw parts geometry 3001 --format json
-$ ldraw inspect model.mpd --chronological --gap-threshold 5 -o inspection.txt
+```bash
+ldraw parts geometry 3001 --format json
+ldraw inspect model.mpd --chronological --gap-threshold 5 -o inspection.txt
 ```
 
 When a partial inspection contains error diagnostics the report is still
