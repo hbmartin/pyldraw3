@@ -31,6 +31,8 @@ from ldraw.utils import camel, clean
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ldraw.connection_metadata import LDCadShadowLibrary, ShadowConnectionResult
+    from ldraw.connection_types import ConnectionFeature, PartCompatibility
     from ldraw.geometry import Matrix, Vector
     from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
     from ldraw.part_metadata import PartMetadata
@@ -713,6 +715,12 @@ class Parts:
         self._categorized = False
         self._categorize_lock = threading.Lock()
         self._minifig_sections_by_code: dict[str, MinifigSection] = {}
+        self._connection_shadow_libraries: list[LDCadShadowLibrary] = []
+        self._connection_overrides: dict[
+            str,
+            tuple[tuple[ConnectionFeature, ...], bool],
+        ] = {}
+        self._tyre_rim_compatibility: tuple[PartCompatibility, ...] | None = None
 
         self.load()
 
@@ -1026,6 +1034,184 @@ class Parts:
         from ldraw.part_geometry import part_geometry  # noqa: PLC0415
 
         return part_geometry(self, code)
+
+    def connections(self, code: str) -> tuple[ConnectionFeature, ...]:
+        """Return physical connection features detected for a part."""
+        from ldraw.part_geometry import part_connections  # noqa: PLC0415
+
+        return part_connections(self, code)
+
+    def add_connection_shadow(self, source: str | Path) -> None:
+        """Add an LDCad shadow library as an optional connection source.
+
+        Sources are applied in registration order; later sources can clear or
+        supersede features from earlier sources.
+        """
+        from ldraw.connection_metadata import LDCadShadowLibrary  # noqa: PLC0415
+
+        self._connection_shadow_libraries.append(LDCadShadowLibrary(source))
+        self._clear_derived_geometry()
+
+    def clear_connection_shadows(self) -> None:
+        """Remove all configured LDCad shadow-library sources."""
+        self._connection_shadow_libraries.clear()
+        self._clear_derived_geometry()
+
+    def set_connection_overrides(
+        self,
+        code: str,
+        features: Iterable[ConnectionFeature],
+        *,
+        replace_existing: bool = False,
+    ) -> None:
+        """Register authoritative connection features for one part.
+
+        By default overrides augment inferred and shadow-derived features.
+        Set ``replace_existing`` to discard every lower-priority feature.
+        """
+        from dataclasses import replace  # noqa: PLC0415
+
+        from ldraw.connection_types import ConnectionSource  # noqa: PLC0415
+
+        key = _reference_key(code)
+        self._connection_overrides[key] = (
+            tuple(
+                replace(
+                    feature,
+                    source=ConnectionSource.OVERRIDE,
+                    owner_code=code,
+                )
+                for feature in features
+            ),
+            replace_existing,
+        )
+        self._clear_derived_geometry()
+
+    def clear_connection_overrides(self, code: str | None = None) -> None:
+        """Remove connection overrides for one part or the whole library."""
+        if code is None:
+            self._connection_overrides.clear()
+        else:
+            self._connection_overrides.pop(_reference_key(code), None)
+        self._clear_derived_geometry()
+
+    @property
+    def tyre_rim_compatibility(self) -> tuple[PartCompatibility, ...]:
+        """Tyre/rim pairs evidenced by official complete-part shortcuts."""
+        if self._tyre_rim_compatibility is None:
+            self._tyre_rim_compatibility = self._build_tyre_rim_compatibility()
+        return self._tyre_rim_compatibility
+
+    def compatible_tyres(self, rim_code: str) -> tuple[str, ...]:
+        """Return tyre codes evidenced as compatible with ``rim_code``."""
+        key = _reference_key(rim_code)
+        return tuple(
+            relation.second
+            for relation in self.tyre_rim_compatibility
+            if _reference_key(relation.first) == key
+        )
+
+    def compatible_rims(self, tyre_code: str) -> tuple[str, ...]:
+        """Return rim codes evidenced as compatible with ``tyre_code``."""
+        key = _reference_key(tyre_code)
+        return tuple(
+            relation.first
+            for relation in self.tyre_rim_compatibility
+            if _reference_key(relation.second) == key
+        )
+
+    def _shadow_connections_for(self, code: str) -> ShadowConnectionResult:
+        from ldraw.connection_metadata import ShadowConnectionResult  # noqa: PLC0415
+
+        features: list[ConnectionFeature] = []
+        diagnostics: list[Diagnostic] = []
+        clear_all = False
+        clear_ids: list[str] = []
+        for library in self._connection_shadow_libraries:
+            result = library.connections_for(code)
+            diagnostics.extend(result.diagnostics)
+            if result.clear_all:
+                clear_all = True
+                clear_ids.clear()
+                features.clear()
+            elif result.clear_ids:
+                identifiers = set(result.clear_ids)
+                clear_ids.extend(result.clear_ids)
+                features = [
+                    feature
+                    for feature in features
+                    if feature.feature_id not in identifiers
+                ]
+            features.extend(result.features)
+        return ShadowConnectionResult(
+            features=tuple(features),
+            clear_all=clear_all,
+            clear_ids=tuple(dict.fromkeys(clear_ids)),
+            diagnostics=tuple(diagnostics),
+        )
+
+    def _connection_overrides_for(
+        self,
+        code: str,
+    ) -> tuple[tuple[ConnectionFeature, ...], bool]:
+        return self._connection_overrides.get(_reference_key(code), ((), False))
+
+    def _clear_derived_geometry(self) -> None:
+        from ldraw.part_geometry import clear_part_geometry_cache  # noqa: PLC0415
+
+        clear_part_geometry_cache(self)
+
+    def _build_tyre_rim_compatibility(self) -> tuple[PartCompatibility, ...]:
+        from ldraw.connection_types import (  # noqa: PLC0415
+            ConnectionSource,
+            PartCompatibility,
+        )
+
+        descriptions = {
+            _reference_key(code): (code, description.strip(" ~=_|-"))
+            for code, description in self.by_code.items()
+        }
+        rims = {
+            key
+            for key, (_, description) in descriptions.items()
+            if description.casefold().startswith("wheel rim ")
+            and " with tyre " not in description.casefold()
+        }
+        tyres = {
+            key
+            for key, (_, description) in descriptions.items()
+            if description.casefold().startswith("tyre ")
+        }
+        pairs: dict[tuple[str, str], PartCompatibility] = {}
+        for shortcut_code, shortcut_description in self.by_code.items():
+            if " with tyre " not in shortcut_description.casefold():
+                continue
+            try:
+                references = self.references_for(shortcut_code)
+            except (OSError, PartError, UnicodeError, ValueError):
+                logger.warning(
+                    "could not inspect wheel/tyre shortcut %s",
+                    shortcut_code,
+                )
+                continue
+            referenced = {_reference_key(reference.code) for reference in references}
+            shortcut_rims = referenced & rims
+            shortcut_tyres = referenced & tyres
+            for rim_key in sorted(shortcut_rims):
+                rim_code = descriptions[rim_key][0]
+                for tyre_key in sorted(shortcut_tyres):
+                    tyre_code = descriptions[tyre_key][0]
+                    pairs.setdefault(
+                        (rim_key, tyre_key),
+                        PartCompatibility(
+                            first=rim_code,
+                            second=tyre_code,
+                            relation="tyre_rim",
+                            source=ConnectionSource.SHORTCUT,
+                            evidence=shortcut_code,
+                        ),
+                    )
+        return tuple(pairs[key] for key in sorted(pairs))
 
     def inspect_part(
         self,

@@ -10,19 +10,28 @@ are its studs — without the caller reading ``.dat`` files by hand.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 from weakref import WeakKeyDictionary
 
+from ldraw.connection_inference import (
+    infer_part_connections,
+    mark_internal_fit_occupied,
+    normalize_connections,
+    primitive_connections,
+)
+from ldraw.connection_metadata import parse_ldcad_commands
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
-from ldraw.lines import Line, OptionalLine, Quadrilateral, Triangle
+from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
+    from ldraw.connection_metadata import ShadowConnectionResult
+    from ldraw.connection_types import ConnectionFeature
     from ldraw.part import Part
 
 logger = logging.getLogger("ldraw")
@@ -34,6 +43,7 @@ __all__ = [
     "PartGeometry",
     "StudReference",
     "part_bounding_box",
+    "part_connections",
     "part_geometry",
     "part_studs",
 ]
@@ -55,6 +65,7 @@ class _LocalGeometry:
     box: BoundingBox | None
     points: tuple[Vector, ...]
     studs: tuple[StudReference, ...]
+    connections: tuple[ConnectionFeature, ...]
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -92,6 +103,7 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
         bounds=local.box,
         points=local.points,
         studs=local.studs,
+        connections=local.connections,
         diagnostics=local.diagnostics,
     )
 
@@ -105,6 +117,22 @@ def part_studs(parts: _PartGeometryLibrary, code: str) -> tuple[StudReference, .
     ``Parts.stud_positions``) to keep only upward connectors.
     """
     return _require_local(parts, code).studs
+
+
+def part_connections(
+    parts: _PartGeometryLibrary,
+    code: str,
+) -> tuple[ConnectionFeature, ...]:
+    """Return all detected physical connection features for a part."""
+    return _require_local(parts, code).connections
+
+
+def clear_part_geometry_cache(parts: _PartGeometryLibrary | None = None) -> None:
+    """Clear derived geometry for one parts library or for all libraries."""
+    if parts is None:
+        _caches.clear()
+    else:
+        _caches.pop(parts, None)
 
 
 def _require_local(parts: _PartGeometryLibrary, code: str) -> _LocalGeometry:
@@ -141,6 +169,7 @@ def _local_geometry(
             box=None,
             points=(),
             studs=(),
+            connections=(),
             diagnostics=(
                 Diagnostic(
                     message=error_message,
@@ -166,6 +195,7 @@ def _local_geometry(
             box=None,
             points=(),
             studs=(),
+            connections=(),
             diagnostics=(
                 Diagnostic(
                     line_number=(
@@ -192,6 +222,7 @@ def _local_geometry(
     box = _BoxAccumulator()
     points: list[Vector] = []
     studs: list[StudReference] = []
+    connections: list[ConnectionFeature] = []
     diagnostics: list[Diagnostic] = []
     for obj in objects:
         match obj:
@@ -212,15 +243,58 @@ def _local_geometry(
                     box=box,
                     points=points,
                     studs=studs,
+                    connections=connections,
                     diagnostics=diagnostics,
                     visiting=visiting | {key},
+                    parent_code=code,
+                    parent_description=part.description,
                 )
+
+    connections = list(normalize_connections(connections))
+    catalog_part = _is_catalog_part(parts, code)
+    connections = _infer_catalog_connections(
+        parts,
+        code=code,
+        description=part.description,
+        bounds=box.box(),
+        connections=connections,
+    )
+    inline_result = parse_ldcad_commands(
+        code,
+        (
+            obj.text
+            for obj in objects
+            if isinstance(obj, MetaCommand) and obj.type.casefold() == "ldcad"
+        ),
+        source=part.path,
+    )
+    connections = _apply_connection_metadata_result(
+        connections=connections,
+        result=inline_result,
+    )
+    diagnostics.extend(inline_result.diagnostics)
+    connections, shadow_diagnostics = _apply_shadow_connections(
+        parts,
+        code=code,
+        connections=connections,
+    )
+    diagnostics.extend(shadow_diagnostics)
+    connections = _apply_connection_overrides(
+        parts,
+        code=code,
+        connections=connections,
+    )
+    if catalog_part and " with tyre " in part.description.casefold():
+        connections = list(
+            mark_internal_fit_occupied(connections, assembly_code=code),
+        )
 
     local = _LocalGeometry(
         description=part.description,
         box=box.box(),
         points=tuple(points),
         studs=tuple(studs),
+        connections=tuple(connections),
         diagnostics=tuple(diagnostics),
     )
     cache[key] = local
@@ -234,8 +308,11 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     box: _BoxAccumulator,
     points: list[Vector],
     studs: list[StudReference],
+    connections: list[ConnectionFeature],
     diagnostics: list[Diagnostic],
     visiting: frozenset[str],
+    parent_code: str,
+    parent_description: str,
 ) -> None:
     local = _local_geometry(parts, piece.part, visiting)
     if local is None:
@@ -246,6 +323,15 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         box.add(transformed)
         points.append(transformed)
     stem = _local_key(piece.part).rpartition("/")[2]
+    inferred = primitive_connections(
+        parent_code=parent_code,
+        parent_description=parent_description,
+        stem=stem,
+        description=local.description,
+        bounds=local.box,
+        position=piece.position,
+        matrix=piece.matrix,
+    )
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -254,6 +340,16 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
                 position=piece.position.copy(),
                 up=piece.matrix * Vector(0, -1, 0),
             ),
+        )
+        connections.extend(inferred)
+        connections.extend(
+            _transformed_child_connection(
+                parts,
+                feature=feature,
+                piece=piece,
+                parent_code=parent_code,
+            )
+            for feature in local.connections
         )
         return
     studs.extend(
@@ -265,6 +361,122 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         )
         for stud in local.studs
     )
+    connections.extend(inferred)
+    connections.extend(
+        _transformed_child_connection(
+            parts,
+            feature=feature,
+            piece=piece,
+            parent_code=parent_code,
+        )
+        for feature in local.connections
+    )
+
+
+def _transformed_child_connection(
+    parts: _PartGeometryLibrary,
+    *,
+    feature: ConnectionFeature,
+    piece: Piece,
+    parent_code: str,
+) -> ConnectionFeature:
+    transformed = feature.transformed(position=piece.position, matrix=piece.matrix)
+    return (
+        transformed
+        if _is_catalog_part(parts, piece.part)
+        else replace(transformed, owner_code=parent_code)
+    )
+
+
+def _compatible_parts(
+    parts: _PartGeometryLibrary,
+    code: str,
+    description: str,
+) -> tuple[str, ...]:
+    normalized = description.strip(" ~=_|-").casefold()
+    method_name = (
+        "compatible_tyres"
+        if normalized.startswith("wheel rim ")
+        else "compatible_rims"
+        if normalized.startswith("tyre ")
+        else None
+    )
+    if method_name is None or (method := getattr(parts, method_name, None)) is None:
+        return ()
+    return tuple(method(code))
+
+
+def _infer_catalog_connections(
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    description: str,
+    bounds: BoundingBox | None,
+    connections: list[ConnectionFeature],
+) -> list[ConnectionFeature]:
+    if not _is_catalog_part(parts, code):
+        return connections
+    return list(
+        infer_part_connections(
+            code=code,
+            description=description,
+            bounds=bounds,
+            existing=connections,
+            compatible_parts=_compatible_parts(parts, code, description),
+        ),
+    )
+
+
+def _is_catalog_part(parts: _PartGeometryLibrary, code: str) -> bool:
+    description_for = getattr(parts, "description_for", None)
+    return description_for is None or description_for(code) is not None
+
+
+def _apply_shadow_connections(
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    connections: list[ConnectionFeature],
+) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...]]:
+    method = getattr(parts, "_shadow_connections_for", None)
+    if method is None:
+        return connections, ()
+    result = method(code)
+    connections = _apply_connection_metadata_result(
+        connections=connections,
+        result=result,
+    )
+    return connections, result.diagnostics
+
+
+def _apply_connection_metadata_result(
+    *,
+    connections: list[ConnectionFeature],
+    result: ShadowConnectionResult,
+) -> list[ConnectionFeature]:
+    if result.clear_all:
+        connections.clear()
+    elif result.clear_ids:
+        cleared = set(result.clear_ids)
+        connections = [
+            feature for feature in connections if feature.feature_id not in cleared
+        ]
+    connections.extend(result.features)
+    return list(normalize_connections(connections))
+
+
+def _apply_connection_overrides(
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    connections: list[ConnectionFeature],
+) -> list[ConnectionFeature]:
+    method = getattr(parts, "_connection_overrides_for", None)
+    if method is None:
+        return connections
+    features, replace_existing = method(code)
+    values = list(features) if replace_existing else [*connections, *features]
+    return list(normalize_connections(values))
 
 
 class _BoxAccumulator:

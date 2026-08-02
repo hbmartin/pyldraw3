@@ -23,6 +23,13 @@ from ldraw import generate as do_generate
 from ldraw.bom import BomRow, rows_to_csv, rows_to_json
 from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
+from ldraw.connection_types import (
+    AnnularProfile,
+    ConnectionFeature,
+    CylindricalProfile,
+    FingerProfile,
+    GenericProfile,
+)
 from ldraw.diagnostics import Diagnostic, DiagnosticCode
 from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
 from ldraw.downloads import download as do_download
@@ -36,6 +43,7 @@ from ldraw.generation.exceptions import UnwritableOutputError
 from ldraw.geometry import Vector
 from ldraw.inspection import (
     DEFAULT_PAGE_MARKER_PREFIX,
+    ConnectionContact,
     ModelInspection,
     OccurrenceContact,
     StudContact,
@@ -556,6 +564,10 @@ def parts_geometry_command(*, code: str, output_format: str) -> int:
         "bounds": _box_data(geometry.bounds),
         "code": geometry.code,
         "complete": geometry.complete,
+        "connection_count": len(geometry.connections),
+        "connections": [
+            _connection_data(connection) for connection in geometry.connections
+        ],
         "description": geometry.description,
         "diagnostics": [item.to_dict() for item in geometry.diagnostics],
         "point_count": len(geometry.points),
@@ -583,6 +595,7 @@ def parts_geometry_command(*, code: str, output_format: str) -> int:
     print(f"description: {geometry.description}")
     print(f"complete: {'yes' if geometry.complete else 'no'}")
     print(f"expanded points: {len(geometry.points)}")
+    print(f"connections: {len(geometry.connections)}")
     print(
         f"studs: {len(geometry.studs)} "
         f"({len(geometry.top_studs)} top, "
@@ -735,6 +748,10 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         ],
         "gap_threshold": gap_threshold,
         "geometry_count": len(inspection.occurrences),
+        "connection_contacts": [
+            _connection_contact_data(contact)
+            for contact in inspection.connection_contacts()
+        ],
         "model": str(file),
         "occurrence_count": inspection.occurrence_count,
         "occurrences": [
@@ -748,6 +765,7 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
                 "effective_step_path": list(item.attribution.effective_step_path),
                 "index": item.index,
                 "installation_page": item.attribution.installation_page,
+                "connection_count": len(item.connections),
                 "local_point_count": len(item.local.points),
                 "local_step_path": list(item.attribution.local_step_path),
                 "model_path": list(item.attribution.model_path),
@@ -811,6 +829,7 @@ def _format_inspection_table(  # noqa: PLR0913 - report inputs are explicit
         ),
         f"world bounds: {bounds}",
         f"stud/part contacts: {len(inspection.stud_contacts())}",
+        f"connection contacts: {len(inspection.connection_contacts())}",
         "",
         " index  install source part         world origin             model path",
     ]
@@ -871,6 +890,86 @@ def _stud_contact_data(contact: StudContact) -> dict[str, object]:
         "supported_index": contact.supported_occurrence.index,
         "supported_part": contact.supported_occurrence.occurrence.part_code,
     }
+
+
+def _connection_contact_data(contact: ConnectionContact) -> dict[str, object]:
+    return {
+        "first_feature": contact.first.feature_id,
+        "first_index": contact.first_occurrence.index,
+        "first_kind": contact.first.kind.value,
+        "second_feature": contact.second.feature_id,
+        "second_index": contact.second_occurrence.index,
+        "second_kind": contact.second.kind.value,
+        "residual": {
+            "alignment": contact.residual.alignment,
+            "axial_gap": contact.residual.axial_gap,
+            "distance": contact.residual.distance,
+            "roll_alignment": contact.residual.roll_alignment,
+        },
+    }
+
+
+def _connection_data(connection: ConnectionFeature) -> dict[str, object]:
+    return {
+        "axis": _vector_data(connection.axis),
+        "compatible_parts": list(connection.compatible_parts),
+        "confidence": connection.confidence,
+        "feature_id": connection.feature_id,
+        "freedoms": sorted(freedom.value for freedom in connection.freedoms),
+        "group": connection.group,
+        "kind": connection.kind.value,
+        "length": connection.length,
+        "name": connection.name,
+        "occupied": connection.occupied,
+        "occupied_by": connection.occupied_by,
+        "owner_code": connection.owner_code,
+        "position": _vector_data(connection.position),
+        "profile": _connection_profile_data(connection),
+        "provenance": list(connection.provenance),
+        "radial": _vector_data(connection.radial),
+        "role": connection.role.value,
+        "source": connection.source.value,
+    }
+
+
+def _connection_profile_data(connection: ConnectionFeature) -> dict[str, object]:
+    match connection.profile:
+        case CylindricalProfile() as profile:
+            return {
+                "centered": profile.centered,
+                "friction": profile.friction,
+                "sections": [
+                    {
+                        "flexible": section.flexible,
+                        "length": section.length,
+                        "radius": section.radius,
+                        "shape": section.shape.value,
+                    }
+                    for section in profile.sections
+                ],
+                "type": "cylindrical",
+            }
+        case FingerProfile() as profile:
+            return {
+                "detents": list(profile.detents),
+                "first_role": profile.first_role.value,
+                "radius": profile.radius,
+                "sequence": list(profile.sequence),
+                "type": "finger",
+            }
+        case AnnularProfile() as profile:
+            return {
+                "offset": profile.offset,
+                "radius": profile.radius,
+                "type": "annular",
+                "width": profile.width,
+            }
+        case GenericProfile() as profile:
+            return {
+                "length": profile.length,
+                "name": profile.name,
+                "type": "generic",
+            }
 
 
 def _box_data(box: BoundingBox | None) -> dict[str, object] | None:
