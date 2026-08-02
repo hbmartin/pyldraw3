@@ -321,7 +321,7 @@ def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explici
     if radius_tolerance < 0:
         message = "radius tolerance must be non-negative"
         raise ValueError(message)
-    if left.occupied or right.occupied or left.confidence <= 0 or right.confidence <= 0:
+    if not _features_available(left, right):
         return False
     if left.kind is ConnectionKind.HINGE and right.kind is ConnectionKind.HINGE:
         return _hinges_compatible(left, right)
@@ -329,31 +329,60 @@ def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explici
         return left.group is not None and left.group == right.group
     if frozenset((left.kind, right.kind)) not in _KIND_PAIRS:
         return False
-    if (
-        left.compatible_parts
-        and right.owner_code is not None
-        and right.owner_code.casefold()
-        not in {code.casefold() for code in left.compatible_parts}
-    ):
+    if not _part_restrictions_allow(left, right):
         return False
-    if (
-        right.compatible_parts
-        and left.owner_code is not None
-        and left.owner_code.casefold()
-        not in {code.casefold() for code in right.compatible_parts}
-    ):
-        return False
-    if isinstance(left.profile, CylindricalProfile) and isinstance(
-        right.profile,
-        CylindricalProfile,
-    ):
-        if left.profile.primary_shape is not right.profile.primary_shape:
-            return False
-        return (
-            abs(left.profile.mating_radius - right.profile.mating_radius)
-            <= radius_tolerance
-        )
-    return type(left.profile) is type(right.profile)
+    match left.profile, right.profile:
+        case (
+            CylindricalProfile() as left_profile,
+            CylindricalProfile() as right_profile,
+        ):
+            return _cylindrical_profiles_compatible(
+                left_profile,
+                right_profile,
+                radius_tolerance=radius_tolerance,
+            )
+        case _:
+            return type(left.profile) is type(right.profile)
+
+
+def _features_available(
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+) -> bool:
+    return not (
+        left.occupied or right.occupied or left.confidence <= 0 or right.confidence <= 0
+    )
+
+
+def _part_restrictions_allow(
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+) -> bool:
+    return _owner_allowed(left, right.owner_code) and _owner_allowed(
+        right,
+        left.owner_code,
+    )
+
+
+def _owner_allowed(feature: ConnectionFeature, owner_code: str | None) -> bool:
+    return (
+        not feature.compatible_parts
+        or owner_code is None
+        or owner_code.casefold()
+        in {code.casefold() for code in feature.compatible_parts}
+    )
+
+
+def _cylindrical_profiles_compatible(
+    left: CylindricalProfile,
+    right: CylindricalProfile,
+    *,
+    radius_tolerance: float,
+) -> bool:
+    return (
+        left.primary_shape is right.primary_shape
+        and abs(left.mating_radius - right.mating_radius) <= radius_tolerance
+    )
 
 
 def _hinges_compatible(left: ConnectionFeature, right: ConnectionFeature) -> bool:

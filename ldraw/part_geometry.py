@@ -188,35 +188,77 @@ def _local_geometry(
 ) -> _LocalGeometry | None:
     key = _local_key(code)
     if key in visiting:
-        error_message = f"subfile reference cycle at {code!r}"
-        logger.warning("%s; skipping", error_message)
-        return _LocalGeometry(
-            description=code,
-            box=None,
-            points=(),
-            studs=(),
-            connections=(),
-            diagnostics=(
-                Diagnostic(
-                    message=error_message,
-                    severity=Severity.WARNING,
-                    code=DiagnosticCode.PART_REFERENCE_CYCLE,
-                    offending_value=code,
-                ),
-            ),
-        )
+        return _reference_cycle_geometry(code)
     cache = _cache_for(parts)
     if key in cache:
         return cache[key]
 
+    source = _load_geometry_source(parts, code)
+    if isinstance(source, _LocalGeometry):
+        cache[key] = source
+        return source
+    part, objects = source
+    box, points, studs, connections, diagnostics = _fold_objects(
+        parts,
+        code=code,
+        description=part.description,
+        objects=objects,
+        visiting=visiting | {key},
+    )
+    connections = _resolve_connections(
+        parts,
+        code=code,
+        description=part.description,
+        path=part.path,
+        objects=objects,
+        box=box,
+        connections=connections,
+        diagnostics=diagnostics,
+    )
+    local = _LocalGeometry(
+        description=part.description,
+        box=box.box(),
+        points=tuple(points),
+        studs=tuple(studs),
+        connections=tuple(connections),
+        diagnostics=tuple(diagnostics),
+    )
+    cache[key] = local
+    return local
+
+
+def _reference_cycle_geometry(code: str) -> _LocalGeometry:
+    error_message = f"subfile reference cycle at {code!r}"
+    logger.warning("%s; skipping", error_message)
+    return _LocalGeometry(
+        description=code,
+        box=None,
+        points=(),
+        studs=(),
+        connections=(),
+        diagnostics=(
+            Diagnostic(
+                message=error_message,
+                severity=Severity.WARNING,
+                code=DiagnosticCode.PART_REFERENCE_CYCLE,
+                offending_value=code,
+            ),
+        ),
+    )
+
+
+def _load_geometry_source(
+    parts: _PartGeometryLibrary,
+    code: str,
+) -> tuple[Part, list[object]] | _LocalGeometry:
     part: Part | None = None
     try:
         part = parts.part(code=code)
-        objects = list(part.objects)
+        return part, list(part.objects)
     except (OSError, PartError, UnicodeError) as error:
         message = error.message if isinstance(error, PartError) else str(error)
         logger.warning("skipping unresolvable subfile %r: %s", code, message)
-        local = _LocalGeometry(
+        return _LocalGeometry(
             description=code,
             box=None,
             points=(),
@@ -242,9 +284,22 @@ def _local_geometry(
                 ),
             ),
         )
-        cache[key] = local
-        return local
 
+
+def _fold_objects(
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    description: str,
+    objects: list[object],
+    visiting: frozenset[str],
+) -> tuple[
+    _BoxAccumulator,
+    list[Vector],
+    list[StudReference],
+    list[ConnectionFeature],
+    list[Diagnostic],
+]:
     box = _BoxAccumulator()
     points: list[Vector] = []
     studs: list[StudReference] = []
@@ -271,17 +326,30 @@ def _local_geometry(
                     studs=studs,
                     connections=connections,
                     diagnostics=diagnostics,
-                    visiting=visiting | {key},
+                    visiting=visiting,
                     parent_code=code,
-                    parent_description=part.description,
+                    parent_description=description,
                 )
+    return box, points, studs, connections, diagnostics
 
+
+def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    description: str,
+    path: Path,
+    objects: list[object],
+    box: _BoxAccumulator,
+    connections: list[ConnectionFeature],
+    diagnostics: list[Diagnostic],
+) -> list[ConnectionFeature]:
     connections = list(normalize_connections(connections))
     catalog_part = _is_catalog_part(parts, code)
     connections = _infer_catalog_connections(
         parts,
         code=code,
-        description=part.description,
+        description=description,
         bounds=box.box(),
         connections=connections,
     )
@@ -292,7 +360,7 @@ def _local_geometry(
             for obj in objects
             if isinstance(obj, MetaCommand) and obj.type.casefold() == "ldcad"
         ),
-        source=part.path,
+        source=path,
     )
     connections = _apply_connection_metadata_result(
         connections=connections,
@@ -310,21 +378,11 @@ def _local_geometry(
         code=code,
         connections=connections,
     )
-    if catalog_part and " with tyre " in part.description.casefold():
+    if catalog_part and " with tyre " in description.casefold():
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
         )
-
-    local = _LocalGeometry(
-        description=part.description,
-        box=box.box(),
-        points=tuple(points),
-        studs=tuple(studs),
-        connections=tuple(connections),
-        diagnostics=tuple(diagnostics),
-    )
-    cache[key] = local
-    return local
+    return connections
 
 
 def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
