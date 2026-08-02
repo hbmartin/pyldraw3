@@ -413,6 +413,9 @@ def _sections(value: str) -> tuple[CylindricalSection, ...]:
         resolved_shape = shape_code
         if flexible:
             neighbour = index - 1 if shape_code.startswith("_") else index + 1
+            if not 0 <= neighbour < len(raw):
+                message = "flexible section needs an adjacent rigid section"
+                raise ValueError(message)
             resolved_shape = raw[neighbour][0]
         shape = {
             "R": SectionShape.ROUND,

@@ -340,9 +340,8 @@ def _round_feature(  # noqa: PLR0913 - semantic feature fields are explicit
         if kind is ConnectionKind.PIN_HOLE
         else _radial_radius(bounds, axis_index=1, fallback=6.0)
     )
-    center = _box_center(bounds)
-    if stem.startswith("peghol"):
-        center = Vector(0, 0, 0)
+    origin_anchored = stem.startswith(("peghol", "npeghol"))
+    center = Vector(0, 0, 0) if origin_anchored else _box_center(bounds)
     return ConnectionFeature(
         kind=kind,
         role=role,
@@ -350,7 +349,7 @@ def _round_feature(  # noqa: PLR0913 - semantic feature fields are explicit
         frame=default_frame(),
         profile=CylindricalProfile(
             sections=(CylindricalSection(SectionShape.ROUND, radius, length),),
-            centered=not stem.startswith("peghol"),
+            centered=not origin_anchored,
             friction=friction,
         ),
         name=description,

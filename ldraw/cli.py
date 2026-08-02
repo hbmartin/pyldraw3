@@ -728,6 +728,10 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         "bounds": _box_data(inspection.bounds),
         "chronological": chronological,
         "complete": complete,
+        "connection_contacts": [
+            _connection_contact_data(contact)
+            for contact in inspection.connection_contacts()
+        ],
         "diagnostics": [item.to_dict() for item in diagnostics],
         "disconnected": [
             {
@@ -748,10 +752,6 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         ],
         "gap_threshold": gap_threshold,
         "geometry_count": len(inspection.occurrences),
-        "connection_contacts": [
-            _connection_contact_data(contact)
-            for contact in inspection.connection_contacts()
-        ],
         "model": str(file),
         "occurrence_count": inspection.occurrence_count,
         "occurrences": [
@@ -762,10 +762,10 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
                     if item.occurrence.colour.code is not None
                     else item.occurrence.colour.rgb
                 ),
+                "connection_count": len(item.connections),
                 "effective_step_path": list(item.attribution.effective_step_path),
                 "index": item.index,
                 "installation_page": item.attribution.installation_page,
-                "connection_count": len(item.connections),
                 "local_point_count": len(item.local.points),
                 "local_step_path": list(item.attribution.local_step_path),
                 "model_path": list(item.attribution.model_path),

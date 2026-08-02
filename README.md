@@ -343,7 +343,8 @@ wheel-and-tyre shortcut are marked occupied.
 Use `inspection.connection_contacts()` to find interfaces already mated and
 `inspection.snap_candidates(moving, fixed=...)` to obtain ranked rigid
 placements. Round interfaces preserve free roll; Technic axle profiles enforce
-their quarter-turn cross alignment.
+their quarter-turn cross alignment. Snap deltas are always proper rotations,
+so a part placed with a mirroring matrix is never reflected.
 
 ### IDE Autocompletion and Type Checking
 
