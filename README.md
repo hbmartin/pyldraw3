@@ -19,6 +19,7 @@ A modern Python package for creating and manipulating LDraw format files - the s
 - 📦 **Dynamic Library Generation**: Automatically generate Python modules from LDraw libraries
 - 🧭 **Building Instructions**: Typed STEP/ROTSTEP, LPub3D semantics, validation, manifests, and MPD/LDR snapshots
 - 🔎 **Reliable Inspection**: Tolerant loading, structured diagnostics, exact geometry, provenance, and one-pass analysis
+- 🔗 **LDCad/Studio Connectivity**: Typed metadata coverage, strict contacts, stable IDs, and occurrence multigraphs
 - 📜 **Comprehensive Guide**: Jump into the quick start below, or read the [published documentation](https://hbmartin.github.io/pyldraw3/)
 
 ## Table of Contents
@@ -326,6 +327,10 @@ LDCad shadow metadata can layer it on without making it a required dependency:
 
 ```python
 parts.add_connection_shadow("~/ldcad/shadow")  # directory, .zip, or .csl
+parts.add_studio_metadata("studio-connectivity.json")
+
+report = parts.connection_metadata("32000")
+print(report.coverage, report.source_count, report.diagnostics)
 ```
 
 `SNAP_CYL`, `SNAP_CLP`, `SNAP_FGR`, `SNAP_GEN`, `SNAP_INCL`, and
@@ -333,6 +338,14 @@ parts.add_connection_shadow("~/ldcad/shadow")  # directory, .zip, or .csl
 part files are consumed as inline metadata too. `Parts.set_connection_overrides()`
 provides the final, authoritative layer for custom parts. Adding or clearing
 either source invalidates derived geometry automatically.
+
+Connection precedence is heuristics, primitives/official shortcuts, inline
+LDCad, registered shadow sources, registered Studio sources, then explicit
+overrides. Replacement is by stable feature ID; different IDs remain separate
+even when colocated. Coverage is `complete` for clean authoritative metadata
+(including an explicit clear-to-empty result), `partial` for recovered or
+primitive/heuristic-only evidence, and `none` only when no metadata or
+connector primitive exists.
 
 Official complete wheel/tyre shortcuts provide evidence-backed pairing via
 `parts.tyre_rim_compatibility`, `compatible_tyres(rim_code)`, and
@@ -345,6 +358,10 @@ Use `inspection.connection_contacts()` to find interfaces already mated and
 placements. Round interfaces preserve free roll; Technic axle profiles enforce
 their quarter-turn cross alignment. Snap deltas are always proper rotations,
 so a part placed with a mirroring matrix is never reflected.
+`inspection.connection_graphs()` returns confirmed and optimistic immutable
+multigraphs over zero-based occurrence indices. Strict stud contacts require
+opposing receptacle evidence plus an oriented entry-face and penetration check;
+overlapping surfaces alone are not connections.
 
 ### IDE Autocompletion and Type Checking
 
@@ -431,7 +448,7 @@ options:
 - `ldraw parts geometry CODE [--format table|json]` - report exact expanded bounds, studs/connectors, and completeness diagnostics
 - `ldraw validate FILE [--strict]` - lint a file: malformed lines, unknown parts and colour codes are errors; suspect matrices, legacy dithered colours, and unknown meta-commands are warnings (`--strict` makes warnings fail; exit code 1 on errors)
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` - print a bill of materials counted by part and colour, submodels expanded
-- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU] [--chronological] [-o OUT]` - report exact occurrence geometry, provenance, structured diagnostics, stud contacts, and nearest AABB gaps
+- `ldraw inspect FILE [--format table|json] [--gap-threshold LDU] [--chronological] [--ldcad-shadow PATH] [--studio-metadata PATH] [-o OUT]` - report exact occurrence geometry, provenance, typed contacts/graphs, structured diagnostics, and nearest AABB gaps
 - `ldraw render FILE [--view front|isometric|top] [--backend auto|ldview|leocad] [--output-dir DIR] [--overwrite]` - render a safely staged named view set through the optional preview backends
 - `ldraw stubs [--out PATH]` - write an `ldraw-stubs/` PEP 561 stub package for IDE autocompletion
 - `ldraw instructions inspect|validate|export|snapshots ...` - inspect semantic steps, validate instruction structure, export JSON, or write cumulative MPD/LDR snapshot bundles (requires a configured parts catalog)

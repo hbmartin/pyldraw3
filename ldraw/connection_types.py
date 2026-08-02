@@ -5,8 +5,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from ldraw.geometry import Identity, Matrix, Vector
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ConnectionKind(StrEnum):
@@ -42,7 +46,15 @@ class ConnectionSource(StrEnum):
     SHORTCUT = "shortcut"
     LDCAD_INLINE = "ldcad_inline"
     LDCAD_SHADOW = "ldcad_shadow"
+    STUDIO = "studio"
     OVERRIDE = "override"
+
+
+class ConnectionStatus(StrEnum):
+    """Confidence tier assigned to a placed feature contact."""
+
+    CONFIRMED = "confirmed"
+    POTENTIAL = "potential"
 
 
 class ConnectionFreedom(StrEnum):
@@ -51,6 +63,41 @@ class ConnectionFreedom(StrEnum):
     ROTATE = "rotate"
     SLIDE = "slide"
     DISCRETE_ROTATE = "discrete_rotate"
+    FREE_ROTATE = "free_rotate"
+
+
+class CylindricalCaps(StrEnum):
+    """Blocked ends of an LDCad cylindrical connection profile."""
+
+    NONE = "none"
+    ONE = "one"
+    TWO = "two"
+    A = "a"
+    B = "b"
+
+
+class GenericBoundsKind(StrEnum):
+    """Bounding shape used to rank and validate a generic interface."""
+
+    POINT = "point"
+    BOX = "box"
+    CYLINDER = "cylinder"
+    SPHERE = "sphere"
+
+
+class GenericMatch(StrEnum):
+    """LDCad matching rule for generic interfaces."""
+
+    SHAPE = "shape"
+    SIZE = "size"
+    GROUP = "group"
+
+
+class GenericPlacement(StrEnum):
+    """Orientation behavior retained by a generic interface."""
+
+    ALIGNED = "aligned"
+    FREE = "free"
 
 
 class SectionShape(StrEnum):
@@ -86,6 +133,7 @@ class CylindricalProfile:
     sections: tuple[CylindricalSection, ...]
     centered: bool = True
     friction: bool = False
+    caps: CylindricalCaps = CylindricalCaps.NONE
 
     @property
     def length(self) -> float:
@@ -129,6 +177,7 @@ class FingerProfile:
     radius: float
     first_role: ConnectionRole = ConnectionRole.MALE
     detents: tuple[float, ...] = ()
+    centered: bool = True
 
     @property
     def length(self) -> float:
@@ -168,21 +217,64 @@ class AnnularProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class GenericBounds:
+    """One validated LDCad generic bounding shape."""
+
+    kind: GenericBoundsKind
+    dimensions: tuple[float, ...] = ()
+
+    def scaled(self, *, radial: float, axial: float) -> GenericBounds:
+        """Return the bounds under radial and axial scaling."""
+        match self.kind, self.dimensions:
+            case GenericBoundsKind.BOX, (x, y, z):
+                dimensions = (abs(radial) * x, abs(axial) * y, abs(radial) * z)
+            case GenericBoundsKind.CYLINDER, (radius, length):
+                dimensions = (abs(radial) * radius, abs(axial) * length)
+            case GenericBoundsKind.SPHERE, (radius,):
+                dimensions = (abs(radial) * radius,)
+            case _:
+                dimensions = self.dimensions
+        return replace(self, dimensions=dimensions)
+
+
+@dataclass(frozen=True, slots=True)
 class GenericProfile:
     """Named interface for shapes which need curated compatibility."""
 
     name: str
     length: float = 0.0
+    bounds: GenericBounds | None = None
+    match: GenericMatch = GenericMatch.SHAPE
+    placement: GenericPlacement = GenericPlacement.ALIGNED
 
     def scaled(self, *, radial: float, axial: float) -> GenericProfile:
         """Return this profile under axial scaling."""
-        del radial
-        return replace(self, length=abs(axial) * self.length)
+        return replace(
+            self,
+            length=abs(axial) * self.length,
+            bounds=(
+                self.bounds.scaled(radial=radial, axial=axial)
+                if self.bounds is not None
+                else None
+            ),
+        )
 
 
 type ConnectionProfile = (
     CylindricalProfile | FingerProfile | AnnularProfile | GenericProfile
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionProvenance:
+    """Structured origin of a normalized connection feature."""
+
+    source: ConnectionSource
+    path: Path | None = None
+    archive_member: str | None = None
+    line_number: int | None = None
+    command: str | None = None
+    include_chain: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +301,24 @@ class ConnectionFeature:
     occupied: bool = False
     occupied_by: str | None = None
     provenance: tuple[str, ...] = ()
+    metadata_id: str | None = None
+    connection_provenance: ConnectionProvenance | None = None
+    scale_inheritance: str = "yandr"
+    mirror_inheritance: str = "none"
+
+    def __post_init__(self) -> None:
+        if self.connection_provenance is not None:
+            provenance = self.connection_provenance
+            location = provenance.archive_member or (
+                str(provenance.path)
+                if provenance.path is not None
+                else provenance.command or provenance.source.value
+            )
+            if provenance.line_number is not None:
+                location = f"{location}:{provenance.line_number}"
+            if provenance.include_chain:
+                location = f"{location} via {' > '.join(provenance.include_chain)}"
+            object.__setattr__(self, "provenance", (location,))
 
     @property
     def axis(self) -> Vector:
@@ -232,6 +342,7 @@ class ConnectionFeature:
         *,
         position: Vector,
         matrix: Matrix,
+        inherit: bool = True,
     ) -> ConnectionFeature:
         """Return this feature transformed by an LDraw placement."""
         raw_frame = matrix * self.frame
@@ -249,6 +360,14 @@ class ConnectionFeature:
                 confidence=0.0,
             )
         normalized = _orthonormalized_frame(x_axis, y_axis, z_axis)
+        reflected = raw_frame.det() < 0
+        if reflected and self.mirror_inheritance in {"cor", "corx", "corz"}:
+            correction = (
+                Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
+                if self.mirror_inheritance != "corz"
+                else Matrix([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
+            )
+            normalized = normalized * correction
         radial_scale = (x_scale + z_scale) / 2
         radial_mismatch = abs(x_scale - z_scale) / max(x_scale, z_scale)
         normalized_x = x_axis / x_scale
@@ -259,17 +378,66 @@ class ConnectionFeature:
             abs(normalized_x.dot(normalized_z)),
             abs(normalized_y.dot(normalized_z)),
         )
+        applied_radial, applied_axial = (
+            _inherited_scales(
+                self.scale_inheritance,
+                radial=radial_scale,
+                axial=y_scale,
+            )
+            if inherit
+            else (radial_scale, y_scale)
+        )
+        has_radial_scale = not math.isclose(radial_scale, 1.0, abs_tol=1e-6)
+        has_axial_scale = not math.isclose(y_scale, 1.0, abs_tol=1e-6)
+        scale_allowed = {
+            "none": not has_radial_scale and not has_axial_scale,
+            "yonly": not has_radial_scale,
+            "ronly": not has_axial_scale,
+            "yandr": True,
+        }.get(self.scale_inheritance.casefold(), False)
+        invalid_metadata_transform = self.source in {
+            ConnectionSource.LDCAD_INLINE,
+            ConnectionSource.LDCAD_SHADOW,
+            ConnectionSource.STUDIO,
+        } and (
+            (inherit and not scale_allowed)
+            or radial_mismatch > 1e-6
+            or shear > 1e-6
+            or (reflected and self.mirror_inheritance == "none")
+        )
         return replace(
             self,
             position=position + matrix * self.position,
             frame=normalized,
-            profile=self.profile.scaled(radial=radial_scale, axial=y_scale),
+            profile=self.profile.scaled(
+                radial=applied_radial,
+                axial=applied_axial,
+            ),
             confidence=(
-                self.confidence
+                0.0
+                if invalid_metadata_transform
+                else self.confidence
                 if max(radial_mismatch, shear) <= 1e-6
                 else self.confidence * 0.5
             ),
         )
+
+
+def _inherited_scales(
+    mode: str,
+    *,
+    radial: float,
+    axial: float,
+) -> tuple[float, float]:
+    match mode.casefold():
+        case "none":
+            return 1.0, 1.0
+        case "yonly":
+            return 1.0, axial
+        case "ronly":
+            return radial, 1.0
+        case _:
+            return radial, axial
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +459,8 @@ class ConnectionResidual:
     axial_gap: float
     alignment: float
     roll_alignment: float = 1.0
+    entry_face_gap: float | None = None
+    penetration: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,7 +481,7 @@ _KIND_PAIRS = {
 _X_REFLECTION = Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
-def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explicit
+def connections_compatible(  # noqa: C901, PLR0911
     left: ConnectionFeature,
     right: ConnectionFeature,
     *,
@@ -323,10 +493,20 @@ def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explici
         raise ValueError(message)
     if not _features_available(left, right):
         return False
+    if (
+        left.role is not ConnectionRole.NEUTRAL
+        and right.role is not ConnectionRole.NEUTRAL
+        and left.role is right.role
+    ):
+        return False
+    if (
+        left.group is not None or right.group is not None
+    ) and left.group != right.group:
+        return False
     if left.kind is ConnectionKind.HINGE and right.kind is ConnectionKind.HINGE:
         return _hinges_compatible(left, right)
     if left.kind is ConnectionKind.GENERIC and right.kind is ConnectionKind.GENERIC:
-        return left.group is not None and left.group == right.group
+        return _generic_profiles_compatible(left, right)
     if frozenset((left.kind, right.kind)) not in _KIND_PAIRS:
         return False
     if not _part_restrictions_allow(left, right):
@@ -341,8 +521,57 @@ def connections_compatible(  # noqa: PLR0911 - compatibility rejects are explici
                 right_profile,
                 radius_tolerance=radius_tolerance,
             )
+        case AnnularProfile() as left_profile, AnnularProfile() as right_profile:
+            if left.compatible_parts or right.compatible_parts:
+                return True
+            return (
+                abs(left_profile.radius - right_profile.radius) <= radius_tolerance
+                and min(left_profile.width, right_profile.width) > 0
+            )
         case _:
             return type(left.profile) is type(right.profile)
+
+
+def _generic_profiles_compatible(  # noqa: PLR0911
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+) -> bool:
+    if not isinstance(left.profile, GenericProfile) or not isinstance(
+        right.profile,
+        GenericProfile,
+    ):
+        return False
+    if left.group != right.group and (
+        left.group is not None or right.group is not None
+    ):
+        return False
+    mode = (
+        GenericMatch.GROUP
+        if GenericMatch.GROUP in {left.profile.match, right.profile.match}
+        else (
+            GenericMatch.SIZE
+            if GenericMatch.SIZE in {left.profile.match, right.profile.match}
+            else GenericMatch.SHAPE
+        )
+    )
+    if mode is GenericMatch.GROUP:
+        return left.group == right.group
+    if left.profile.bounds is None or right.profile.bounds is None:
+        return left.group is not None and left.group == right.group
+    if left.profile.bounds.kind is not right.profile.bounds.kind:
+        return False
+    if mode is GenericMatch.SHAPE:
+        return True
+    return len(left.profile.bounds.dimensions) == len(
+        right.profile.bounds.dimensions,
+    ) and all(
+        math.isclose(left_value, right_value, abs_tol=0.35)
+        for left_value, right_value in zip(
+            left.profile.bounds.dimensions,
+            right.profile.bounds.dimensions,
+            strict=True,
+        )
+    )
 
 
 def _features_available(
@@ -379,9 +608,13 @@ def _cylindrical_profiles_compatible(
     *,
     radius_tolerance: float,
 ) -> bool:
-    return (
-        left.primary_shape is right.primary_shape
-        and abs(left.mating_radius - right.mating_radius) <= radius_tolerance
+    left_rigid = tuple(section for section in left.sections if not section.flexible)
+    right_rigid = tuple(section for section in right.sections if not section.flexible)
+    return bool(left_rigid and right_rigid) and any(
+        left_section.shape is right_section.shape
+        and abs(left_section.radius - right_section.radius) <= radius_tolerance
+        for left_section in left_rigid
+        for right_section in right_rigid
     )
 
 
@@ -415,27 +648,84 @@ def connection_residual(
     """Return centerline, axial, and orientation residuals for two features."""
     left_axis = left.axis
     right_axis = right.axis
-    alignment = abs(left_axis.dot(right_axis))
-    roll_alignment = (
-        max(
+    free_placement = any(
+        isinstance(feature.profile, GenericProfile)
+        and feature.profile.placement is GenericPlacement.FREE
+        for feature in (left, right)
+    )
+    alignment = 1.0 if free_placement else abs(left_axis.dot(right_axis))
+    if free_placement:
+        roll_alignment = 1.0
+    elif _roll_constrained(left) and _roll_constrained(right):
+        roll_alignment = max(
             abs(left.radial.dot(right.radial)),
             abs(left.radial.dot(right.frame * Vector(0, 0, 1))),
         )
-        if _roll_constrained(left) and _roll_constrained(right)
-        else 1.0
-    )
+    elif isinstance(left.profile, FingerProfile) and isinstance(
+        right.profile,
+        FingerProfile,
+    ):
+        roll_alignment = _finger_roll_alignment(left, right)
+    else:
+        roll_alignment = 1.0
     delta = right.position - left.position
     projected = left_axis * delta.dot(left_axis)
     distance = abs(delta - projected)
-    left_half = left.length / 2
-    right_half = right.length / 2
-    axial_gap = max(abs(delta.dot(left_axis)) - left_half - right_half, 0.0)
+    left_interval = _feature_interval(left, origin=0.0, direction=1.0)
+    right_interval = _feature_interval(
+        right,
+        origin=delta.dot(left_axis),
+        direction=right_axis.dot(left_axis),
+    )
+    axial_gap = max(
+        left_interval[0] - right_interval[1],
+        right_interval[0] - left_interval[1],
+        0.0,
+    )
     return ConnectionResidual(
         distance=distance,
         axial_gap=axial_gap,
         alignment=alignment,
         roll_alignment=roll_alignment,
     )
+
+
+def _feature_interval(
+    feature: ConnectionFeature,
+    *,
+    origin: float,
+    direction: float,
+) -> tuple[float, float]:
+    centered = (
+        feature.profile.centered
+        if isinstance(feature.profile, CylindricalProfile | FingerProfile)
+        else True
+    )
+    local = (
+        (-feature.length / 2, feature.length / 2) if centered else (0.0, feature.length)
+    )
+    values = (origin + direction * local[0], origin + direction * local[1])
+    return min(values), max(values)
+
+
+def _finger_roll_alignment(
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+) -> float:
+    left_profile = left.profile
+    right_profile = right.profile
+    if not isinstance(left_profile, FingerProfile) or not isinstance(
+        right_profile,
+        FingerProfile,
+    ):
+        return 1.0
+    detents = tuple(dict.fromkeys((*left_profile.detents, *right_profile.detents)))
+    if not detents:
+        return 1.0
+    cosine = max(-1.0, min(1.0, left.radial.dot(right.radial)))
+    angle = math.degrees(math.acos(cosine)) % 360
+    difference = min(abs((angle - detent + 180) % 360 - 180) for detent in detents)
+    return math.cos(math.radians(difference))
 
 
 def snap_transform(
@@ -578,12 +868,19 @@ __all__ = [
     "ConnectionFreedom",
     "ConnectionKind",
     "ConnectionProfile",
+    "ConnectionProvenance",
     "ConnectionResidual",
     "ConnectionRole",
     "ConnectionSource",
+    "ConnectionStatus",
+    "CylindricalCaps",
     "CylindricalProfile",
     "CylindricalSection",
     "FingerProfile",
+    "GenericBounds",
+    "GenericBoundsKind",
+    "GenericMatch",
+    "GenericPlacement",
     "GenericProfile",
     "PartCompatibility",
     "SectionShape",

@@ -18,6 +18,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ldraw.operations import CancellationToken, check_cancelled
 from ldraw.part import Part
@@ -38,6 +39,9 @@ from ldraw.progress import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # Version 5: catalog rows include structured part metadata.
 # Version 4: freshness is additionally keyed to a per-file parts-tree
@@ -393,6 +397,8 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
     generated_path: str | Path,
     *,
     build_index: bool = False,
+    connection_shadows: Iterable[str | Path] = (),
+    studio_metadata: Iterable[str | Path] = (),
     fingerprint: CatalogFingerprint | None = None,
     on_progress: ProgressCallback | None = None,
     cancellation: CancellationToken | None = None,
@@ -406,6 +412,8 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
     will use the catalog anyway.
     """
     parts_lst_path = Path(parts_lst)
+    shadow_sources = tuple(connection_shadows)
+    studio_sources = tuple(studio_metadata)
     fingerprint = fingerprint or catalog_fingerprint(
         parts_lst_path,
         on_progress=on_progress,
@@ -428,6 +436,8 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
             parts_lst_path,
             tree_fingerprint=tree,
             parts_lst_md5=md5,
+            connection_shadows=shadow_sources,
+            studio_metadata=studio_sources,
         )
         parts.adopt_catalog(catalog)
         return parts
@@ -439,12 +449,16 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
             parts_lst_path,
             tree_fingerprint=tree,
             parts_lst_md5=md5,
+            connection_shadows=shadow_sources,
+            studio_metadata=studio_sources,
         )
         if build_index
         else Parts.get(
             parts_lst_path,
             tree_fingerprint=tree,
             parts_lst_md5=md5,
+            connection_shadows=shadow_sources,
+            studio_metadata=studio_sources,
         )
     )
     if build_index:

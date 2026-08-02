@@ -265,10 +265,12 @@ class LDrawSession:
             raise FileNotFoundError(self.paths.parts_lst)
         return result.parts
 
-    def prepare_catalog(
+    def prepare_catalog(  # noqa: PLR0913
         self,
         *,
         capabilities: Iterable[LDrawCapability] = (LDrawCapability.CATALOG,),
+        connection_shadows: Iterable[str | Path] = (),
+        studio_metadata: Iterable[str | Path] = (),
         force: bool = False,
         on_progress: ProgressCallback | None = None,
         cancellation: CancellationToken | None = None,
@@ -281,6 +283,8 @@ class LDrawSession:
         its freshness — a stale value persists the index under stale keys.
         """
         required = frozenset(capabilities)
+        shadow_sources = tuple(connection_shadows)
+        studio_sources = tuple(studio_metadata)
         if not required:
             message = "at least one LDraw capability is required"
             raise ValueError(message)
@@ -364,6 +368,8 @@ class LDrawSession:
             diagnostics=diagnostics,
             on_progress=on_progress,
             cancellation=cancellation,
+            connection_shadows=shadow_sources,
+            studio_metadata=studio_sources,
         )
 
         final = self.state(capabilities=required, fingerprint=snapshot)
@@ -401,6 +407,8 @@ class LDrawSession:
         diagnostics: list[Diagnostic],
         on_progress: ProgressCallback | None,
         cancellation: CancellationToken | None,
+        connection_shadows: tuple[str | Path, ...],
+        studio_metadata: tuple[str | Path, ...],
     ) -> tuple[Parts, CatalogBuildOutcome, bool]:
         """Load or rebuild catalog parts as (parts, outcome, persisted)."""
         paths = self.paths
@@ -408,6 +416,8 @@ class LDrawSession:
             parts = Parts.get(
                 paths.parts_lst,
                 tree_fingerprint=snapshot.tree_fingerprint,
+                connection_shadows=connection_shadows,
+                studio_metadata=studio_metadata,
             )
             return parts, CatalogBuildOutcome.LOADED, False
         catalog = (
@@ -426,6 +436,8 @@ class LDrawSession:
             parts = Parts.get(
                 paths.parts_lst,
                 tree_fingerprint=snapshot.tree_fingerprint,
+                connection_shadows=connection_shadows,
+                studio_metadata=studio_metadata,
             )
             parts.adopt_catalog(catalog)
             # A generation step in ``prepare_catalog`` may have just
@@ -442,6 +454,8 @@ class LDrawSession:
         parts = Parts.fresh(
             paths.parts_lst,
             tree_fingerprint=snapshot.tree_fingerprint,
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
         )
         catalog = parts.build_catalog(
             on_progress=on_progress,
@@ -692,10 +706,12 @@ def _generation_reason(
     return None
 
 
-def prepare_catalog(
+def prepare_catalog(  # noqa: PLR0913
     config: Config | None = None,
     *,
     capabilities: Iterable[LDrawCapability] = (LDrawCapability.CATALOG,),
+    connection_shadows: Iterable[str | Path] = (),
+    studio_metadata: Iterable[str | Path] = (),
     force: bool = False,
     on_progress: ProgressCallback | None = None,
     cancellation: CancellationToken | None = None,
@@ -703,6 +719,8 @@ def prepare_catalog(
     """Prepare requested configured data and return a structured report."""
     return LDrawSession(config).prepare_catalog(
         capabilities=capabilities,
+        connection_shadows=connection_shadows,
+        studio_metadata=studio_metadata,
         force=force,
         on_progress=on_progress,
         cancellation=cancellation,

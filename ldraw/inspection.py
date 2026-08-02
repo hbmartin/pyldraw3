@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import product
 from typing import TYPE_CHECKING
 
 from ldraw.connection_types import (
     ConnectionFeature,
+    ConnectionKind,
     ConnectionResidual,
+    ConnectionSource,
+    ConnectionStatus,
     SnapTransform,
     angular_alignment_within,
     connection_residual,
@@ -119,12 +123,15 @@ class OccurrenceContact:
 
 @dataclass(frozen=True, slots=True)
 class StudContact:
-    """A protruding stud whose short probe intersects another occurrence."""
+    """Compatibility projection of one strict stud/receptacle feature match."""
 
     stud_occurrence: OccurrenceGeometry
     supported_occurrence: OccurrenceGeometry
     stud: StudReference
     position: Vector
+    stud_feature: ConnectionFeature | None = None
+    receptacle_feature: ConnectionFeature | None = None
+    residual: ConnectionResidual | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +143,35 @@ class ConnectionContact:
     first: ConnectionFeature
     second: ConnectionFeature
     residual: ConnectionResidual
+    status: ConnectionStatus = ConnectionStatus.CONFIRMED
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionGraphEdge:
+    """One typed feature contact between two occurrence nodes."""
+
+    first: int
+    second: int
+    first_feature_id: str
+    second_feature_id: str
+    status: ConnectionStatus
+    residual: ConnectionResidual
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionMultigraph:
+    """Immutable occurrence multigraph retaining parallel feature edges."""
+
+    nodes: tuple[int, ...]
+    edges: tuple[ConnectionGraphEdge, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionGraphs:
+    """Confirmed and optimistic views of one inspection's connectivity."""
+
+    confirmed: ConnectionMultigraph
+    optimistic: ConnectionMultigraph
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,35 +207,47 @@ class ModelInspection:
         tolerance: float = 0.1,
         probe_distance: float = 0.1,
     ) -> tuple[StudContact, ...]:
-        """Return protruding studs whose base/probe meet another AABB."""
+        """Return strict stud matches as the historical stud-contact view."""
         if tolerance < 0:
             message = "tolerance must be non-negative"
             raise ValueError(message)
         if probe_distance <= 0:
             message = "probe_distance must be positive"
             raise ValueError(message)
-        contacts: list[StudContact] = []
-        for stud_occurrence in self.occurrences:
-            for stud in stud_occurrence.studs:
-                if stud.is_receptacle or stud.is_placeholder:
-                    continue
-                length = abs(stud.up)
-                if length == 0:
-                    continue
-                probe = stud.position + probe_distance * (stud.up / length)
-                contacts.extend(
-                    StudContact(
-                        stud_occurrence=stud_occurrence,
-                        supported_occurrence=candidate,
-                        stud=stud,
-                        position=stud.position.copy(),
-                    )
-                    for candidate in self.occurrences
-                    if candidate.index != stud_occurrence.index
-                    and _box_contains(candidate.bounds, stud.position, tolerance)
-                    and _box_contains(candidate.bounds, probe, tolerance)
-                )
-        return tuple(contacts)
+        contacts = self.connection_contacts(tolerance=tolerance)
+        projected: list[StudContact] = []
+        for contact in contacts:
+            if (
+                contact.residual.penetration is not None
+                and contact.residual.penetration < probe_distance
+            ):
+                continue
+            if contact.first.kind is ConnectionKind.STUD:
+                stud_occurrence = contact.first_occurrence
+                supported_occurrence = contact.second_occurrence
+                stud_feature = contact.first
+                receptacle = contact.second
+            elif contact.second.kind is ConnectionKind.STUD:
+                stud_occurrence = contact.second_occurrence
+                supported_occurrence = contact.first_occurrence
+                stud_feature = contact.second
+                receptacle = contact.first
+            else:
+                continue
+            if (stud := _stud_evidence(stud_occurrence, stud_feature)) is None:
+                continue
+            projected.append(
+                StudContact(
+                    stud_occurrence=stud_occurrence,
+                    supported_occurrence=supported_occurrence,
+                    stud=stud,
+                    position=stud_feature.position.copy(),
+                    stud_feature=stud_feature,
+                    receptacle_feature=receptacle,
+                    residual=contact.residual,
+                ),
+            )
+        return tuple(projected)
 
     def connection_contacts(
         self,
@@ -214,30 +262,62 @@ class ModelInspection:
         if angular_tolerance < 0:
             message = "angular_tolerance must be non-negative"
             raise ValueError(message)
-        reaches = tuple(
-            _connection_reach(occurrence, tolerance=tolerance)
-            for occurrence in self.occurrences
-        )
         contacts: list[ConnectionContact] = []
-        for first_index, first_occurrence in enumerate(self.occurrences):
-            first_reach = reaches[first_index]
-            if first_reach is None:
-                continue
-            for second_index, second_occurrence in enumerate(
-                self.occurrences[first_index + 1 :],
-                start=first_index + 1,
-            ):
-                if not _reach_overlap(first_reach, reaches[second_index]):
-                    continue
-                contacts.extend(
-                    _paired_contacts(
-                        first_occurrence,
-                        second_occurrence,
-                        tolerance=tolerance,
-                        angular_tolerance=angular_tolerance,
-                    ),
-                )
-        return tuple(contacts)
+        for first_index, second_index in _candidate_occurrence_pairs(
+            self.occurrences,
+            tolerance=tolerance,
+        ):
+            contacts.extend(
+                _paired_contacts(
+                    self.occurrences[first_index],
+                    self.occurrences[second_index],
+                    tolerance=tolerance,
+                    angular_tolerance=angular_tolerance,
+                ),
+            )
+        return tuple(
+            sorted(
+                contacts,
+                key=lambda contact: (
+                    contact.first_occurrence.index,
+                    contact.second_occurrence.index,
+                    contact.first.feature_id or "",
+                    contact.second.feature_id or "",
+                ),
+            ),
+        )
+
+    def connection_graphs(
+        self,
+        *,
+        tolerance: float = 0.25,
+        angular_tolerance: float = 2.0,
+    ) -> ConnectionGraphs:
+        """Return confirmed and heuristic-inclusive occurrence multigraphs."""
+        nodes = tuple(range(self.occurrence_count))
+        optimistic_edges = tuple(
+            ConnectionGraphEdge(
+                first=contact.first_occurrence.index,
+                second=contact.second_occurrence.index,
+                first_feature_id=contact.first.feature_id or "",
+                second_feature_id=contact.second.feature_id or "",
+                status=contact.status,
+                residual=contact.residual,
+            )
+            for contact in self.connection_contacts(
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            )
+        )
+        confirmed_edges = tuple(
+            edge
+            for edge in optimistic_edges
+            if edge.status is ConnectionStatus.CONFIRMED
+        )
+        return ConnectionGraphs(
+            confirmed=ConnectionMultigraph(nodes=nodes, edges=confirmed_edges),
+            optimistic=ConnectionMultigraph(nodes=nodes, edges=optimistic_edges),
+        )
 
     def snap_candidates(
         self,
@@ -523,46 +603,69 @@ def _not_installed_later(
     )
 
 
-def _box_contains(box: BoundingBox, point: Vector, tolerance: float) -> bool:
-    return (
-        box.min.x - tolerance <= point.x <= box.max.x + tolerance
-        and box.min.y - tolerance <= point.y <= box.max.y + tolerance
-        and box.min.z - tolerance <= point.z <= box.max.z + tolerance
-    )
-
-
-def _connection_reach(
-    occurrence: OccurrenceGeometry,
+def _candidate_occurrence_pairs(
+    occurrences: tuple[OccurrenceGeometry, ...],
     *,
     tolerance: float,
-) -> BoundingBox | None:
-    """Box around feature positions, padded so any matable pair overlaps."""
-    if not occurrence.connections:
-        return None
-    positions = tuple(feature.position for feature in occurrence.connections)
-    margin = tolerance + max(feature.length for feature in occurrence.connections) / 2
+) -> tuple[tuple[int, int], ...]:
+    """Use a deterministic spatial hash to find overlapping feature reaches."""
+    cell_size = 20.0
+    cells: dict[tuple[int, int, int], list[int]] = {}
+    for index, occurrence in enumerate(occurrences):
+        for feature in occurrence.connections:
+            reach = _feature_reach(
+                occurrence,
+                feature,
+                tolerance=tolerance,
+            )
+            ranges = tuple(
+                range(
+                    math.floor(low / cell_size),
+                    math.floor(high / cell_size) + 1,
+                )
+                for low, high in zip(
+                    (reach.min.x, reach.min.y, reach.min.z),
+                    (reach.max.x, reach.max.y, reach.max.z),
+                    strict=True,
+                )
+            )
+            for cell in product(*ranges):
+                members = cells.setdefault(cell, [])
+                if not members or members[-1] != index:
+                    members.append(index)
+    candidates: set[tuple[int, int]] = set()
+    for members in cells.values():
+        for offset, first in enumerate(members):
+            candidates.update(
+                (first, second) if first < second else (second, first)
+                for second in members[offset + 1 :]
+                if first != second
+            )
+    return tuple(sorted(candidates))
+
+
+def _feature_reach(
+    occurrence: OccurrenceGeometry,
+    feature: ConnectionFeature,
+    *,
+    tolerance: float,
+) -> BoundingBox:
+    margin = tolerance + feature.length / 2
     pad = Vector(margin, margin, margin)
-    low = Vector(
-        min(position.x for position in positions),
-        min(position.y for position in positions),
-        min(position.z for position in positions),
-    )
-    high = Vector(
-        max(position.x for position in positions),
-        max(position.y for position in positions),
-        max(position.z for position in positions),
-    )
-    return BoundingBox(min=low - pad, max=high + pad)
-
-
-def _reach_overlap(left: BoundingBox, right: BoundingBox | None) -> bool:
-    return right is not None and (
-        left.min.x <= right.max.x
-        and right.min.x <= left.max.x
-        and left.min.y <= right.max.y
-        and right.min.y <= left.max.y
-        and left.min.z <= right.max.z
-        and right.min.z <= left.max.z
+    reach = BoundingBox(min=feature.position - pad, max=feature.position + pad)
+    if feature.kind not in {ConnectionKind.STUD, ConnectionKind.STUD_RECEPTACLE}:
+        return reach
+    return BoundingBox(
+        min=Vector(
+            min(reach.min.x, occurrence.bounds.min.x),
+            min(reach.min.y, occurrence.bounds.min.y),
+            min(reach.min.z, occurrence.bounds.min.z),
+        ),
+        max=Vector(
+            max(reach.max.x, occurrence.bounds.max.x),
+            max(reach.max.y, occurrence.bounds.max.y),
+            max(reach.max.z, occurrence.bounds.max.z),
+        ),
     )
 
 
@@ -573,8 +676,22 @@ def _paired_contacts(
     tolerance: float,
     angular_tolerance: float,
 ) -> Iterator[ConnectionContact]:
+    yield from _strict_stud_contacts_between(
+        first_occurrence,
+        second_occurrence,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
+    )
     for first in first_occurrence.connections:
         for second in second_occurrence.connections:
+            if first.kind in {
+                ConnectionKind.STUD,
+                ConnectionKind.STUD_RECEPTACLE,
+            } or second.kind in {
+                ConnectionKind.STUD,
+                ConnectionKind.STUD_RECEPTACLE,
+            }:
+                continue
             if not connections_compatible(first, second):
                 continue
             residual = connection_residual(first, second)
@@ -593,7 +710,167 @@ def _paired_contacts(
                     first=first,
                     second=second,
                     residual=residual,
+                    status=_contact_status(first, second),
                 )
+
+
+def _strict_stud_contacts_between(
+    first_occurrence: OccurrenceGeometry,
+    second_occurrence: OccurrenceGeometry,
+    *,
+    tolerance: float,
+    angular_tolerance: float,
+) -> Iterator[ConnectionContact]:
+    yield from _strict_stud_direction(
+        first_occurrence,
+        second_occurrence,
+        first_is_stud=True,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
+    )
+    yield from _strict_stud_direction(
+        second_occurrence,
+        first_occurrence,
+        first_is_stud=False,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
+    )
+
+
+def _strict_stud_direction(
+    stud_occurrence: OccurrenceGeometry,
+    receptacle_occurrence: OccurrenceGeometry,
+    *,
+    first_is_stud: bool,
+    tolerance: float,
+    angular_tolerance: float,
+) -> Iterator[ConnectionContact]:
+    studs = tuple(
+        feature
+        for feature in stud_occurrence.connections
+        if feature.kind is ConnectionKind.STUD
+    )
+    receptacles = tuple(
+        sorted(
+            (
+                feature
+                for feature in receptacle_occurrence.connections
+                if feature.kind is ConnectionKind.STUD_RECEPTACLE
+            ),
+            key=lambda feature: (feature.feature_id or "", feature.name),
+        ),
+    )
+    for stud in studs:
+        evidence = next(
+            (
+                (receptacle, entry_gap, penetration)
+                for receptacle in receptacles
+                if connections_compatible(stud, receptacle)
+                and angular_alignment_within(
+                    -stud.axis.dot(receptacle.axis),
+                    angular_tolerance,
+                )
+                and (
+                    entry := _entry_face_residual(
+                        stud,
+                        receptacle_occurrence,
+                        tolerance=tolerance,
+                    )
+                )
+                is not None
+                for entry_gap, penetration in (entry,)
+            ),
+            None,
+        )
+        if evidence is None:
+            continue
+        receptacle, entry_gap, penetration = evidence
+        residual = replace(
+            connection_residual(stud, receptacle),
+            entry_face_gap=entry_gap,
+            penetration=penetration,
+        )
+        yield ConnectionContact(
+            first_occurrence=(
+                stud_occurrence if first_is_stud else receptacle_occurrence
+            ),
+            second_occurrence=(
+                receptacle_occurrence if first_is_stud else stud_occurrence
+            ),
+            first=stud if first_is_stud else receptacle,
+            second=receptacle if first_is_stud else stud,
+            residual=residual,
+            status=_contact_status(stud, receptacle),
+        )
+
+
+def _entry_face_residual(
+    stud: ConnectionFeature,
+    candidate: OccurrenceGeometry,
+    *,
+    tolerance: float,
+) -> tuple[float, float] | None:
+    bounds = candidate.local.bounds
+    if bounds is None or candidate.occurrence.matrix.is_singular():
+        return None
+    inverse = candidate.occurrence.matrix.inverse()
+    point = inverse * (stud.position - candidate.occurrence.position)
+    direction = inverse * stud.axis
+    if not (length := abs(direction)):
+        return None
+    direction = direction / length
+    coordinates = (point.x, point.y, point.z)
+    vector = (direction.x, direction.y, direction.z)
+    minimum = (bounds.min.x, bounds.min.y, bounds.min.z)
+    maximum = (bounds.max.x, bounds.max.y, bounds.max.z)
+    axis = max(range(3), key=lambda index: abs(vector[index]))
+    component = vector[axis]
+    if abs(component) < 1e-9:
+        return None
+    entry_face = minimum[axis] if component > 0 else maximum[axis]
+    exit_face = maximum[axis] if component > 0 else minimum[axis]
+    entry_distance = (entry_face - coordinates[axis]) / component
+    penetration = (exit_face - coordinates[axis]) / component
+    lateral = tuple(index for index in range(3) if index != axis)
+    if not all(
+        minimum[index] - tolerance <= coordinates[index] <= maximum[index] + tolerance
+        for index in lateral
+    ):
+        return None
+    if abs(entry_distance) > tolerance or penetration <= 0:
+        return None
+    return abs(entry_distance), penetration
+
+
+def _stud_evidence(
+    occurrence: OccurrenceGeometry,
+    feature: ConnectionFeature,
+) -> StudReference | None:
+    candidates = tuple(
+        stud
+        for stud in occurrence.studs
+        if not stud.is_receptacle and not stud.is_placeholder and abs(stud.up)
+    )
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda stud: (
+            abs(stud.position - feature.position),
+            stud.name,
+        ),
+    )
+
+
+def _contact_status(
+    first: ConnectionFeature,
+    second: ConnectionFeature,
+) -> ConnectionStatus:
+    return (
+        ConnectionStatus.POTENTIAL
+        if ConnectionSource.HEURISTIC in {first.source, second.source}
+        else ConnectionStatus.CONFIRMED
+    )
 
 
 def _attribution(
@@ -673,6 +950,9 @@ __all__ = [
     "DEFAULT_PAGE_MARKER_PREFIX",
     "BoundsGap",
     "ConnectionContact",
+    "ConnectionGraphEdge",
+    "ConnectionGraphs",
+    "ConnectionMultigraph",
     "ModelInspection",
     "OccurrenceAttribution",
     "OccurrenceContact",

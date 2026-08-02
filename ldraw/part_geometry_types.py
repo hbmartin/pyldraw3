@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ldraw.geometry import Vector
 
 if TYPE_CHECKING:
+    from ldraw.connection_metadata import ConnectionMetadataReport
     from ldraw.connection_types import ConnectionFeature
     from ldraw.diagnostics import Diagnostic
 
@@ -60,6 +61,7 @@ class PartGeometry:
     studs: tuple[StudReference, ...]
     connections: tuple[ConnectionFeature, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
+    connection_metadata: ConnectionMetadataReport | None = None
 
     @property
     def complete(self) -> bool:
