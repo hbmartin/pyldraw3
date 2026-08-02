@@ -31,7 +31,12 @@ from ldraw.utils import camel, clean
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ldraw.connection_metadata import LDCadShadowLibrary, ShadowConnectionResult
+    from ldraw.connection_metadata import (
+        ConnectionMetadataReport,
+        LDCadShadowLibrary,
+        ShadowConnectionResult,
+    )
+    from ldraw.connection_studio import StudioConnectionLibrary
     from ldraw.connection_types import ConnectionFeature, PartCompatibility
     from ldraw.geometry import Matrix, Vector
     from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
@@ -621,8 +626,15 @@ def _parts_for_stat(
     _stat_key: tuple[int, int],
     _tree_fingerprint: str | None,
     _parts_lst_md5: str | None,
+    connection_shadows: tuple[str, ...],
+    studio_metadata: tuple[str, ...],
 ) -> Parts:
-    return Parts(parts_lst)
+    parts = Parts(parts_lst)
+    for source in connection_shadows:
+        parts.add_connection_shadow(source)
+    for source in studio_metadata:
+        parts.add_studio_metadata(source)
+    return parts
 
 
 class Parts:
@@ -650,6 +662,8 @@ class Parts:
         *,
         tree_fingerprint: str | None = None,
         parts_lst_md5: str | None = None,
+        connection_shadows: Iterable[str | Path] = (),
+        studio_metadata: Iterable[str | Path] = (),
     ) -> Parts:
         """Get a memoized Parts keyed by list and optional content fingerprints.
 
@@ -663,6 +677,8 @@ class Parts:
             (stat_result.st_mtime_ns, stat_result.st_size),
             tree_fingerprint,
             parts_lst_md5,
+            tuple(str(Path(source).expanduser()) for source in connection_shadows),
+            tuple(str(Path(source).expanduser()) for source in studio_metadata),
         )
 
     @classmethod
@@ -677,6 +693,8 @@ class Parts:
         *,
         tree_fingerprint: str | None = None,
         parts_lst_md5: str | None = None,
+        connection_shadows: Iterable[str | Path] = (),
+        studio_metadata: Iterable[str | Path] = (),
     ) -> Parts:
         """Return a freshly constructed Parts, replacing the memoized one.
 
@@ -688,6 +706,8 @@ class Parts:
             parts_lst,
             tree_fingerprint=tree_fingerprint,
             parts_lst_md5=parts_lst_md5,
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
         )
 
     def __init__(self, parts_lst: str | Path) -> None:
@@ -716,6 +736,7 @@ class Parts:
         self._categorize_lock = threading.Lock()
         self._minifig_sections_by_code: dict[str, MinifigSection] = {}
         self._connection_shadow_libraries: list[LDCadShadowLibrary] = []
+        self._studio_connection_libraries: list[StudioConnectionLibrary] = []
         self._connection_overrides: dict[
             str,
             tuple[tuple[ConnectionFeature, ...], bool],
@@ -1037,9 +1058,17 @@ class Parts:
 
     def connections(self, code: str) -> tuple[ConnectionFeature, ...]:
         """Return physical connection features detected for a part."""
-        from ldraw.part_geometry import part_connections  # noqa: PLC0415
+        return self.connection_metadata(code).features
 
-        return part_connections(self, code)
+    def connection_metadata(self, code: str) -> ConnectionMetadataReport:
+        """Return features and normalized metadata coverage for a part."""
+        from ldraw.part_geometry import part_geometry  # noqa: PLC0415
+
+        report = part_geometry(self, code).connection_metadata
+        if report is None:  # pragma: no cover - defensive for third-party adapters
+            message = f"connection metadata report unavailable for {code!r}"
+            raise RuntimeError(message)
+        return report
 
     def add_connection_shadow(self, source: str | Path) -> None:
         """Add an LDCad shadow library as an optional connection source.
@@ -1057,6 +1086,18 @@ class Parts:
         self._connection_shadow_libraries.clear()
         self._clear_derived_geometry()
 
+    def add_studio_metadata(self, source: str | Path) -> None:
+        """Add a Studio connectivity JSON source at Studio precedence."""
+        from ldraw.connection_studio import StudioConnectionLibrary  # noqa: PLC0415
+
+        self._studio_connection_libraries.append(StudioConnectionLibrary(source))
+        self._clear_derived_geometry()
+
+    def clear_studio_metadata(self) -> None:
+        """Remove every configured Studio connectivity source."""
+        self._studio_connection_libraries.clear()
+        self._clear_derived_geometry()
+
     def set_connection_overrides(
         self,
         code: str,
@@ -1071,17 +1112,25 @@ class Parts:
         """
         from dataclasses import replace  # noqa: PLC0415
 
-        from ldraw.connection_types import ConnectionSource  # noqa: PLC0415
+        from ldraw.connection_types import (  # noqa: PLC0415
+            ConnectionProvenance,
+            ConnectionSource,
+        )
 
         key = _reference_key(code)
         self._connection_overrides[key] = (
             tuple(
                 replace(
                     feature,
+                    feature_id=feature.feature_id or f"override:{index}",
                     source=ConnectionSource.OVERRIDE,
                     owner_code=code,
+                    connection_provenance=ConnectionProvenance(
+                        source=ConnectionSource.OVERRIDE,
+                        command=f"explicit override {index}",
+                    ),
                 )
-                for feature in features
+                for index, feature in enumerate(features)
             ),
             replace_existing,
         )
@@ -1123,31 +1172,24 @@ class Parts:
     def _shadow_connections_for(self, code: str) -> ShadowConnectionResult:
         from ldraw.connection_metadata import ShadowConnectionResult  # noqa: PLC0415
 
-        features: list[ConnectionFeature] = []
-        diagnostics: list[Diagnostic] = []
-        clear_all = False
-        clear_ids: list[str] = []
+        combined = ShadowConnectionResult()
         for library in self._connection_shadow_libraries:
-            result = library.connections_for(code)
-            diagnostics.extend(result.diagnostics)
-            if result.clear_all:
-                clear_all = True
-                clear_ids.clear()
-                features.clear()
-            elif result.clear_ids:
-                identifiers = set(result.clear_ids)
-                clear_ids.extend(result.clear_ids)
-                features = [
-                    feature
-                    for feature in features
-                    if feature.feature_id not in identifiers
-                ]
-            features.extend(result.features)
-        return ShadowConnectionResult(
-            features=tuple(features),
-            clear_all=clear_all,
-            clear_ids=tuple(dict.fromkeys(clear_ids)),
-            diagnostics=tuple(diagnostics),
+            combined = combined.combined(library.connections_for(code))
+        return combined
+
+    def _connection_shadows_for_inline(self) -> tuple[LDCadShadowLibrary, ...]:
+        return tuple(self._connection_shadow_libraries)
+
+    def _connection_metadata_for(
+        self,
+        code: str,
+    ) -> tuple[ShadowConnectionResult, ...]:
+        return tuple(
+            library.connections_for(code)
+            for library in (
+                *self._connection_shadow_libraries,
+                *self._studio_connection_libraries,
+            )
         )
 
     def _connection_overrides_for(

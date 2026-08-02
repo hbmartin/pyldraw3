@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import zipfile
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ldraw.connection_metadata import LDCadShadowLibrary, parse_ldcad_commands
+from ldraw.connection_metadata import (
+    ConnectionMetadataCoverage,
+    LDCadShadowLibrary,
+    parse_ldcad_commands,
+)
+from ldraw.connection_studio import StudioConnectionLibrary
 from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionFreedom,
     ConnectionKind,
     ConnectionRole,
     ConnectionSource,
+    ConnectionStatus,
     CylindricalProfile,
     FingerProfile,
     GenericProfile,
@@ -27,13 +35,36 @@ from ldraw.diagnostics import DiagnosticCode
 from ldraw.geometry import Identity, Matrix, Vector, YAxis
 from ldraw.inspection import inspect_model
 from ldraw.model import parse_model
+from ldraw.part_geometry import part_connections
 from ldraw.parts import Parts
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from ldraw.part import Part
 
 _IDENTITY = "1 0 0 0 1 0 0 0 1"
 _FLIP_Y = "1 0 0 0 -1 0 0 0 -1"
+
+
+@dataclass(eq=False)
+class _PartLibraryAdapter:
+    _backing: Parts
+
+    def part(
+        self,
+        description: str | None = None,
+        code: str | None = None,
+    ) -> Part:
+        return self._backing.part(description=description, code=code)
+
+
+class _RimOnlyCompatibilityLibrary(_PartLibraryAdapter):
+    def compatible_tyres(self, rim_code: str) -> tuple[str, ...]:
+        return ("tyre",) if rim_code == "rim" else ()
+
+
+class _TyreOnlyCompatibilityLibrary(_PartLibraryAdapter):
+    def compatible_rims(self, tyre_code: str) -> tuple[str, ...]:
+        return ("rim",) if tyre_code == "tyre" else ()
 
 
 def _connection_parts(tmp_path: Path) -> Parts:
@@ -48,6 +79,8 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "p/clh1.dat": (
             "0 Click Lock Hinge Single Finger for Bricks\n2 24 -6 -8 -6 6 8 6\n"
         ),
+        "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
+        "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
         "parts/bar1.dat": ("0 Bar 3L\n0 Name: bar1.dat\n2 24 -4 0 -4 4 60 4\n"),
         "parts/blank.dat": ("0 Blank Tile\n2 24 -10 0 -10 10 4 10\n"),
         "parts/clipper.dat": (f"0 Minifig Clip\n1 16 0 0 0 {_IDENTITY} clip5.dat\n"),
@@ -57,6 +90,20 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "0 !LDCAD SNAP_CYL [gender=M] [secs=R 4 20] "
             "[center=true] [slide=true] [id=inline-bar]\n"
             "2 24 -4 -10 -4 4 10 4\n"
+        ),
+        "parts/emptyclear.dat": (
+            "0 Explicitly Connector-Free Part\n"
+            "0 !LDCAD SNAP_CLEAR\n"
+            "2 24 -10 0 -10 10 4 10\n"
+        ),
+        "parts/wrappedinline.dat": (
+            "0 Inline Metadata Referenced Twice\n"
+            f"1 16 -10 0 0 {_IDENTITY} inline.dat\n"
+            f"1 16 10 0 0 {_IDENTITY} inline.dat\n"
+        ),
+        "parts/scaledinline.dat": (
+            "0 Inline Metadata Under Invalid Inheritance Scale\n"
+            "1 16 0 0 0 1 0 0 0 2 0 0 0 1 inline.dat\n"
         ),
         "parts/beam.dat": (
             "0 Technic Brick with Pin Hole\n"
@@ -93,6 +140,23 @@ def _connection_parts(tmp_path: Path) -> Parts:
             f"1 16 0 0 0 {_IDENTITY} rim.dat\n"
             f"1 16 0 0 0 {_IDENTITY} tyre.dat\n"
         ),
+        "parts/3035.dat": (
+            "0 Synthetic Scout Upper Plate\n"
+            "2 24 -80 0 -6 80 4 6\n"
+            + "".join(
+                f"1 16 {x} 0 {z} {_IDENTITY} stud.dat\n"
+                for x in (-70, -50, -30, -10, 10, 30, 50, 70)
+                for z in (-4, 4)
+            )
+        ),
+        "parts/3958.dat": (
+            "0 Synthetic Scout Receptacle Plate\n"
+            "2 24 -6 0 -40 6 4 40\n"
+            f"1 16 0 0 0 {_FLIP_Y} stud4.dat\n"
+        ),
+        "parts/scouttile.dat": (
+            "0 Synthetic Scout Tile Without Receptacle\n2 24 -6 0 -40 6 4 40\n"
+        ),
     }
     for name, text in files.items():
         target = root / name
@@ -103,6 +167,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "blank.dat Blank Tile\n"
         "clipper.dat Minifig Clip\n"
         "inline.dat Bar with Inline Metadata\n"
+        "emptyclear.dat Explicitly Connector-Free Part\n"
+        "wrappedinline.dat Inline Metadata Referenced Twice\n"
+        "scaledinline.dat Inline Metadata Under Invalid Inheritance Scale\n"
         "beam.dat Technic Brick with Pin Hole\n"
         "nbeam.dat Technic Brick with Negative Pin Hole\n"
         "pin.dat Technic Pin\n"
@@ -113,7 +180,10 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "hingepair.dat Hinge Click Dual Finger Pair\n"
         "rim.dat Wheel Rim 20 x 30\n"
         "tyre.dat Tyre 20 x 30\n"
-        "wheelc01.dat Wheel Rim 20 x 30 with Tyre 20 x 30\n",
+        "wheelc01.dat Wheel Rim 20 x 30 with Tyre 20 x 30\n"
+        "3035.dat Synthetic Scout Upper Plate\n"
+        "3958.dat Synthetic Scout Receptacle Plate\n"
+        "scouttile.dat Synthetic Scout Tile Without Receptacle\n",
         encoding="utf-8",
     )
     (root / "p.lst").write_text(
@@ -123,7 +193,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "connect2.dat Technic Pin\n"
         "axlehol8.dat Technic Axle Hole End\n"
         "clh4.dat Click Lock Hinge Half Dual Finger\n"
-        "clh1.dat Click Lock Hinge Single Finger for Bricks\n",
+        "clh1.dat Click Lock Hinge Single Finger for Bricks\n"
+        "stud.dat Stud\n"
+        "stud4.dat Stud Tube Open\n",
         encoding="utf-8",
     )
     return Parts(root / "parts.lst")
@@ -141,6 +213,8 @@ def test_infers_bar_clip_pin_hole_axle_and_hinge_semantics(tmp_path: Path) -> No
     assert connections_compatible(bar, clip)
     assert bar.source is ConnectionSource.HEURISTIC
     assert clip.source is ConnectionSource.PRIMITIVE
+    assert bar.connection_provenance is not None
+    assert clip.connection_provenance is not None
     assert clip.freedoms == {
         ConnectionFreedom.ROTATE,
         ConnectionFreedom.SLIDE,
@@ -148,7 +222,7 @@ def test_infers_bar_clip_pin_hole_axle_and_hinge_semantics(tmp_path: Path) -> No
 
     hole = _one(parts, "beam", ConnectionKind.PIN_HOLE)
     pin = _one(parts, "pin", ConnectionKind.PIN)
-    assert hole.feature_id == "peghole:through"
+    assert hole.feature_id == "peghole@R0/peghole:through"
     assert hole.position == Vector(0, 10, 0)
     assert hole.length == pytest.approx(20)
     assert connections_compatible(pin, hole)
@@ -203,7 +277,7 @@ def test_infers_bar_clip_pin_hole_axle_and_hinge_semantics(tmp_path: Path) -> No
         if feature.kind is ConnectionKind.HINGE
     )
     assert len(hinge_pair) == 1
-    assert hinge_pair[0].feature_id == "clh4:complete"
+    assert hinge_pair[0].feature_id == "clh4@R0/clh4:complete"
 
 
 def test_derives_tyre_rim_pairs_and_marks_complete_shortcut_occupied(
@@ -290,6 +364,151 @@ def test_inline_ldcad_metadata_is_consumed_without_a_shadow_library(
     assert connections[0].kind is ConnectionKind.BAR
     assert connections[0].source is ConnectionSource.LDCAD_INLINE
 
+    assert parts.connection_metadata("inline").coverage is (
+        ConnectionMetadataCoverage.COMPLETE
+    )
+    assert parts.connection_metadata("bar1").coverage is (
+        ConnectionMetadataCoverage.PARTIAL
+    )
+    assert (
+        parts.connection_metadata("blank").coverage is ConnectionMetadataCoverage.NONE
+    )
+    cleared = parts.connection_metadata("emptyclear")
+    assert cleared.coverage is ConnectionMetadataCoverage.COMPLETE
+    assert cleared.features == ()
+
+
+def test_inherited_metadata_counts_each_document_once_and_rejects_bad_scale(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    inherited = parts.connection_metadata("wrappedinline")
+    assert inherited.coverage is ConnectionMetadataCoverage.COMPLETE
+    assert inherited.source_count == 1
+    assert inherited.recognized_record_count == 2
+    assert len(inherited.features) == 2
+
+    scaled = parts.connection_metadata("scaledinline")
+    assert scaled.coverage is ConnectionMetadataCoverage.PARTIAL
+    assert scaled.source_count == 1
+    assert scaled.recognized_record_count == 2
+    assert scaled.invalid_record_count == 1
+    assert not scaled.features
+    assert scaled.diagnostics[-1].code is DiagnosticCode.CONNECTION_INVALID_TRANSFORM
+
+
+def test_tokenizer_recovers_with_stable_counts_and_repeated_ids() -> None:
+    result = parse_ldcad_commands(
+        "synthetic",
+        (
+            "SNAP_CYL [id=repeat] [gender=M] [secs=R 4 8]",
+            "SNAP_CYL [id=repeat] [gender=M] [secs=R 4 8]",
+            "SNAP_CYL [gender=M] [secs=R 4 8] [grid=C 2 C 2 20 20]",
+            "SNAP_CYL [gender=M] [secs=R nan 8]",
+            "SNAP_CYL [gender=M] [secs=R 4 8] [grid=0 1 20 0]",
+            "SNAP_CYL [gender=M] [secs=R 4 8] [mystery=true]",
+            "SNAP_CYL [gender=M] [gender=F] [secs=R 4 8]",
+            "SNAP_SPH [gender=M]",
+        ),
+    )
+
+    repeated = tuple(
+        feature for feature in result.features if feature.metadata_id == "repeat"
+    )
+    assert [feature.feature_id for feature in repeated] == [
+        "repeat@L1:I0",
+        "repeat@L2:I0",
+    ]
+    assert len(result.features) == 7
+    assert result.recognized_record_count == 4
+    assert result.unsupported_record_count == 2
+    assert result.invalid_record_count == 3
+    assert {diagnostic.code for diagnostic in result.diagnostics} >= {
+        DiagnosticCode.CONNECTION_INVALID_GRID,
+        DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+        DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION,
+        DiagnosticCode.CONNECTION_UNSUPPORTED_RECORD,
+    }
+
+
+def test_studio_metadata_has_documented_precedence_and_excludes_physics(
+    tmp_path: Path,
+) -> None:
+    studio_path = tmp_path / "studio.json"
+    studio_path.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "inline.dat",
+                        "connections": [
+                            {
+                                "id": "inline-bar",
+                                "type": "bar",
+                                "gender": "male",
+                                "position": [1, 2, 3],
+                                "axis": [0, 1, 0],
+                                "radius": 4,
+                                "length": 20,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    parts = _connection_parts(tmp_path)
+    parts.add_studio_metadata(studio_path)
+
+    report = parts.connection_metadata("inline")
+    assert report.coverage is ConnectionMetadataCoverage.COMPLETE
+    assert report.source_count == 2
+    assert report.features[0].source is ConnectionSource.STUDIO
+    assert report.features[0].position == Vector(1, 2, 3)
+    assert report.features[0].metadata_id == "inline-bar"
+    assert report.features[0].connection_provenance is not None
+    conflict = next(
+        diagnostic
+        for diagnostic in report.diagnostics
+        if diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+    )
+    assert str(studio_path) in conflict.message
+    assert "inline.dat" in conflict.message
+
+    excluded_path = tmp_path / "studio-physical.json"
+    excluded_path.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "bar1",
+                        "mass_g": 2.5,
+                        "connections": [
+                            {
+                                "id": "studio-bar",
+                                "type": "bar",
+                                "gender": "male",
+                                "position": [0, 0, 0],
+                                "axis": [0, 1, 0],
+                                "capacity": 2,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    library_result = StudioConnectionLibrary(excluded_path).connections_for("bar1")
+    assert len(library_result.features) == 1
+    assert library_result.unsupported_record_count == 2
+    assert all(
+        diagnostic.code is DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION
+        for diagnostic in library_result.diagnostics
+    )
+
 
 def test_overrides_are_authoritative_and_invalidate_cached_geometry(
     tmp_path: Path,
@@ -312,6 +531,11 @@ def test_overrides_are_authoritative_and_invalidate_cached_geometry(
     assert connections[0].source is ConnectionSource.OVERRIDE
     assert connections[0].owner_code == "bar1"
     assert connections[0].position == Vector(1, 2, 3)
+    assert connections[0].connection_provenance is not None
+    assert connections[0].connection_provenance.source is ConnectionSource.OVERRIDE
+    assert parts.connection_metadata("bar1").coverage is (
+        ConnectionMetadataCoverage.COMPLETE
+    )
 
     parts.clear_connection_overrides("bar1")
     assert _one(parts, "bar1", ConnectionKind.BAR).source is ConnectionSource.HEURISTIC
@@ -331,6 +555,10 @@ def test_world_contacts_and_ranked_snap_candidates(tmp_path: Path) -> None:
         ConnectionKind.CLIP,
     }
     assert contacts[0].residual.distance == pytest.approx(0)
+    assert contacts[0].status is ConnectionStatus.POTENTIAL
+    graphs = aligned_inspection.connection_graphs()
+    assert graphs.confirmed.edges == ()
+    assert len(graphs.optimistic.edges) == 1
 
     separated = parse_model(
         f"1 16 0 0 0 {_IDENTITY} bar1.dat\n1 16 20 30 0 {_IDENTITY} clipper.dat\n",
@@ -408,6 +636,28 @@ def test_snap_transform_never_reflects_mirrored_feature_frames(
     assert snap_transform(mirrored_bar, clip).matrix.det() == pytest.approx(1)
 
 
+def test_snap_transform_rejects_non_orthonormal_feature_frames() -> None:
+    feature = parse_ldcad_commands(
+        "bar1",
+        ["SNAP_CYL [gender=M] [secs=R 4 8]"],
+    ).features[0]
+    invalid_frames = (
+        Matrix([[2, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        Matrix([[1, 0.5, 0], [0, 1, 0], [0, 0, 1]]),
+        Matrix([[0, 0, 0], [0, 1, 0], [0, 0, 1]]),
+    )
+
+    for frame in invalid_frames:
+        with pytest.raises(
+            ValueError, match="moving feature frame must be orthonormal"
+        ):
+            snap_transform(replace(feature, frame=frame), feature)
+        with pytest.raises(
+            ValueError, match="target feature frame must be orthonormal"
+        ):
+            snap_transform(feature, replace(feature, frame=frame))
+
+
 def test_negative_peghole_endpoints_merge_into_through_hole(
     tmp_path: Path,
 ) -> None:
@@ -415,7 +665,7 @@ def test_negative_peghole_endpoints_merge_into_through_hole(
 
     hole = _one(parts, "nbeam", ConnectionKind.PIN_HOLE)
 
-    assert hole.feature_id == "npeghol:through"
+    assert hole.feature_id == "npeghol@R0/npeghol:through"
     assert hole.position == Vector(0, 10, 0)
     assert hole.length == pytest.approx(20)
 
@@ -431,6 +681,17 @@ def test_leading_flexible_section_is_reported_as_invalid() -> None:
     diagnostic = result.diagnostics[0]
     assert diagnostic.code is DiagnosticCode.CONNECTION_METADATA_INVALID
     assert "adjacent rigid section" in diagnostic.message
+
+
+def test_flexible_section_with_flexible_neighbour_is_reported_as_invalid() -> None:
+    result = parse_ldcad_commands(
+        "bar1",
+        ["SNAP_CYL [gender=M] [secs=R 4 8 L_ 4 8 _L 4 8 R 4 8]"],
+    )
+
+    assert result.features == ()
+    assert len(result.diagnostics) == 1
+    assert "adjacent rigid section" in result.diagnostics[0].message
 
 
 def test_inline_include_without_shadow_library_reports_diagnostic() -> None:
@@ -457,6 +718,28 @@ def test_zip_shadow_library_resolves_nested_entries(tmp_path: Path) -> None:
     assert library.connections_for("missing").features == ()
 
 
+def test_one_sided_tyre_rim_compatibility_adapters_are_preserved(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    rim = next(
+        feature
+        for feature in part_connections(_RimOnlyCompatibilityLibrary(parts), "rim")
+        if feature.kind is ConnectionKind.RIM_SEAT
+    )
+    tyre = next(
+        feature
+        for feature in part_connections(_TyreOnlyCompatibilityLibrary(parts), "tyre")
+        if feature.kind is ConnectionKind.TYRE_BEAD
+    )
+
+    assert rim.compatible_parts == ("tyre",)
+    assert tyre.compatible_parts == ("rim",)
+    assert rim.source is ConnectionSource.SHORTCUT
+    assert tyre.source is ConnectionSource.SHORTCUT
+
+
 def test_generic_features_mate_only_within_a_shared_group() -> None:
     left = ConnectionFeature(
         kind=ConnectionKind.GENERIC,
@@ -471,3 +754,76 @@ def test_generic_features_mate_only_within_a_shared_group() -> None:
     assert connections_compatible(left, right)
     assert not connections_compatible(left, replace(right, group="pantograph"))
     assert not connections_compatible(left, replace(right, group=None))
+
+
+def test_scout_fixture_requires_ry90_and_receptacle_evidence(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    models = Path(__file__).parent / "models"
+
+    broken = inspect_model(
+        parse_model((models / "scout-connectivity-broken.ldr").read_text()),
+        parts,
+    )
+    assert broken.connection_contacts() == ()
+    assert broken.stud_contacts() == ()
+
+    corrected = inspect_model(
+        parse_model((models / "scout-connectivity-corrected.ldr").read_text()),
+        parts,
+    )
+    contacts = corrected.connection_contacts()
+    assert len(contacts) == 16
+    assert {
+        occurrence.index: sum(
+            occurrence.index
+            in {contact.first_occurrence.index, contact.second_occurrence.index}
+            for contact in contacts
+        )
+        for occurrence in corrected.occurrences[1:]
+    } == {1: 8, 2: 8}
+    assert len(corrected.stud_contacts()) == 16
+    graphs = corrected.connection_graphs()
+    assert graphs.confirmed.nodes == (0, 1, 2)
+    assert len(graphs.confirmed.edges) == 16
+    assert graphs.optimistic.edges == graphs.confirmed.edges
+
+    tiles = inspect_model(
+        parse_model((models / "scout-overlapping-tiles.ldr").read_text()),
+        parts,
+    )
+    assert tiles.connection_contacts() == ()
+
+
+def test_spatial_hash_matches_exhaustive_contact_oracle(tmp_path: Path) -> None:
+    from ldraw.inspection import _paired_contacts
+
+    parts = _connection_parts(tmp_path)
+    model_path = Path(__file__).parent / "models" / "scout-connectivity-corrected.ldr"
+    inspection = inspect_model(parse_model(model_path.read_text()), parts)
+
+    exhaustive = tuple(
+        contact
+        for first_index, first in enumerate(inspection.occurrences)
+        for second in inspection.occurrences[first_index + 1 :]
+        for contact in _paired_contacts(
+            first,
+            second,
+            tolerance=0.25,
+            angular_tolerance=2.0,
+        )
+    )
+    indexed = inspection.connection_contacts()
+    signature = lambda contact: (  # noqa: E731 - compact test projection
+        contact.first_occurrence.index,
+        contact.second_occurrence.index,
+        contact.first.feature_id,
+        contact.second.feature_id,
+        contact.status,
+        contact.residual,
+    )
+
+    assert tuple(map(signature, indexed)) == tuple(
+        sorted(map(signature, exhaustive), key=lambda value: value[:4]),
+    )

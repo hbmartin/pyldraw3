@@ -10,7 +10,7 @@ are its studs — without the caller reading ``.dat`` files by hand.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
@@ -21,16 +21,24 @@ from ldraw.connection_inference import (
     normalize_connections,
     primitive_connections,
 )
-from ldraw.connection_metadata import parse_ldcad_commands
+from ldraw.connection_metadata import (
+    ShadowConnectionResult,
+    metadata_report,
+    parse_ldcad_text,
+)
+from ldraw.connection_types import ConnectionSource
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
-from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
+from ldraw.lines import Line, OptionalLine, Quadrilateral, Triangle
 from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
-    from ldraw.connection_metadata import ShadowConnectionResult
+    from ldraw.connection_metadata import (
+        ConnectionMetadataReport,
+        LDCadShadowLibrary,
+    )
     from ldraw.connection_types import ConnectionFeature
     from ldraw.part import Part
 
@@ -64,15 +72,23 @@ class _CatalogDescriptionSource(Protocol):
 
 
 @runtime_checkable
-class _TyreRimCompatibilitySource(Protocol):
+class _CompatibleTyresSource(Protocol):
     def compatible_tyres(self, rim_code: str) -> tuple[str, ...]: ...
 
+
+@runtime_checkable
+class _CompatibleRimsSource(Protocol):
     def compatible_rims(self, tyre_code: str) -> tuple[str, ...]: ...
 
 
 @runtime_checkable
-class _ConnectionShadowSource(Protocol):
-    def _shadow_connections_for(self, code: str) -> ShadowConnectionResult: ...
+class _ConnectionMetadataSource(Protocol):
+    def _connection_shadows_for_inline(self) -> tuple[LDCadShadowLibrary, ...]: ...
+
+    def _connection_metadata_for(
+        self,
+        code: str,
+    ) -> tuple[ShadowConnectionResult, ...]: ...
 
 
 @runtime_checkable
@@ -93,6 +109,10 @@ class _LocalGeometry:
     studs: tuple[StudReference, ...]
     connections: tuple[ConnectionFeature, ...]
     diagnostics: tuple[Diagnostic, ...] = ()
+    connection_metadata: ConnectionMetadataReport | None = None
+    metadata_result: ShadowConnectionResult = field(
+        default_factory=ShadowConnectionResult,
+    )
 
 
 _caches: WeakKeyDictionary[_PartGeometryLibrary, dict[str, _LocalGeometry | None]] = (
@@ -131,6 +151,7 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
         studs=local.studs,
         connections=local.connections,
         diagnostics=local.diagnostics,
+        connection_metadata=local.connection_metadata,
     )
 
 
@@ -188,40 +209,94 @@ def _local_geometry(
 ) -> _LocalGeometry | None:
     key = _local_key(code)
     if key in visiting:
-        error_message = f"subfile reference cycle at {code!r}"
-        logger.warning("%s; skipping", error_message)
+        return _reference_cycle_geometry(code)
+    cache = _cache_for(parts)
+    if key in cache:
+        return cache[key]
+
+    source = _load_geometry_source(parts, code)
+    if isinstance(source, _LocalGeometry):
+        cache[key] = source
+        return source
+    part, objects = source
+    box, points, studs, connections, diagnostics, inherited_metadata = _fold_objects(
+        parts,
+        code=code,
+        description=part.description,
+        objects=objects,
+        visiting=visiting | {key},
+    )
+    connections, connection_report, metadata_result = _resolve_connections(
+        parts,
+        code=code,
+        description=part.description,
+        path=part.path,
+        box=box,
+        connections=connections,
+        diagnostics=diagnostics,
+        inherited_metadata=inherited_metadata,
+    )
+    local = _LocalGeometry(
+        description=part.description,
+        box=box.box(),
+        points=tuple(points),
+        studs=tuple(studs),
+        connections=tuple(connections),
+        diagnostics=tuple(diagnostics),
+        connection_metadata=connection_report,
+        metadata_result=metadata_result,
+    )
+    cache[key] = local
+    return local
+
+
+def _reference_cycle_geometry(code: str) -> _LocalGeometry:
+    error_message = f"subfile reference cycle at {code!r}"
+    logger.warning("%s; skipping", error_message)
+    return _LocalGeometry(
+        description=code,
+        box=None,
+        points=(),
+        studs=(),
+        connections=(),
+        connection_metadata=metadata_report(
+            code,
+            features=(),
+            result=ShadowConnectionResult(),
+        ),
+        diagnostics=(
+            Diagnostic(
+                message=error_message,
+                severity=Severity.WARNING,
+                code=DiagnosticCode.PART_REFERENCE_CYCLE,
+                offending_value=code,
+            ),
+        ),
+    )
+
+
+def _load_geometry_source(
+    parts: _PartGeometryLibrary,
+    code: str,
+) -> tuple[Part, list[object]] | _LocalGeometry:
+    part: Part | None = None
+    try:
+        part = parts.part(code=code)
+        return part, list(part.objects)
+    except (OSError, PartError, UnicodeError) as error:
+        message = error.message if isinstance(error, PartError) else str(error)
+        logger.warning("skipping unresolvable subfile %r: %s", code, message)
         return _LocalGeometry(
             description=code,
             box=None,
             points=(),
             studs=(),
             connections=(),
-            diagnostics=(
-                Diagnostic(
-                    message=error_message,
-                    severity=Severity.WARNING,
-                    code=DiagnosticCode.PART_REFERENCE_CYCLE,
-                    offending_value=code,
-                ),
+            connection_metadata=metadata_report(
+                code,
+                features=(),
+                result=ShadowConnectionResult(),
             ),
-        )
-    cache = _cache_for(parts)
-    if key in cache:
-        return cache[key]
-
-    part: Part | None = None
-    try:
-        part = parts.part(code=code)
-        objects = list(part.objects)
-    except (OSError, PartError, UnicodeError) as error:
-        message = error.message if isinstance(error, PartError) else str(error)
-        logger.warning("skipping unresolvable subfile %r: %s", code, message)
-        local = _LocalGeometry(
-            description=code,
-            box=None,
-            points=(),
-            studs=(),
-            connections=(),
             diagnostics=(
                 Diagnostic(
                     line_number=(
@@ -242,14 +317,30 @@ def _local_geometry(
                 ),
             ),
         )
-        cache[key] = local
-        return local
 
+
+def _fold_objects(
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    description: str,
+    objects: list[object],
+    visiting: frozenset[str],
+) -> tuple[
+    _BoxAccumulator,
+    list[Vector],
+    list[StudReference],
+    list[ConnectionFeature],
+    list[Diagnostic],
+    ShadowConnectionResult,
+]:
     box = _BoxAccumulator()
     points: list[Vector] = []
     studs: list[StudReference] = []
     connections: list[ConnectionFeature] = []
     diagnostics: list[Diagnostic] = []
+    metadata_results: list[ShadowConnectionResult] = []
+    piece_instance = 0
     for obj in objects:
         match obj:
             case Line() | Triangle() | Quadrilateral():
@@ -271,60 +362,103 @@ def _local_geometry(
                     studs=studs,
                     connections=connections,
                     diagnostics=diagnostics,
-                    visiting=visiting | {key},
+                    visiting=visiting,
                     parent_code=code,
-                    parent_description=part.description,
+                    parent_description=description,
+                    traversal_marker=(f"{_local_key(obj.part)}@R{piece_instance}"),
+                    metadata_results=metadata_results,
                 )
+                piece_instance += 1
+    return (
+        box,
+        points,
+        studs,
+        connections,
+        diagnostics,
+        _metadata_statistics(metadata_results),
+    )
 
+
+def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
+    parts: _PartGeometryLibrary,
+    *,
+    code: str,
+    description: str,
+    path: Path,
+    box: _BoxAccumulator,
+    connections: list[ConnectionFeature],
+    diagnostics: list[Diagnostic],
+    inherited_metadata: ShadowConnectionResult,
+) -> tuple[
+    list[ConnectionFeature],
+    ConnectionMetadataReport,
+    ShadowConnectionResult,
+]:
     connections = list(normalize_connections(connections))
     catalog_part = _is_catalog_part(parts, code)
     connections = _infer_catalog_connections(
         parts,
         code=code,
-        description=part.description,
+        description=description,
         bounds=box.box(),
         connections=connections,
     )
-    inline_result = parse_ldcad_commands(
+    inline_result = parse_ldcad_text(
         code,
-        (
-            obj.text
-            for obj in objects
-            if isinstance(obj, MetaCommand) and obj.type.casefold() == "ldcad"
+        path.read_text(encoding="utf-8-sig"),
+        source=path,
+        connection_shadows=(
+            parts._connection_shadows_for_inline()  # noqa: SLF001
+            if isinstance(parts, _ConnectionMetadataSource)
+            else ()
         ),
-        source=part.path,
     )
-    connections = _apply_connection_metadata_result(
+    metadata_results = [inherited_metadata, inline_result]
+    connections, conflict_diagnostics = _apply_connection_metadata_result(
         connections=connections,
         result=inline_result,
     )
-    diagnostics.extend(inline_result.diagnostics)
-    connections, shadow_diagnostics = _apply_shadow_connections(
-        parts,
-        code=code,
-        connections=connections,
+    metadata_diagnostics = [*inline_result.diagnostics, *conflict_diagnostics]
+    report_extra_diagnostics = [*conflict_diagnostics]
+    if isinstance(parts, _ConnectionMetadataSource):
+        for contribution in parts._connection_metadata_for(code):  # noqa: SLF001
+            connections, conflicts = _apply_connection_metadata_result(
+                connections=connections,
+                result=contribution,
+            )
+            metadata_results.append(contribution)
+            metadata_diagnostics.extend((*contribution.diagnostics, *conflicts))
+            report_extra_diagnostics.extend(conflicts)
+    connections, override_diagnostics, has_authoritative_override = (
+        _apply_connection_overrides(
+            parts,
+            code=code,
+            connections=connections,
+        )
     )
-    diagnostics.extend(shadow_diagnostics)
-    connections = _apply_connection_overrides(
-        parts,
-        code=code,
-        connections=connections,
-    )
-    if catalog_part and " with tyre " in part.description.casefold():
+    metadata_diagnostics.extend(override_diagnostics)
+    report_extra_diagnostics.extend(override_diagnostics)
+    if catalog_part and " with tyre " in description.casefold():
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
         )
-
-    local = _LocalGeometry(
-        description=part.description,
-        box=box.box(),
-        points=tuple(points),
-        studs=tuple(studs),
-        connections=tuple(connections),
-        diagnostics=tuple(diagnostics),
+    connections = _stable_feature_ids(connections)
+    diagnostics.extend(metadata_diagnostics)
+    statistics = _metadata_statistics(metadata_results)
+    report_result = replace(
+        statistics,
+        diagnostics=(*statistics.diagnostics, *report_extra_diagnostics),
     )
-    cache[key] = local
-    return local
+    return (
+        connections,
+        metadata_report(
+            code,
+            features=connections,
+            result=report_result,
+            authoritative=has_authoritative_override,
+        ),
+        report_result,
+    )
 
 
 def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
@@ -339,11 +473,14 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     visiting: frozenset[str],
     parent_code: str,
     parent_description: str,
+    traversal_marker: str,
+    metadata_results: list[ShadowConnectionResult],
 ) -> None:
     local = _local_geometry(parts, piece.part, visiting)
     if local is None:
         return
     diagnostics.extend(local.diagnostics)
+    metadata_results.append(local.metadata_result)
     for point in local.points:
         transformed = piece.position + piece.matrix * point
         box.add(transformed)
@@ -358,16 +495,41 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         position=piece.position,
         matrix=piece.matrix,
     )
-    connections.extend(inferred)
     connections.extend(
-        _transformed_child_connection(
+        replace(
+            feature,
+            feature_id=f"{traversal_marker}/{feature.feature_id or stem}",
+        )
+        for feature in inferred
+    )
+    invalid_records: dict[tuple[str, int | None], Diagnostic] = {}
+    for feature in local.connections:
+        diagnostic_count = len(diagnostics)
+        transformed = _transformed_child_connection(
             parts,
             feature=feature,
             piece=piece,
             parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
         )
-        for feature in local.connections
-    )
+        if transformed is not None:
+            connections.append(transformed)
+            continue
+        provenance = feature.connection_provenance
+        key = (
+            _connection_origin(feature),
+            provenance.line_number if provenance is not None else None,
+        )
+        if len(diagnostics) > diagnostic_count:
+            invalid_records.setdefault(key, diagnostics[-1])
+    if invalid_records:
+        metadata_results.append(
+            ShadowConnectionResult(
+                invalid_record_count=len(invalid_records),
+                diagnostics=tuple(invalid_records.values()),
+            ),
+        )
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -389,14 +551,51 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     )
 
 
-def _transformed_child_connection(
+def _transformed_child_connection(  # noqa: PLR0913 - transform context is explicit
     parts: _PartGeometryLibrary,
     *,
     feature: ConnectionFeature,
     piece: Piece,
     parent_code: str,
-) -> ConnectionFeature:
+    traversal_marker: str,
+    diagnostics: list[Diagnostic],
+) -> ConnectionFeature | None:
     transformed = feature.transformed(position=piece.position, matrix=piece.matrix)
+    if (
+        feature.confidence > 0
+        and transformed.confidence <= 0
+        and feature.source
+        in {
+            ConnectionSource.LDCAD_INLINE,
+            ConnectionSource.LDCAD_SHADOW,
+            ConnectionSource.STUDIO,
+        }
+    ):
+        provenance = feature.connection_provenance
+        diagnostics.append(
+            Diagnostic(
+                message=(
+                    f"connection feature {feature.feature_id!r} from "
+                    f"{_connection_origin(feature)} rejected under invalid "
+                    "scale or reflection"
+                ),
+                severity=Severity.WARNING,
+                code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+                path=provenance.path if provenance is not None else None,
+                line_number=(
+                    provenance.line_number if provenance is not None else None
+                ),
+                offending_value=feature.feature_id,
+            ),
+        )
+        return None
+    transformed = replace(
+        transformed,
+        feature_id=(
+            f"{traversal_marker}/"
+            f"{feature.feature_id or feature.metadata_id or feature.kind.value}"
+        ),
+    )
     return (
         transformed
         if _is_catalog_part(parts, piece.part)
@@ -409,12 +608,16 @@ def _compatible_parts(
     code: str,
     description: str,
 ) -> tuple[str, ...]:
-    if not isinstance(parts, _TyreRimCompatibilitySource):
-        return ()
     normalized = description.strip(" ~=_|-").casefold()
-    if normalized.startswith("wheel rim "):
+    if normalized.startswith("wheel rim ") and isinstance(
+        parts,
+        _CompatibleTyresSource,
+    ):
         return tuple(parts.compatible_tyres(code))
-    if normalized.startswith("tyre "):
+    if normalized.startswith("tyre ") and isinstance(
+        parts,
+        _CompatibleRimsSource,
+    ):
         return tuple(parts.compatible_rims(code))
     return ()
 
@@ -446,36 +649,74 @@ def _is_catalog_part(parts: _PartGeometryLibrary, code: str) -> bool:
     return parts.description_for(code) is not None
 
 
-def _apply_shadow_connections(
-    parts: _PartGeometryLibrary,
-    *,
-    code: str,
-    connections: list[ConnectionFeature],
-) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...]]:
-    if not isinstance(parts, _ConnectionShadowSource):
-        return connections, ()
-    result = parts._shadow_connections_for(code)  # noqa: SLF001 - protocol member
-    connections = _apply_connection_metadata_result(
-        connections=connections,
-        result=result,
-    )
-    return connections, result.diagnostics
-
-
 def _apply_connection_metadata_result(
     *,
     connections: list[ConnectionFeature],
     result: ShadowConnectionResult,
-) -> list[ConnectionFeature]:
+) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...]]:
+    diagnostics: list[Diagnostic] = []
     if result.clear_all:
         connections.clear()
     elif result.clear_ids:
-        cleared = set(result.clear_ids)
+        cleared = {identifier.casefold() for identifier in result.clear_ids}
         connections = [
-            feature for feature in connections if feature.feature_id not in cleared
+            feature
+            for feature in connections
+            if (feature.metadata_id or "").casefold() not in cleared
         ]
-    connections.extend(result.features)
-    return list(normalize_connections(connections))
+    for feature in result.features:
+        replacement = next(
+            (
+                index
+                for index, previous in enumerate(connections)
+                if feature.feature_id is not None
+                and previous.feature_id == feature.feature_id
+            ),
+            None,
+        )
+        if replacement is None:
+            connections.append(feature)
+            continue
+        previous = connections[replacement]
+        connections[replacement] = feature
+        diagnostics.append(_feature_conflict(previous, feature))
+    return list(normalize_connections(connections)), tuple(diagnostics)
+
+
+def _metadata_statistics(
+    results: list[ShadowConnectionResult],
+) -> ShadowConnectionResult:
+    """Aggregate metadata evidence once per canonical source document."""
+    seen_documents: set[str] = set()
+    diagnostics: list[Diagnostic] = []
+    source_count = 0
+    recognized_record_count = 0
+    unsupported_record_count = 0
+    invalid_record_count = 0
+    for result in results:
+        documents = tuple(dict.fromkeys(result.document_ids))
+        if documents:
+            new_documents = tuple(
+                document for document in documents if document not in seen_documents
+            )
+            if not new_documents:
+                continue
+            seen_documents.update(new_documents)
+            source_count += len(new_documents)
+        else:
+            source_count += result.source_count
+        diagnostics.extend(result.diagnostics)
+        recognized_record_count += result.recognized_record_count
+        unsupported_record_count += result.unsupported_record_count
+        invalid_record_count += result.invalid_record_count
+    return ShadowConnectionResult(
+        diagnostics=tuple(diagnostics),
+        source_count=source_count,
+        recognized_record_count=recognized_record_count,
+        unsupported_record_count=unsupported_record_count,
+        invalid_record_count=invalid_record_count,
+        document_ids=tuple(sorted(seen_documents)),
+    )
 
 
 def _apply_connection_overrides(
@@ -483,12 +724,76 @@ def _apply_connection_overrides(
     *,
     code: str,
     connections: list[ConnectionFeature],
-) -> list[ConnectionFeature]:
+) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...], bool]:
     if not isinstance(parts, _ConnectionOverrideSource):
-        return connections
+        return connections, (), False
     features, replace_existing = parts._connection_overrides_for(code)  # noqa: SLF001
-    values = list(features) if replace_existing else [*connections, *features]
-    return list(normalize_connections(values))
+    if replace_existing:
+        connections = []
+    resolved, diagnostics = _apply_connection_metadata_result(
+        connections=connections,
+        result=ShadowConnectionResult(features=features),
+    )
+    return resolved, diagnostics, bool(features or replace_existing)
+
+
+def _stable_feature_ids(
+    features: list[ConnectionFeature],
+) -> list[ConnectionFeature]:
+    bases = [
+        feature.feature_id or f"{feature.source.value}:{feature.kind.value}"
+        for feature in features
+    ]
+    totals = {base: bases.count(base) for base in dict.fromkeys(bases)}
+    seen: dict[str, int] = {}
+    values: list[ConnectionFeature] = []
+    for feature, base in zip(features, bases, strict=True):
+        instance = seen.get(base, 0)
+        seen[base] = instance + 1
+        identifier = base if totals[base] == 1 else f"{base}@I{instance}"
+        values.append(replace(feature, feature_id=identifier))
+    return values
+
+
+def _feature_conflict(
+    losing: ConnectionFeature,
+    winning: ConnectionFeature,
+) -> Diagnostic:
+    return Diagnostic(
+        message=(
+            f"connection feature {winning.feature_id!r} from "
+            f"{_connection_origin(winning)} overrides {_connection_origin(losing)}"
+        ),
+        severity=Severity.WARNING,
+        code=DiagnosticCode.CONNECTION_FEATURE_CONFLICT,
+        path=(
+            winning.connection_provenance.path
+            if winning.connection_provenance is not None
+            else None
+        ),
+        line_number=(
+            winning.connection_provenance.line_number
+            if winning.connection_provenance is not None
+            else None
+        ),
+        offending_value=winning.feature_id,
+    )
+
+
+def _connection_origin(feature: ConnectionFeature) -> str:
+    provenance = feature.connection_provenance
+    if provenance is None:
+        return ", ".join(feature.provenance) or feature.source.value
+    location = provenance.archive_member or (
+        str(provenance.path)
+        if provenance.path is not None
+        else provenance.command or provenance.source.value
+    )
+    if provenance.line_number is not None:
+        location = f"{location}:{provenance.line_number}"
+    if provenance.include_chain:
+        location = f"{location} via {' > '.join(provenance.include_chain)}"
+    return location
 
 
 class _BoxAccumulator:

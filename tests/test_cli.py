@@ -860,6 +860,16 @@ def test_parts_geometry_reports_modern_table_and_json(
     assert payload["point_count"] > 0
     assert payload["connection_count"] == len(payload["connections"])
     assert any(connection["kind"] == "stud" for connection in payload["connections"])
+    stud = next(
+        connection
+        for connection in payload["connections"]
+        if connection["kind"] == "stud"
+    )
+    assert stud["feature_id"]
+    assert stud["profile"]["type"] == "cylindrical"
+    assert stud["profile"]["caps"] == "none"
+    assert stud["source"] == "primitive"
+    assert payload["connection_metadata"]["coverage"] == "partial"
     assert payload["bounds"]["min"] == [-40.0, 0.0, -20.0]
     assert payload["top_stud_count"] == 8
     assert payload["receptacle_count"] >= 0
@@ -906,14 +916,42 @@ def test_parts_geometry_returns_report_for_incomplete_geometry(
 
 
 def test_build_parser_geometry_inspect_and_render_defaults() -> None:
-    geometry = build_parser().parse_args(["parts", "geometry", "3001", "--format=json"])
+    geometry = build_parser().parse_args(
+        [
+            "parts",
+            "geometry",
+            "3001",
+            "--format=json",
+            "--ldcad-shadow",
+            "first.csl",
+            "--ldcad-shadow",
+            "second.zip",
+            "--studio-metadata",
+            "studio.json",
+        ],
+    )
     assert geometry.parts_command == "geometry"
     assert geometry.format == "json"
+    assert geometry.ldcad_shadow == [Path("first.csl"), Path("second.zip")]
+    assert geometry.studio_metadata == [Path("studio.json")]
 
-    inspection = build_parser().parse_args(["inspect", "model.mpd"])
+    inspection = build_parser().parse_args(
+        [
+            "inspect",
+            "model.mpd",
+            "--ldcad-shadow",
+            "shadow",
+            "--studio-metadata",
+            "one.json",
+            "--studio-metadata",
+            "two.json",
+        ],
+    )
     assert inspection.gap_threshold == 5
     assert inspection.chronological is False
     assert inspection.page_marker_prefix == "// PDF_PAGE "
+    assert inspection.ldcad_shadow == [Path("shadow")]
+    assert inspection.studio_metadata == [Path("one.json"), Path("two.json")]
 
     render = build_parser().parse_args(["render", "model.mpd"])
     assert render.view is None
@@ -947,8 +985,15 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert payload["occurrences"][0]["source_page"] == 7
     assert payload["occurrences"][0]["bounds"]["min"] == [-40.0, 0.0, -20.0]
     assert "connection_count" in payload["occurrences"][0]
+    assert payload["occurrences"][0]["connections"]
+    assert payload["occurrences"][0]["connection_metadata"]["coverage"] == "partial"
     assert "connection_contacts" in payload
+    assert set(payload["connection_graphs"]) == {"confirmed", "nodes", "optimistic"}
+    assert payload["connection_graphs"]["nodes"] == [0, 1]
     assert payload["stud_contacts"]
+    assert payload["stud_contacts"][0]["stud_feature"]
+    assert payload["stud_contacts"][0]["receptacle_feature"]
+    assert payload["stud_contacts"][0]["residual"]["penetration"] > 0
     assert {item["code"] for item in payload["diagnostics"]} == {
         "part.reference_unresolved"
     }

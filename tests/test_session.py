@@ -1,5 +1,6 @@
 """Tests for public LDraw session and setup APIs."""
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -418,6 +419,64 @@ def test_prepare_catalog_reports_missing_library_and_empty_capabilities(
         session.load()
     with pytest.raises(ValueError, match="at least one"):
         session.prepare_catalog(capabilities=())
+
+
+def test_prepare_catalog_threads_connection_metadata_sources(tmp_path: Path) -> None:
+    parts_lst = write_minimal_library(tmp_path / "library")
+    shadow = tmp_path / "shadow"
+    shadow_part = shadow / "parts" / "3001.dat"
+    shadow_part.parent.mkdir(parents=True)
+    shadow_part.write_text(
+        "0 !LDCAD SNAP_CLP [id=shadow-clip]\n",
+        encoding="utf-8",
+    )
+    studio = tmp_path / "studio.json"
+    studio.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "3001.dat",
+                        "connections": [
+                            {
+                                "id": "studio-pin",
+                                "type": "pin",
+                                "gender": "M",
+                                "position": [0, 0, 0],
+                                "axis": [0, -1, 0],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    config = Config(
+        ldraw_library_path=str(parts_lst.parents[1]),
+        generated_path=str(tmp_path / "generated"),
+    )
+
+    result = prepare_catalog(
+        config,
+        connection_shadows=(shadow,),
+        studio_metadata=(studio,),
+    )
+    assert result.parts is not None
+    report = result.parts.connection_metadata("3001")
+    assert report.coverage.value == "complete"
+    assert report.source_count == 2
+    assert [feature.feature_id for feature in report.features] == [
+        "shadow-clip",
+        "studio-pin",
+    ]
+
+    direct = LDrawSession(config).prepare_catalog(
+        connection_shadows=(shadow,),
+        studio_metadata=(studio,),
+    )
+    assert direct.parts is not None
+    assert direct.parts.connection_metadata("3001").features == report.features
 
 
 def test_prepare_catalog_generated_only_reports_generation_failure(

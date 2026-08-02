@@ -153,6 +153,10 @@ class Matrix:  # noqa: PLW1641 - mutable, deliberately unhashable like list
         """Return the transposed matrix."""
         return Matrix._from_array(self._array.T.copy())
 
+    def inverse(self) -> Matrix:
+        """Return the inverse transform, raising for a singular matrix."""
+        return Matrix._from_array(np.linalg.inv(self._array))
+
     def det(self) -> float:
         """Return the determinant of the matrix."""
         return float(np.linalg.det(self._array))

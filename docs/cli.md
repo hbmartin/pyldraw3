@@ -90,11 +90,18 @@ marker is `0 // PDF_PAGE NNN`, controlled by `--page-marker-prefix`.
 ```bash
 ldraw parts geometry 3001 --format json
 ldraw inspect model.mpd --chronological --gap-threshold 5 -o inspection.txt
+ldraw inspect model.mpd --ldcad-shadow shadow.csl --studio-metadata studio.json
 ```
 
 When a partial inspection contains error diagnostics the report is still
 written, but the command exits 1. Warnings alone exit 0. Missing or undecodable
 files that cannot produce a model are diagnosed on stderr and also exit 1.
+
+Both `parts geometry` and `inspect` accept repeatable `--ldcad-shadow PATH`
+and `--studio-metadata PATH`. Their JSON reports include metadata coverage,
+stable world-space feature IDs and structured provenance. Model inspection
+also includes contact status/residual evidence and confirmed/optimistic
+parallel graph edges; unresolved occurrences remain graph nodes.
 
 ## Rendering previews
 

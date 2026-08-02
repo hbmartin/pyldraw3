@@ -23,6 +23,7 @@ from ldraw import generate as do_generate
 from ldraw.bom import BomRow, rows_to_csv, rows_to_json
 from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
+from ldraw.connection_metadata import ConnectionMetadataReport
 from ldraw.connection_types import (
     AnnularProfile,
     ConnectionFeature,
@@ -174,6 +175,22 @@ def build_parser() -> ArgumentParser:  # noqa: PLR0915 - CLI options stay explic
         default="table",
         help="Output format (default: table).",
     )
+    geometry_parser.add_argument(
+        "--ldcad-shadow",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="Add an LDCad shadow directory, ZIP, or CSL; repeat as needed.",
+    )
+    geometry_parser.add_argument(
+        "--studio-metadata",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="Add a Studio connectivity JSON source; repeat as needed.",
+    )
 
     validate_parser = subparsers.add_parser(
         "validate",
@@ -253,6 +270,22 @@ def build_parser() -> ArgumentParser:  # noqa: PLR0915 - CLI options stay explic
         type=Path,
         default=None,
         help="Write output to a file instead of stdout.",
+    )
+    model_inspect_parser.add_argument(
+        "--ldcad-shadow",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="Add an LDCad shadow directory, ZIP, or CSL; repeat as needed.",
+    )
+    model_inspect_parser.add_argument(
+        "--studio-metadata",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="Add a Studio connectivity JSON source; repeat as needed.",
     )
 
     render_parser = subparsers.add_parser(
@@ -485,7 +518,12 @@ def _parts_lst_path() -> Path:
     return Path(Config.load().ldraw_library_path) / "ldraw" / "parts.lst"
 
 
-def _try_load_parts(*, build_index: bool = False) -> Parts | None:
+def _try_load_parts(
+    *,
+    build_index: bool = False,
+    connection_shadows: tuple[Path, ...] = (),
+    studio_metadata: tuple[Path, ...] = (),
+) -> Parts | None:
     """Load the configured parts catalog, or None when missing."""
     parts_lst = _parts_lst_path()
     if not parts_lst.exists():
@@ -493,16 +531,32 @@ def _try_load_parts(*, build_index: bool = False) -> Parts | None:
     generated_path = Config.load().generated_path
     if build_index and not catalog_db_path(generated_path).is_file():
         print("Building parts index (first run may take a while)...", file=sys.stderr)
-    return load_parts(parts_lst, generated_path, build_index=build_index)
+    return load_parts(
+        parts_lst,
+        generated_path,
+        build_index=build_index,
+        connection_shadows=connection_shadows,
+        studio_metadata=studio_metadata,
+    )
 
 
-def _load_parts() -> Parts | None:
+def _load_parts(
+    *,
+    connection_shadows: tuple[Path, ...] = (),
+    studio_metadata: tuple[Path, ...] = (),
+) -> Parts | None:
     """Load the configured parts catalog, or None with a hint when missing.
 
     Catalog-querying commands pass through here, so a missing or stale
     index is built and persisted as a side effect.
     """
-    if (parts := _try_load_parts(build_index=True)) is None:
+    if (
+        parts := _try_load_parts(
+            build_index=True,
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    ) is None:
         print(
             f"parts.lst not found at {_parts_lst_path()}; run `ldraw download` first.",
             file=sys.stderr,
@@ -550,9 +604,20 @@ def parts_info_command(*, code: str) -> int:
     return 0
 
 
-def parts_geometry_command(*, code: str, output_format: str) -> int:
+def parts_geometry_command(
+    *,
+    code: str,
+    output_format: str,
+    connection_shadows: tuple[Path, ...] = (),
+    studio_metadata: tuple[Path, ...] = (),
+) -> int:
     """Show expanded geometry and completeness diagnostics for one part."""
-    if (parts := _load_parts()) is None:
+    if (
+        parts := _load_parts(
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    ) is None:
         return 1
     try:
         geometry = parts.geometry(code)
@@ -568,6 +633,9 @@ def parts_geometry_command(*, code: str, output_format: str) -> int:
         "connections": [
             _connection_data(connection) for connection in geometry.connections
         ],
+        "connection_metadata": _connection_metadata_data(
+            geometry.connection_metadata,
+        ),
         "description": geometry.description,
         "diagnostics": [item.to_dict() for item in geometry.diagnostics],
         "point_count": len(geometry.points),
@@ -619,12 +687,19 @@ def inspect_command(  # noqa: PLR0913 - mirrors explicit CLI controls
     chronological: bool,
     page_marker_prefix: str,
     out: Path | None,
+    connection_shadows: tuple[Path, ...] = (),
+    studio_metadata: tuple[Path, ...] = (),
 ) -> int:
     """Inspect exact occurrence geometry, provenance, contacts, and gaps."""
     if gap_threshold < 0:
         print("--gap-threshold must be non-negative", file=sys.stderr)
         return 1
-    if (parts := _load_parts()) is None:
+    if (
+        parts := _load_parts(
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    ) is None:
         return 1
 
     loaded = load_model(file, parts=parts)
@@ -724,6 +799,7 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
     gap_threshold: float,
     chronological: bool,
 ) -> dict[str, object]:
+    graphs = inspection.connection_graphs()
     return {
         "bounds": _box_data(inspection.bounds),
         "chronological": chronological,
@@ -732,6 +808,11 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
             _connection_contact_data(contact)
             for contact in inspection.connection_contacts()
         ],
+        "connection_graphs": {
+            "confirmed": [_graph_edge_data(edge) for edge in graphs.confirmed.edges],
+            "nodes": list(graphs.optimistic.nodes),
+            "optimistic": [_graph_edge_data(edge) for edge in graphs.optimistic.edges],
+        },
         "diagnostics": [item.to_dict() for item in diagnostics],
         "disconnected": [
             {
@@ -763,6 +844,12 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
                     else item.occurrence.colour.rgb
                 ),
                 "connection_count": len(item.connections),
+                "connections": [
+                    _connection_data(connection) for connection in item.connections
+                ],
+                "connection_metadata": _connection_metadata_data(
+                    item.local.connection_metadata,
+                ),
                 "effective_step_path": list(item.attribution.effective_step_path),
                 "index": item.index,
                 "installation_page": item.attribution.installation_page,
@@ -889,6 +976,19 @@ def _stud_contact_data(contact: StudContact) -> dict[str, object]:
         "stud_part": contact.stud_occurrence.occurrence.part_code,
         "supported_index": contact.supported_occurrence.index,
         "supported_part": contact.supported_occurrence.occurrence.part_code,
+        "stud_feature": (
+            contact.stud_feature.feature_id
+            if contact.stud_feature is not None
+            else None
+        ),
+        "receptacle_feature": (
+            contact.receptacle_feature.feature_id
+            if contact.receptacle_feature is not None
+            else None
+        ),
+        "residual": (
+            _residual_data(contact.residual) if contact.residual is not None else None
+        ),
     }
 
 
@@ -900,12 +1000,8 @@ def _connection_contact_data(contact: ConnectionContact) -> dict[str, object]:
         "second_feature": contact.second.feature_id,
         "second_index": contact.second_occurrence.index,
         "second_kind": contact.second.kind.value,
-        "residual": {
-            "alignment": contact.residual.alignment,
-            "axial_gap": contact.residual.axial_gap,
-            "distance": contact.residual.distance,
-            "roll_alignment": contact.residual.roll_alignment,
-        },
+        "status": contact.status.value,
+        "residual": _residual_data(contact.residual),
     }
 
 
@@ -915,6 +1011,9 @@ def _connection_data(connection: ConnectionFeature) -> dict[str, object]:
         "compatible_parts": list(connection.compatible_parts),
         "confidence": connection.confidence,
         "feature_id": connection.feature_id,
+        "frame": list(connection.frame.flatten()),
+        "metadata_id": connection.metadata_id,
+        "mirror_inheritance": connection.mirror_inheritance,
         "freedoms": sorted(freedom.value for freedom in connection.freedoms),
         "group": connection.group,
         "kind": connection.kind.value,
@@ -926,8 +1025,27 @@ def _connection_data(connection: ConnectionFeature) -> dict[str, object]:
         "position": _vector_data(connection.position),
         "profile": _connection_profile_data(connection),
         "provenance": list(connection.provenance),
+        "connection_provenance": (
+            {
+                "archive_member": connection.connection_provenance.archive_member,
+                "command": connection.connection_provenance.command,
+                "include_chain": list(
+                    connection.connection_provenance.include_chain,
+                ),
+                "line_number": connection.connection_provenance.line_number,
+                "path": (
+                    str(connection.connection_provenance.path)
+                    if connection.connection_provenance.path is not None
+                    else None
+                ),
+                "source": connection.connection_provenance.source.value,
+            }
+            if connection.connection_provenance is not None
+            else None
+        ),
         "radial": _vector_data(connection.radial),
         "role": connection.role.value,
+        "scale_inheritance": connection.scale_inheritance,
         "source": connection.source.value,
     }
 
@@ -937,6 +1055,7 @@ def _connection_profile_data(connection: ConnectionFeature) -> dict[str, object]
         case CylindricalProfile() as profile:
             return {
                 "centered": profile.centered,
+                "caps": profile.caps.value,
                 "friction": profile.friction,
                 "sections": [
                     {
@@ -953,6 +1072,7 @@ def _connection_profile_data(connection: ConnectionFeature) -> dict[str, object]
             return {
                 "detents": list(profile.detents),
                 "first_role": profile.first_role.value,
+                "centered": profile.centered,
                 "radius": profile.radius,
                 "sequence": list(profile.sequence),
                 "type": "finger",
@@ -966,10 +1086,68 @@ def _connection_profile_data(connection: ConnectionFeature) -> dict[str, object]
             }
         case GenericProfile() as profile:
             return {
+                "bounds": (
+                    {
+                        "dimensions": list(profile.bounds.dimensions),
+                        "kind": profile.bounds.kind.value,
+                    }
+                    if profile.bounds is not None
+                    else None
+                ),
                 "length": profile.length,
+                "match": profile.match.value,
                 "name": profile.name,
+                "placement": profile.placement.value,
                 "type": "generic",
             }
+
+
+def _connection_metadata_data(
+    report: ConnectionMetadataReport | None,
+) -> dict[str, object] | None:
+    if report is None:
+        return None
+    return {
+        "coverage": report.coverage.value,
+        "diagnostics": [diagnostic.to_dict() for diagnostic in report.diagnostics],
+        "invalid_record_count": report.invalid_record_count,
+        "part_code": report.part_code,
+        "recognized_record_count": report.recognized_record_count,
+        "source_count": report.source_count,
+        "unsupported_record_count": report.unsupported_record_count,
+    }
+
+
+def _residual_data(residual: object) -> dict[str, object]:
+    from ldraw.connection_types import ConnectionResidual  # noqa: PLC0415
+
+    if not isinstance(residual, ConnectionResidual):  # pragma: no cover - typed callers
+        message = "expected a ConnectionResidual"
+        raise TypeError(message)
+    return {
+        "alignment": residual.alignment,
+        "axial_gap": residual.axial_gap,
+        "distance": residual.distance,
+        "entry_face_gap": residual.entry_face_gap,
+        "penetration": residual.penetration,
+        "roll_alignment": residual.roll_alignment,
+    }
+
+
+def _graph_edge_data(edge: object) -> dict[str, object]:
+    from ldraw.inspection import ConnectionGraphEdge  # noqa: PLC0415
+
+    if not isinstance(edge, ConnectionGraphEdge):  # pragma: no cover - typed callers
+        message = "expected a ConnectionGraphEdge"
+        raise TypeError(message)
+    return {
+        "first": edge.first,
+        "first_feature": edge.first_feature_id,
+        "residual": _residual_data(edge.residual),
+        "second": edge.second,
+        "second_feature": edge.second_feature_id,
+        "status": edge.status.value,
+    }
 
 
 def _box_data(box: BoundingBox | None) -> dict[str, object] | None:
@@ -1565,6 +1743,8 @@ def _dispatch(  # noqa: C901, PLR0911 - one branch per subcommand
                 chronological=args.chronological,
                 page_marker_prefix=args.page_marker_prefix,
                 out=args.output,
+                connection_shadows=tuple(args.ldcad_shadow),
+                studio_metadata=tuple(args.studio_metadata),
             )
         case "render":
             return render_command(
@@ -1596,7 +1776,12 @@ def _dispatch_parts(args: Namespace) -> int:
         case "search":
             return parts_search_command(term=args.term, limit=args.limit)
         case "geometry":
-            return parts_geometry_command(code=args.code, output_format=args.format)
+            return parts_geometry_command(
+                code=args.code,
+                output_format=args.format,
+                connection_shadows=tuple(args.ldcad_shadow),
+                studio_metadata=tuple(args.studio_metadata),
+            )
         case "info":
             return parts_info_command(code=args.code)
         case _:

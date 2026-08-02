@@ -11,6 +11,7 @@ from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionFreedom,
     ConnectionKind,
+    ConnectionProvenance,
     ConnectionRole,
     ConnectionSource,
     CylindricalProfile,
@@ -34,14 +35,6 @@ _PIN_HOLE_RE = re.compile(r"(?:n?peghol\w*|beamhole|connhol\w*|wpinhol\w*)$")
 _PIN_RE = re.compile(r"(?:connect\w*|confric\w*|wpin\w*)$")
 _AXLE_RE = re.compile(r"(?:axle\w*|axl\w*|daxle\w*)$")
 _AXLE_EXCLUDED_RE = re.compile(r".*(?:end|cap|edge)\w*$")
-_SOURCE_PRIORITY = {
-    ConnectionSource.HEURISTIC: 0,
-    ConnectionSource.PRIMITIVE: 1,
-    ConnectionSource.SHORTCUT: 2,
-    ConnectionSource.LDCAD_INLINE: 3,
-    ConnectionSource.LDCAD_SHADOW: 4,
-    ConnectionSource.OVERRIDE: 5,
-}
 _AXIS_VECTORS = (Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1))
 
 
@@ -162,35 +155,13 @@ def infer_part_connections(
 def normalize_connections(
     features: Iterable[ConnectionFeature],
 ) -> tuple[ConnectionFeature, ...]:
-    """Merge through-hole endpoints and remove lower-priority duplicates."""
-    merged = _merge_hole_endpoints(_merge_hinge_halves(tuple(features)))
-    deduplicated: list[ConnectionFeature] = []
-    for feature in merged:
-        duplicate_index = next(
-            (
-                index
-                for index, candidate in enumerate(deduplicated)
-                if _same_interface(feature, candidate)
-            ),
-            None,
-        )
-        if duplicate_index is None:
-            deduplicated.append(feature)
-            continue
-        candidate = deduplicated[duplicate_index]
-        preferred, other = (
-            (feature, candidate)
-            if _SOURCE_PRIORITY[feature.source] > _SOURCE_PRIORITY[candidate.source]
-            else (candidate, feature)
-        )
-        deduplicated[duplicate_index] = replace(
-            preferred,
-            compatible_parts=tuple(
-                dict.fromkeys((*preferred.compatible_parts, *other.compatible_parts)),
-            ),
-            provenance=tuple(dict.fromkeys((*preferred.provenance, *other.provenance))),
-        )
-    return tuple(deduplicated)
+    """Merge structural primitive halves without geometric deduplication.
+
+    Distinct metadata identifiers are intentionally allowed to describe
+    colocated interfaces. Precedence replacement is therefore performed by
+    stable feature identifier in the metadata resolution pipeline.
+    """
+    return _merge_hole_endpoints(_merge_hinge_halves(tuple(features)))
 
 
 def mark_internal_fit_occupied(
@@ -236,6 +207,10 @@ def _stud_feature(
         confidence=0.0 if placeholder else 1.0,
         owner_code=code,
         provenance=(stem,),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.PRIMITIVE,
+            command=stem,
+        ),
     )
 
 
@@ -265,6 +240,10 @@ def _clip_feature(
         confidence=0.8,
         owner_code=code,
         provenance=(stem,),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.PRIMITIVE,
+            command=stem,
+        ),
     )
 
 
@@ -316,6 +295,10 @@ def _hinge_feature(
         confidence=0.75,
         owner_code=code,
         provenance=(stem,),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.PRIMITIVE,
+            command=stem,
+        ),
     )
 
 
@@ -359,6 +342,10 @@ def _round_feature(  # noqa: PLR0913 - semantic feature fields are explicit
         confidence=0.9,
         owner_code=code,
         provenance=(stem,),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.PRIMITIVE,
+            command=stem,
+        ),
     )
 
 
@@ -403,6 +390,10 @@ def _axle_feature(  # noqa: PLR0913 - semantic feature fields are explicit
         confidence=0.85,
         owner_code=code,
         provenance=(stem,),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.PRIMITIVE,
+            command=stem,
+        ),
     )
 
 
@@ -439,6 +430,10 @@ def _slender_bar(
         confidence=0.65,
         owner_code=code,
         provenance=("part bounds and Bar description",),
+        connection_provenance=ConnectionProvenance(
+            source=ConnectionSource.HEURISTIC,
+            command="part bounds and Bar description",
+        ),
     )
 
 
@@ -455,6 +450,10 @@ def _annular_feature(
     radial_sizes = tuple(
         size for index, size in enumerate(sizes) if index != axis_index
     )
+    source = (
+        ConnectionSource.SHORTCUT if compatible_parts else ConnectionSource.HEURISTIC
+    )
+    evidence = "official wheel/tyre shortcut" if compatible_parts else "part bounds"
     return ConnectionFeature(
         kind=kind,
         role=role,
@@ -469,17 +468,15 @@ def _annular_feature(
         else "inferred tyre bead",
         feature_id=kind.value,
         freedoms=frozenset((ConnectionFreedom.ROTATE,)),
-        source=(
-            ConnectionSource.SHORTCUT
-            if compatible_parts
-            else ConnectionSource.HEURISTIC
-        ),
+        source=source,
         confidence=0.9 if compatible_parts else 0.45,
         owner_code=code,
         compatible_parts=compatible_parts,
-        provenance=("official wheel/tyre shortcut",)
-        if compatible_parts
-        else ("part bounds",),
+        provenance=(evidence,),
+        connection_provenance=ConnectionProvenance(
+            source=source,
+            command=evidence,
+        ),
     )
 
 

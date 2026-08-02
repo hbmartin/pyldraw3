@@ -46,7 +46,11 @@ def _inspection_parts(tmp_path: Path) -> Parts:
             f"1 16 4 0 0 {_IDENTITY} studp.dat\n"
             "1 16 6 0 0 1 0 0 0 0 0 0 0 1 studz.dat\n"
         ),
-        "parts/9002.dat": "0 Test Support\n2 24 -5 -1 -5 5 1 5\n",
+        "parts/9002.dat": (
+            "0 Test Support\n"
+            "2 24 -5 -1 -5 5 1 5\n"
+            "1 16 0 0 0 1 0 0 0 -1 0 0 0 -1 stud4.dat\n"
+        ),
         "parts/9003.dat": "0 Empty Part\n0 Name: 9003.dat\n",
         "parts/9004.dat": b"\xff\xfe invalid header",
         "parts/9006.dat": (
@@ -84,7 +88,7 @@ def _inspection_model() -> Model:
         "0 // PDF_PAGE -1\n"
         "0 // PDF_PAGE 1\n"
         f"1 4 0 0 0 {_IDENTITY} 9001.dat\n"
-        f"1 4 0 0 0 {_IDENTITY} 9002.dat\n"
+        f"1 4 0 -1 0 {_IDENTITY} 9002.dat\n"
         "0 // PDF_PAGE 2\n"
         f"1 4 100 0 0 {_IDENTITY} 9002.dat\n"
         f"1 4 0 0 0 {_IDENTITY} 9003.dat\n"
@@ -114,6 +118,9 @@ def test_model_inspection_reports_geometry_contacts_and_provenance(
     assert first.attribution.installation_page == 1
     assert first.attribution.source_page == 1
     assert inspection.skipped_geometry[0].reason.casefold().startswith("part 9003")
+    graphs = inspection.connection_graphs()
+    assert graphs.confirmed.nodes == (0, 1, 2, 3)
+    assert graphs.optimistic.nodes == graphs.confirmed.nodes
 
     geometry = first.local
     assert geometry.complete is True
