@@ -9,6 +9,7 @@ import json
 import re
 import sys
 from argparse import ArgumentParser, Namespace
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -66,6 +67,20 @@ DEFAULT_SEARCH_LIMIT = 25
 DEFAULT_RENDER_SIZE = (800, 600)
 DEFAULT_RENDER_VIEWS = tuple(RenderView)
 _SAFE_RENDER_PREFIX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderPlan:
+    """Validated paths and options for one atomic render operation."""
+
+    source: Path
+    views: tuple[RenderView, ...]
+    dimensions: tuple[int, int]
+    backend: RenderBackend | None
+    destination: Path
+    outputs: tuple[Path, ...]
+    refresh: bool
+    overwrite: bool
 
 
 def build_parser() -> ArgumentParser:  # noqa: PLR0915 - CLI options stay explicit
@@ -648,7 +663,7 @@ def inspect_command(  # noqa: PLR0913 - mirrors explicit CLI controls
     return int(any(item.severity is Severity.ERROR for item in diagnostics))
 
 
-def render_command(  # noqa: PLR0911, PLR0913 - explicit CLI controls
+def render_command(  # noqa: PLR0913 - explicit CLI controls
     *,
     file: Path,
     views: list[RenderView] | None,
@@ -665,70 +680,24 @@ def render_command(  # noqa: PLR0911, PLR0913 - explicit CLI controls
         print(f"{file}: not found", file=sys.stderr)
         return 1
     try:
-        dimensions = _parse_render_size(size)
-    except ValueError as exc:
-        print(f"render failed: {exc}", file=sys.stderr)
-        return 1
-
-    requested_views = tuple(views) if views is not None else DEFAULT_RENDER_VIEWS
-    if len(set(requested_views)) != len(requested_views):
-        print("render failed: render views must be unique", file=sys.stderr)
-        return 1
-    output_prefix = prefix if prefix is not None else source.stem
-    if not _SAFE_RENDER_PREFIX.fullmatch(output_prefix):
-        print(
-            "render failed: render prefix must start with an alphanumeric "
-            "character and contain only alphanumerics, '.', '_', or '-'",
-            file=sys.stderr,
+        plan = _build_render_plan(
+            source=source,
+            views=views,
+            size=size,
+            backend=backend,
+            output_dir=output_dir,
+            prefix=prefix,
+            refresh=refresh,
+            overwrite=overwrite,
         )
-        return 1
-
-    try:
-        destination = (
-            output_dir.expanduser().resolve()
-            if output_dir is not None
-            else source.parent
-        )
-        outputs = tuple(
-            destination / f"{output_prefix}.{view.value}.png"
-            for view in requested_views
-        )
-        conflicts = tuple(output for output in outputs if output.exists())
-        if conflicts and not overwrite:
-            names = ", ".join(str(output) for output in conflicts)
-            print(f"render failed: output already exists: {names}", file=sys.stderr)
-            return 1
-        selected_backend = None if backend == "auto" else RenderBackend(backend)
-        destination.mkdir(parents=True, exist_ok=True)
-        with TemporaryDirectory(prefix=".pyldraw-render-", dir=destination) as tmp:
-            temporary = Path(tmp)
-            staged_results: list[RenderResult] = []
-            for view, output in zip(requested_views, outputs, strict=True):
-                result = render_preview(
-                    source,
-                    view=view,
-                    size=dimensions,
-                    backend=selected_backend,
-                    output=temporary / output.name,
-                    refresh=refresh,
-                )
-                if not result.complete:
-                    _print_diagnostics(result.diagnostics, fallback_path=source)
-                    return 1
-                staged_results.append(result)
-            _promote_render_outputs(
-                tuple(staged_results),
-                outputs=outputs,
-                temporary=temporary,
-                overwrite=overwrite,
-            )
+        staged_results = _execute_render_plan(plan)
     except (OSError, ValueError) as exc:
         print(f"render failed: {exc}", file=sys.stderr)
         return 1
+    if staged_results is None:
+        return 1
 
-    for result, output in zip(staged_results, outputs, strict=True):
-        status = "CACHED" if result.cached else "RENDERED"
-        print(f"{status}: {output}")
+    _report_render_results(results=staged_results, outputs=plan.outputs)
     return 0
 
 
@@ -983,6 +952,100 @@ def _parse_render_size(value: str) -> tuple[int, int]:
         message = "render width and height must be positive"
         raise ValueError(message)
     return width, height
+
+
+def _build_render_plan(  # noqa: PLR0913 - mirrors explicit CLI controls
+    *,
+    source: Path,
+    views: list[RenderView] | None,
+    size: str,
+    backend: str,
+    output_dir: Path | None,
+    prefix: str | None,
+    refresh: bool,
+    overwrite: bool,
+) -> _RenderPlan:
+    """Validate a render request and resolve all output paths up front."""
+    dimensions = _parse_render_size(size)
+    requested_views = tuple(views) if views is not None else DEFAULT_RENDER_VIEWS
+    if len(set(requested_views)) != len(requested_views):
+        message = "render views must be unique"
+        raise ValueError(message)
+
+    output_prefix = prefix if prefix is not None else source.stem
+    if not _SAFE_RENDER_PREFIX.fullmatch(output_prefix):
+        message = (
+            "render prefix must start with an alphanumeric character and contain "
+            "only alphanumerics, '.', '_', or '-'"
+        )
+        raise ValueError(message)
+
+    destination = (
+        output_dir.expanduser().resolve() if output_dir is not None else source.parent
+    )
+    outputs = tuple(
+        destination / f"{output_prefix}.{view.value}.png" for view in requested_views
+    )
+    if conflicts := tuple(output for output in outputs if output.exists()):
+        names = ", ".join(str(output) for output in conflicts)
+        if not overwrite:
+            message = f"output already exists: {names}"
+            raise FileExistsError(message)
+
+    selected_backend = None if backend == "auto" else RenderBackend(backend)
+    return _RenderPlan(
+        source=source,
+        views=requested_views,
+        dimensions=dimensions,
+        backend=selected_backend,
+        destination=destination,
+        outputs=outputs,
+        refresh=refresh,
+        overwrite=overwrite,
+    )
+
+
+def _execute_render_plan(plan: _RenderPlan) -> tuple[RenderResult, ...] | None:
+    """Stage every view and atomically promote the complete render set."""
+    plan.destination.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(
+        prefix=".pyldraw-render-",
+        dir=plan.destination,
+    ) as tmp:
+        temporary = Path(tmp)
+        staged_results: list[RenderResult] = []
+        for view, output in zip(plan.views, plan.outputs, strict=True):
+            result = render_preview(
+                plan.source,
+                view=view,
+                size=plan.dimensions,
+                backend=plan.backend,
+                output=temporary / output.name,
+                refresh=plan.refresh,
+            )
+            if not result.complete:
+                _print_diagnostics(result.diagnostics, fallback_path=plan.source)
+                return None
+            staged_results.append(result)
+        results = tuple(staged_results)
+        _promote_render_outputs(
+            results,
+            outputs=plan.outputs,
+            temporary=temporary,
+            overwrite=plan.overwrite,
+        )
+    return results
+
+
+def _report_render_results(
+    *,
+    results: tuple[RenderResult, ...],
+    outputs: tuple[Path, ...],
+) -> None:
+    """Print the final location and cache status of each rendered view."""
+    for result, output in zip(results, outputs, strict=True):
+        status = "CACHED" if result.cached else "RENDERED"
+        print(f"{status}: {output}")
 
 
 def _promote_render_outputs(
@@ -1374,7 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _dispatch(  # noqa: C901, PLR0911, PLR0912 - one branch per subcommand
+def _dispatch(  # noqa: C901, PLR0911 - one branch per subcommand
     *,
     args: Namespace,
     parser: ArgumentParser,
@@ -1385,12 +1448,8 @@ def _dispatch(  # noqa: C901, PLR0911, PLR0912 - one branch per subcommand
             return download_command(version=args.version, yes=args.yes)
         case "generate":
             return generate_command(yes=args.yes, force=args.force)
-        case "parts" if args.parts_command == "search":
-            return parts_search_command(term=args.term, limit=args.limit)
-        case "parts" if args.parts_command == "geometry":
-            return parts_geometry_command(code=args.code, output_format=args.format)
         case "parts":
-            return parts_info_command(code=args.code)
+            return _dispatch_parts(args)
         case "validate":
             return validate_command(file=args.file, strict=args.strict)
         case "bom":
@@ -1430,6 +1489,20 @@ def _dispatch(  # noqa: C901, PLR0911, PLR0912 - one branch per subcommand
         case _:
             parser.print_help()
             return 0
+
+
+def _dispatch_parts(args: Namespace) -> int:
+    """Dispatch one nested parts subcommand."""
+    match args.parts_command:
+        case "search":
+            return parts_search_command(term=args.term, limit=args.limit)
+        case "geometry":
+            return parts_geometry_command(code=args.code, output_format=args.format)
+        case "info":
+            return parts_info_command(code=args.code)
+        case _:
+            msg = f"Unhandled parts subcommand: {args.parts_command!r}"
+            raise AssertionError(msg)
 
 
 def _dispatch_instructions(args: Namespace) -> int:
