@@ -450,6 +450,8 @@ def snap_transform(
     frame's handedness, so the delta is always a proper rotation and a part
     placed with a mirroring matrix is never reflected.
     """
+    _validate_snap_frame(moving, argument="moving")
+    _validate_snap_frame(target, argument="target")
     moving_left_handed = moving.frame.det() < 0
     target_frame = max(
         (
@@ -463,6 +465,17 @@ def snap_transform(
         position=target.position - rotation * moving.position,
         matrix=rotation,
     )
+
+
+def _validate_snap_frame(
+    feature: ConnectionFeature,
+    *,
+    argument: str,
+) -> None:
+    if feature.frame.is_orthonormal():
+        return
+    message = f"{argument} feature frame must be orthonormal"
+    raise ValueError(message)
 
 
 def _roll_constrained(feature: ConnectionFeature) -> bool:

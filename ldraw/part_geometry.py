@@ -64,9 +64,12 @@ class _CatalogDescriptionSource(Protocol):
 
 
 @runtime_checkable
-class _TyreRimCompatibilitySource(Protocol):
+class _CompatibleTyresSource(Protocol):
     def compatible_tyres(self, rim_code: str) -> tuple[str, ...]: ...
 
+
+@runtime_checkable
+class _CompatibleRimsSource(Protocol):
     def compatible_rims(self, tyre_code: str) -> tuple[str, ...]: ...
 
 
@@ -467,12 +470,16 @@ def _compatible_parts(
     code: str,
     description: str,
 ) -> tuple[str, ...]:
-    if not isinstance(parts, _TyreRimCompatibilitySource):
-        return ()
     normalized = description.strip(" ~=_|-").casefold()
-    if normalized.startswith("wheel rim "):
+    if normalized.startswith("wheel rim ") and isinstance(
+        parts,
+        _CompatibleTyresSource,
+    ):
         return tuple(parts.compatible_tyres(code))
-    if normalized.startswith("tyre "):
+    if normalized.startswith("tyre ") and isinstance(
+        parts,
+        _CompatibleRimsSource,
+    ):
         return tuple(parts.compatible_rims(code))
     return ()
 

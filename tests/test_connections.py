@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import zipfile
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -27,13 +27,38 @@ from ldraw.diagnostics import DiagnosticCode
 from ldraw.geometry import Identity, Matrix, Vector, YAxis
 from ldraw.inspection import inspect_model
 from ldraw.model import parse_model
+from ldraw.part_geometry import part_connections
 from ldraw.parts import Parts
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ldraw.part import Part
+
 _IDENTITY = "1 0 0 0 1 0 0 0 1"
 _FLIP_Y = "1 0 0 0 -1 0 0 0 -1"
+
+
+@dataclass(eq=False)
+class _PartLibraryAdapter:
+    _backing: Parts
+
+    def part(
+        self,
+        description: str | None = None,
+        code: str | None = None,
+    ) -> Part:
+        return self._backing.part(description=description, code=code)
+
+
+class _RimOnlyCompatibilityLibrary(_PartLibraryAdapter):
+    def compatible_tyres(self, rim_code: str) -> tuple[str, ...]:
+        return ("tyre",) if rim_code == "rim" else ()
+
+
+class _TyreOnlyCompatibilityLibrary(_PartLibraryAdapter):
+    def compatible_rims(self, tyre_code: str) -> tuple[str, ...]:
+        return ("rim",) if tyre_code == "tyre" else ()
 
 
 def _connection_parts(tmp_path: Path) -> Parts:
@@ -408,6 +433,28 @@ def test_snap_transform_never_reflects_mirrored_feature_frames(
     assert snap_transform(mirrored_bar, clip).matrix.det() == pytest.approx(1)
 
 
+def test_snap_transform_rejects_non_orthonormal_feature_frames() -> None:
+    feature = parse_ldcad_commands(
+        "bar1",
+        ["SNAP_CYL [gender=M] [secs=R 4 8]"],
+    ).features[0]
+    invalid_frames = (
+        Matrix([[2, 0, 0], [0, 1, 0], [0, 0, 1]]),
+        Matrix([[1, 0.5, 0], [0, 1, 0], [0, 0, 1]]),
+        Matrix([[0, 0, 0], [0, 1, 0], [0, 0, 1]]),
+    )
+
+    for frame in invalid_frames:
+        with pytest.raises(
+            ValueError, match="moving feature frame must be orthonormal"
+        ):
+            snap_transform(replace(feature, frame=frame), feature)
+        with pytest.raises(
+            ValueError, match="target feature frame must be orthonormal"
+        ):
+            snap_transform(feature, replace(feature, frame=frame))
+
+
 def test_negative_peghole_endpoints_merge_into_through_hole(
     tmp_path: Path,
 ) -> None:
@@ -433,6 +480,17 @@ def test_leading_flexible_section_is_reported_as_invalid() -> None:
     assert "adjacent rigid section" in diagnostic.message
 
 
+def test_flexible_section_with_flexible_neighbour_is_reported_as_invalid() -> None:
+    result = parse_ldcad_commands(
+        "bar1",
+        ["SNAP_CYL [gender=M] [secs=R 4 8 L_ 4 8 _L 4 8 R 4 8]"],
+    )
+
+    assert result.features == ()
+    assert len(result.diagnostics) == 1
+    assert "adjacent rigid section" in result.diagnostics[0].message
+
+
 def test_inline_include_without_shadow_library_reports_diagnostic() -> None:
     result = parse_ldcad_commands("bar1", ["SNAP_INCL [ref=common.dat]"])
 
@@ -455,6 +513,28 @@ def test_zip_shadow_library_resolves_nested_entries(tmp_path: Path) -> None:
     assert [feature.feature_id for feature in result.features] == ["main"]
     assert result.features[0].source is ConnectionSource.LDCAD_SHADOW
     assert library.connections_for("missing").features == ()
+
+
+def test_one_sided_tyre_rim_compatibility_adapters_are_preserved(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    rim = next(
+        feature
+        for feature in part_connections(_RimOnlyCompatibilityLibrary(parts), "rim")
+        if feature.kind is ConnectionKind.RIM_SEAT
+    )
+    tyre = next(
+        feature
+        for feature in part_connections(_TyreOnlyCompatibilityLibrary(parts), "tyre")
+        if feature.kind is ConnectionKind.TYRE_BEAD
+    )
+
+    assert rim.compatible_parts == ("tyre",)
+    assert tyre.compatible_parts == ("rim",)
+    assert rim.source is ConnectionSource.SHORTCUT
+    assert tyre.source is ConnectionSource.SHORTCUT
 
 
 def test_generic_features_mate_only_within_a_shared_group() -> None:
