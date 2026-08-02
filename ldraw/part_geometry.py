@@ -20,6 +20,7 @@ from ldraw.connection_inference import (
     mark_internal_fit_occupied,
     normalize_connections,
     primitive_connections,
+    same_interface,
 )
 from ldraw.connection_metadata import (
     ShadowConnectionResult,
@@ -45,6 +46,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ldraw")
 
 _STUD_PREFIX = "stud"
+_INFERRED_SOURCES = frozenset(
+    {
+        ConnectionSource.HEURISTIC,
+        ConnectionSource.PRIMITIVE,
+        ConnectionSource.SHORTCUT,
+    },
+)
+_METADATA_SOURCES = frozenset(
+    {
+        ConnectionSource.LDCAD_INLINE,
+        ConnectionSource.LDCAD_SHADOW,
+        ConnectionSource.STUDIO,
+        ConnectionSource.OVERRIDE,
+    },
+)
 
 __all__ = [
     "BoundingBox",
@@ -438,6 +454,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     )
     metadata_diagnostics.extend(override_diagnostics)
     report_extra_diagnostics.extend(override_diagnostics)
+    connections = _supersede_inferred_interfaces(connections)
     if catalog_part and " with tyre " in description.casefold():
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
@@ -665,12 +682,13 @@ def _apply_connection_metadata_result(
             if (feature.metadata_id or "").casefold() not in cleared
         ]
     for feature in result.features:
+        feature_key = (feature.feature_id or "").casefold()
         replacement = next(
             (
                 index
                 for index, previous in enumerate(connections)
                 if feature.feature_id is not None
-                and previous.feature_id == feature.feature_id
+                and (previous.feature_id or "").casefold() == feature_key
             ),
             None,
         )
@@ -681,6 +699,31 @@ def _apply_connection_metadata_result(
         connections[replacement] = feature
         diagnostics.append(_feature_conflict(previous, feature))
     return list(normalize_connections(connections)), tuple(diagnostics)
+
+
+def _supersede_inferred_interfaces(
+    connections: list[ConnectionFeature],
+) -> list[ConnectionFeature]:
+    """Drop inferred features whose interface authoritative metadata covers.
+
+    Metadata attached to primitives (offLibShadow style) arrives through
+    subfile inheritance rather than part-level overlay, so colocated
+    primitive- and heuristic-derived duplicates are removed here after every
+    source has been applied.
+    """
+    authoritative = [
+        feature
+        for feature in connections
+        if feature.source in _METADATA_SOURCES and feature.confidence > 0
+    ]
+    if not authoritative:
+        return connections
+    return [
+        feature
+        for feature in connections
+        if feature.source not in _INFERRED_SOURCES
+        or not any(same_interface(feature, other) for other in authoritative)
+    ]
 
 
 def _metadata_statistics(

@@ -400,6 +400,12 @@ def test_directory_zip_and_csl_sources_resolve_identically(tmp_path: Path) -> No
                 feature.position,
                 feature.axis,
                 feature.freedoms,
+                feature.profile,
+                (
+                    feature.connection_provenance.line_number
+                    if feature.connection_provenance is not None
+                    else None
+                ),
             )
             for feature in result.features
         )
@@ -409,6 +415,49 @@ def test_directory_zip_and_csl_sources_resolve_identically(tmp_path: Path) -> No
     assert results[1].features[-1].connection_provenance is not None
     assert results[1].features[-1].connection_provenance.archive_member is not None
     assert len(results[1].features[-1].connection_provenance.include_chain) >= 4
+
+
+def test_shadow_document_line_numbers_survive_header_lines(tmp_path: Path) -> None:
+    root = tmp_path / "shadow"
+    target = root / "parts" / "lined.dat"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "0 Shadow header\n"
+        "0 second header line\n"
+        "0 !LDCAD SNAP_CYL [gender=M] [secs=R 4 8]\n",
+        encoding="utf-8",
+    )
+
+    result = LDCadShadowLibrary(root).connections_for("lined")
+
+    assert len(result.features) == 1
+    feature = result.features[0]
+    assert feature.feature_id == "snap_cyl@L3:I0"
+    assert "@L3" in feature.feature_id
+    assert feature.connection_provenance is not None
+    assert feature.connection_provenance.line_number == 3
+
+
+def test_shadow_reparse_is_deterministic_across_instances(tmp_path: Path) -> None:
+    root = tmp_path / "shadow"
+    _write_shadow_directory(root)
+
+    def signature(
+        result: ShadowConnectionResult,
+    ) -> tuple[tuple[str | None, tuple[float, float, float]], ...]:
+        return tuple(
+            (
+                feature.feature_id,
+                (feature.position.x, feature.position.y, feature.position.z),
+            )
+            for feature in result.features
+        )
+
+    first = LDCadShadowLibrary(root).connections_for("ROOT.dat")
+    second = LDCadShadowLibrary(root).connections_for("ROOT.dat")
+
+    assert len(first.features) == 5
+    assert signature(first) == signature(second)
 
 
 def test_inline_includes_fold_configured_sources_in_registration_order(

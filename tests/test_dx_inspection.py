@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import FrozenInstanceError
 from typing import TYPE_CHECKING
 
 import pytest
@@ -156,6 +157,29 @@ def test_model_inspection_reports_geometry_contacts_and_provenance(
         inspection.stud_contacts(probe_distance=0)
     with pytest.raises(ValueError, match="minimum_gap"):
         inspection.contact_gaps(minimum_gap=-1)
+
+
+def test_connection_graphs_are_frozen_tuple_structures(tmp_path: Path) -> None:
+    parts = _inspection_parts(tmp_path)
+    inspection = inspect_model(_inspection_model(), parts)
+
+    graphs = inspection.connection_graphs()
+
+    assert isinstance(graphs.confirmed.nodes, tuple)
+    assert isinstance(graphs.confirmed.edges, tuple)
+    assert isinstance(graphs.optimistic.nodes, tuple)
+    assert isinstance(graphs.optimistic.edges, tuple)
+    assert len(graphs.optimistic.edges) == 1
+    edge = graphs.optimistic.edges[0]
+    assert (edge.first, edge.second) == (0, 1)
+    with pytest.raises(FrozenInstanceError):
+        graphs.confirmed = graphs.optimistic  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        graphs.confirmed.edges = ()  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        graphs.confirmed.nodes = ()  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        edge.status = edge.status  # type: ignore[misc]
 
 
 def test_exact_bounds_helpers_and_empty_inspection(tmp_path: Path) -> None:

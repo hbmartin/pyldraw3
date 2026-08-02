@@ -564,6 +564,22 @@ def _load_parts(
     return parts
 
 
+def _missing_connection_source(
+    *,
+    connection_shadows: tuple[Path, ...],
+    studio_metadata: tuple[Path, ...],
+) -> str | None:
+    """Return an error message for the first nonexistent connection source."""
+    for flag, sources in (
+        ("--ldcad-shadow", connection_shadows),
+        ("--studio-metadata", studio_metadata),
+    ):
+        for source in sources:
+            if not Path(source).expanduser().exists():
+                return f"{flag} source not found: {source}"
+    return None
+
+
 def _suggested_import(entry: CatalogEntry) -> str | None:
     """Return the generated-library import statement for a catalog entry."""
     return suggested_import(entry)
@@ -612,6 +628,14 @@ def parts_geometry_command(
     studio_metadata: tuple[Path, ...] = (),
 ) -> int:
     """Show expanded geometry and completeness diagnostics for one part."""
+    if (
+        error := _missing_connection_source(
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    ) is not None:
+        print(error, file=sys.stderr)
+        return 1
     if (
         parts := _load_parts(
             connection_shadows=connection_shadows,
@@ -679,7 +703,7 @@ def parts_geometry_command(
     return 0
 
 
-def inspect_command(  # noqa: PLR0913 - mirrors explicit CLI controls
+def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
     *,
     file: Path,
     output_format: str,
@@ -693,6 +717,14 @@ def inspect_command(  # noqa: PLR0913 - mirrors explicit CLI controls
     """Inspect exact occurrence geometry, provenance, contacts, and gaps."""
     if gap_threshold < 0:
         print("--gap-threshold must be non-negative", file=sys.stderr)
+        return 1
+    if (
+        error := _missing_connection_source(
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    ) is not None:
+        print(error, file=sys.stderr)
         return 1
     if (
         parts := _load_parts(

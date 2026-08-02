@@ -44,6 +44,15 @@ were found. Diagnostics have stable codes for unsupported records/options,
 invalid values/transforms/grids, missing values/includes, include cycles, and
 feature overrides.
 
+### Diagnostic code compatibility
+
+`DiagnosticCode.CONNECTION_METADATA_INVALID` is retained as an attribute
+alias, but its serialized value changed from `connection.metadata_invalid`
+(1.5) to `connection.invalid_option_value` (1.6). Consumers that match the
+serialized `to_dict()["code"]` string, or that construct
+`DiagnosticCode("connection.metadata_invalid")`, must update to the new
+value.
+
 ## Inspect typed contacts and multigraphs
 
 `connection_contacts()` uses profile semantics and a spatial index. Studs are
@@ -52,7 +61,9 @@ candidate's oriented entry face, and it penetrates inward. Consequently two
 overlapping surfaces no longer count as a stud connection.
 
 ```python
-inspection = model.inspect(parts)
+from ldraw import inspect_model
+
+inspection = inspect_model(model, parts)
 graphs = inspection.connection_graphs()
 
 for edge in graphs.confirmed.edges:

@@ -50,12 +50,18 @@ class _StudioPart:
 
 
 class StudioConnectionLibrary:
-    """Read the supported connectivity subset of a Studio JSON export."""
+    """Read the supported connectivity subset of a Studio JSON export.
+
+    A part row with an empty or absent ``connections`` list contributes no
+    authoritative evidence: heuristic and primitive features are kept and
+    coverage is unchanged. Explicit clear-to-empty is an LDCad ``SNAP_CLEAR``
+    or override concern.
+    """
 
     def __init__(self, source: str | Path) -> None:
         self.source = Path(source).expanduser()
         self._parts: dict[str, ShadowConnectionResult] = {}
-        self._document_diagnostics: tuple[Diagnostic, ...] = ()
+        self._fallback_result = ShadowConnectionResult()
         self._load()
 
     def connections_for(self, code: str) -> ShadowConnectionResult:
@@ -64,31 +70,40 @@ class StudioConnectionLibrary:
         result = self._parts.get(key)
         if result is not None:
             return result
-        return ShadowConnectionResult(
-            diagnostics=self._document_diagnostics,
-        )
+        return self._fallback_result
 
     def _load(self) -> None:
         diagnostics: list[Diagnostic] = []
+        document_id = str(self.source.resolve())
         try:
             document = json.loads(self.source.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            self._document_diagnostics = (
-                _diagnostic(
-                    f"could not read Studio connectivity JSON: {error}",
-                    path=self.source,
-                    cause=error,
+        except (OSError, RecursionError, UnicodeError, json.JSONDecodeError) as error:
+            self._fallback_result = ShadowConnectionResult(
+                diagnostics=(
+                    _diagnostic(
+                        f"could not read Studio connectivity JSON: {error}",
+                        path=self.source,
+                        cause=error,
+                    ),
                 ),
+                source_count=1,
+                invalid_record_count=1,
+                document_ids=(document_id,),
             )
             return
         rows = document.get("parts") if isinstance(document, dict) else None
         if not isinstance(rows, list):
-            self._document_diagnostics = (
-                _diagnostic(
-                    "Studio connectivity document must contain a parts list",
-                    path=self.source,
-                    offending_value=document,
+            self._fallback_result = ShadowConnectionResult(
+                diagnostics=(
+                    _diagnostic(
+                        "Studio connectivity document must contain a parts list",
+                        path=self.source,
+                        offending_value=document,
+                    ),
                 ),
+                source_count=1,
+                invalid_record_count=1,
+                document_ids=(document_id,),
             )
             return
         for part_index, row in enumerate(rows):
@@ -104,7 +119,13 @@ class StudioConnectionLibrary:
             self._parts[parsed.code] = (
                 parsed.result if previous is None else previous.combined(parsed.result)
             )
-        self._document_diagnostics = tuple(diagnostics)
+        if diagnostics:
+            self._fallback_result = ShadowConnectionResult(
+                diagnostics=tuple(diagnostics),
+                source_count=1,
+                invalid_record_count=len(diagnostics),
+                document_ids=(document_id,),
+            )
 
 
 def _studio_part(
@@ -130,7 +151,9 @@ def _studio_part(
         if field not in _PART_FIELDS
     ]
     rows = value.get("connections", [])
+    invalid = 0
     if not isinstance(rows, list):
+        invalid += 1
         diagnostics.append(
             _diagnostic(
                 f"Studio connections for {code!r} must be a list",
@@ -140,7 +163,6 @@ def _studio_part(
         )
         rows = []
     features: list[ConnectionFeature] = []
-    invalid = 0
     for index, row in enumerate(rows):
         normalized_row = row
         if isinstance(row, dict):
@@ -197,19 +219,20 @@ def _studio_part(
         else feature
         for index, feature in enumerate(features)
     ]
+    has_evidence = bool(features) or invalid > 0
     return _StudioPart(
         code,
         ShadowConnectionResult(
             features=tuple(features),
             diagnostics=tuple(diagnostics),
-            source_count=1,
+            source_count=int(has_evidence),
             recognized_record_count=len(features),
             unsupported_record_count=sum(
                 diagnostic.code is DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION
                 for diagnostic in diagnostics
             ),
             invalid_record_count=invalid,
-            document_ids=(str(path.resolve()),),
+            document_ids=(str(path.resolve()),) if has_evidence else (),
         ),
     )
 

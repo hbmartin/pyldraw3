@@ -105,16 +105,35 @@ def _checkout(destination: Path) -> None:
     )
 
 
-def _check(root: Path) -> int:
+def _source_header(root: Path) -> str:
+    if (git := shutil.which("git")) is not None:
+        head = subprocess.run(  # noqa: S603
+            (git, "-C", str(root), "rev-parse", "HEAD"),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if head.returncode == 0:
+            return f"source: {root} (commit {head.stdout.strip()})"
+    return f"source: {root} (unpinned)"
+
+
+def _check(root: Path, *, header: str) -> int:
     library = LDCadShadowLibrary(root)
     command_counts: Counter[str] = Counter()
     options: defaultdict[str, set[str]] = defaultdict(set)
     diagnostics: Counter[str] = Counter()
     file_count = 0
     feature_count = 0
+    decode_failures = 0
     for path in sorted(root.rglob("*.dat")):
         file_count += 1
-        for line in path.read_text(encoding="utf-8-sig").splitlines():
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            decode_failures += 1
+            continue
+        for line in text.splitlines():
             if (match := _COMMAND.match(line)) is None:
                 continue
             command = match.group(1).upper()
@@ -131,13 +150,20 @@ def _check(root: Path) -> int:
         for command, values in options.items()
         if values - _KNOWN_OPTIONS.get(command, frozenset())
     }
-    print(f"commit: {PINNED_COMMIT}")
+    print(header)
     print(f"documents: {file_count}")
+    print(f"decode failures: {decode_failures}")
     print(f"normalized features: {feature_count}")
     print(f"commands: {dict(sorted(command_counts.items()))}")
     print(f"diagnostics: {dict(sorted(diagnostics.items()))}")
     print(f"new commands: {new_commands}")
     print(f"new options: {new_options}")
+    if file_count > decode_failures and not feature_count and not diagnostics:
+        print(
+            "warning: corpus layout not recognized; no .dat path resolved as a "
+            "parts/ or p/ shadow document, so the feature and diagnostic "
+            "counts above are not meaningful"
+        )
     return int(bool(new_commands or new_options))
 
 
@@ -145,11 +171,12 @@ def main() -> int:
     """Run the pinned corpus check and return nonzero for newly observed forms."""
     args = _arguments()
     if args.source is not None:
-        return _check(args.source.expanduser().resolve())
+        root = args.source.expanduser().resolve()
+        return _check(root, header=_source_header(root))
     with TemporaryDirectory(prefix="pyldraw3-shadow-") as temporary:
         root = Path(temporary) / "LDCadShadowLibrary"
         _checkout(root)
-        return _check(root)
+        return _check(root, header=f"commit: {PINNED_COMMIT}")
 
 
 if __name__ == "__main__":

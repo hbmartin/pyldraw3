@@ -40,7 +40,23 @@ _SHADOW_LINE_RE = re.compile(
     r"^\s*0\s+!LDCAD\s+(SNAP_\w+)\b(.*)$",
     re.IGNORECASE,
 )
+_SUSPECT_SNAP_RE = re.compile(r"^\s*0?\s*!LDCAD\s+SNAP", re.IGNORECASE)
 _VALID_OPTION_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+class _MetadataValueError(ValueError):
+    """Invalid metadata value carrying a structured diagnostic code."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: DiagnosticCode = DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 _NEGATIVE_Y_FRAME = Matrix([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 _SUPPORTED_OPTIONS: dict[str, frozenset[str]] = {
     "SNAP_CLEAR": frozenset(("id",)),
@@ -219,11 +235,6 @@ class _ParsedCommand:
 IncludeResolver = Callable[[_ParsedCommand, tuple[str, ...]], ShadowConnectionResult]
 
 
-def _raise_missing_include() -> None:
-    message = "SNAP_INCL requires a configured shadow library"
-    raise FileNotFoundError(message)
-
-
 class LDCadShadowLibrary:
     """Read unpacked, ZIP, or CSL LDCad shadow metadata."""
 
@@ -261,13 +272,22 @@ class LDCadShadowLibrary:
                     )
             self._archive_text = archive_text
 
-    def connections_for(self, code: str) -> ShadowConnectionResult:
-        """Return resolved shadow features for a part or primitive code."""
+    def connections_for(
+        self,
+        code: str,
+        *,
+        siblings: tuple[LDCadShadowLibrary, ...] = (),
+    ) -> ShadowConnectionResult:
+        """Return resolved shadow features for a part or primitive code.
+
+        ``siblings`` is the full ordered registry of shadow libraries used to
+        resolve ``SNAP_INCL`` references across the merged shadow namespace.
+        """
         return self._connections_for(
             _normalized_code(code),
             visiting=(),
             include_chain=(),
-            required=False,
+            siblings=siblings,
         )
 
     def _connections_for(
@@ -276,7 +296,7 @@ class LDCadShadowLibrary:
         *,
         visiting: tuple[str, ...],
         include_chain: tuple[str, ...],
-        required: bool,
+        siblings: tuple[LDCadShadowLibrary, ...] = (),
     ) -> ShadowConnectionResult:
         if code in visiting:
             cycle = (*visiting[visiting.index(code) :], code)
@@ -305,37 +325,39 @@ class LDCadShadowLibrary:
                     invalid_record_count=1,
                     document_ids=(document_id,),
                 )
-            if not required:
-                return ShadowConnectionResult()
-            return ShadowConnectionResult(
-                diagnostics=(
-                    _diagnostic(
-                        DiagnosticCode.CONNECTION_INCLUDE_NOT_FOUND,
-                        f"LDCad SNAP_INCL reference not found: {code!r}",
-                        path=self.source,
-                        offending_value=code,
-                    ),
-                ),
-                invalid_record_count=1,
-            )
+            return ShadowConnectionResult()
 
         def resolve(
             command: _ParsedCommand,
             chain: tuple[str, ...],
         ) -> ShadowConnectionResult:
             reference = _normalized_code(command.options["ref"])
-            included = self._connections_for(
+            included = _resolve_across_libraries(
+                siblings or (self,),
                 reference,
                 visiting=(*visiting, code),
                 include_chain=chain,
-                required=True,
             )
+            if included is None:
+                return ShadowConnectionResult(
+                    diagnostics=(
+                        _diagnostic(
+                            DiagnosticCode.CONNECTION_INCLUDE_NOT_FOUND,
+                            f"LDCad SNAP_INCL reference not found: {reference!r}",
+                            line_number=command.line_number,
+                            path=self.source,
+                            offending_value=reference,
+                        ),
+                    ),
+                    invalid_record_count=1,
+                )
             return _transform_include(
                 included,
                 command=command,
                 owner_code=code,
                 reference=reference,
                 effective_source=ConnectionSource.LDCAD_SHADOW,
+                marker=chain[-1] if chain else None,
             )
 
         return _parse_commands(
@@ -404,6 +426,33 @@ class LDCadShadowLibrary:
         )
 
 
+def _resolve_across_libraries(
+    libraries: tuple[LDCadShadowLibrary, ...],
+    reference: str,
+    *,
+    visiting: tuple[str, ...],
+    include_chain: tuple[str, ...],
+) -> ShadowConnectionResult | None:
+    """Resolve a SNAP_INCL reference against the merged shadow namespace."""
+    combined = ShadowConnectionResult()
+    found = False
+    for library in libraries:
+        candidate = library._connections_for(  # noqa: SLF001 - composite resolver
+            reference,
+            visiting=visiting,
+            include_chain=include_chain,
+            siblings=libraries,
+        )
+        if (
+            candidate.source_count
+            or candidate.diagnostics
+            or candidate.invalid_record_count
+        ):
+            found = True
+            combined = combined.combined(candidate)
+    return combined if found else None
+
+
 def parse_ldcad_commands(
     code: str,
     commands: Iterable[str],
@@ -411,9 +460,13 @@ def parse_ldcad_commands(
     source: str | Path | None = None,
     connection_shadows: Iterable[LDCadShadowLibrary | str | Path] = (),
 ) -> ShadowConnectionResult:
-    """Parse inline ``!LDCAD SNAP_*`` commands without aborting geometry."""
+    """Parse inline ``!LDCAD SNAP_*`` commands without aborting geometry.
+
+    Every entry is expected to be an LDCad command; entries that cannot be
+    recognized are reported as invalid records instead of being dropped.
+    """
     lines = tuple(
-        command if _SHADOW_LINE_RE.match(command) else f"0 !LDCAD {command.strip()}"
+        command if _SHADOW_LINE_RE.match(command) else _wrapped_command(command)
         for command in commands
     )
     return _parse_inline_text(
@@ -422,7 +475,13 @@ def parse_ldcad_commands(
         source=source,
         connection_shadows=connection_shadows,
         source_count=int(bool(lines)),
+        strict_lines=True,
     )
+
+
+def _wrapped_command(command: str) -> str:
+    body = re.sub(r"^(?:0\s+)?!LDCAD\s+", "", command.strip(), flags=re.IGNORECASE)
+    return f"0 !LDCAD {body}"
 
 
 def parse_ldcad_text(
@@ -443,13 +502,14 @@ def parse_ldcad_text(
     )
 
 
-def _parse_inline_text(
+def _parse_inline_text(  # noqa: PLR0913 - explicit source controls
     *,
     code: str,
     text: str,
     source: str | Path | None,
     connection_shadows: Iterable[LDCadShadowLibrary | str | Path],
     source_count: int,
+    strict_lines: bool = False,
 ) -> ShadowConnectionResult:
     libraries = tuple(
         item if isinstance(item, LDCadShadowLibrary) else LDCadShadowLibrary(item)
@@ -474,19 +534,13 @@ def _parse_inline_text(
                 ),
                 invalid_record_count=1,
             )
-        combined = ShadowConnectionResult()
-        found = False
-        for library in libraries:
-            candidate = library._connections_for(  # noqa: SLF001 - composite resolver
-                reference,
-                visiting=(),
-                include_chain=chain,
-                required=False,
-            )
-            if candidate.source_count:
-                found = True
-                combined = combined.combined(candidate)
-        if not found:
+        combined = _resolve_across_libraries(
+            libraries,
+            reference,
+            visiting=(),
+            include_chain=chain,
+        )
+        if combined is None:
             return ShadowConnectionResult(
                 diagnostics=(
                     _diagnostic(
@@ -505,6 +559,7 @@ def _parse_inline_text(
             owner_code=_normalized_code(code),
             reference=reference,
             effective_source=ConnectionSource.LDCAD_INLINE,
+            marker=chain[-1] if chain else None,
         )
 
     return _parse_commands(
@@ -521,6 +576,7 @@ def _parse_inline_text(
         )
         if source_count
         else (),
+        strict_lines=strict_lines,
     )
 
 
@@ -561,9 +617,10 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
     archive_member: str | None,
     effective_source: ConnectionSource,
     include_chain: tuple[str, ...],
-    include_resolver: IncludeResolver | None,
+    include_resolver: IncludeResolver,
     source_count: int,
     document_ids: tuple[str, ...],
+    strict_lines: bool = False,
 ) -> ShadowConnectionResult:
     features: list[ConnectionFeature] = []
     diagnostics: list[Diagnostic] = []
@@ -576,6 +633,23 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
     processed_documents = list(document_ids)
     for line_number, line in enumerate(text.splitlines(), start=1):
         if (match := _SHADOW_LINE_RE.match(line)) is None:
+            stripped = line.strip()
+            suspect = (
+                bool(stripped)
+                if strict_lines
+                else _SUSPECT_SNAP_RE.match(line) is not None
+            )
+            if suspect:
+                invalid += 1
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+                        f"unrecognized LDCad metadata line: {stripped!r}",
+                        line_number=line_number,
+                        path=path,
+                        offending_value=stripped,
+                    ),
+                )
             continue
         kind = match.group(1).upper()
         raw = line.strip()
@@ -661,13 +735,22 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         clear_ids.clear()
                         features.clear()
                 case "SNAP_INCL":
-                    if include_resolver is None:
-                        _raise_missing_include()
-                    marker = options.get("id") or f"snap_incl@L{line_number}"
+                    raw_marker = options.get("id")
+                    marker_occurrence = (
+                        seen_ids.get(raw_marker.casefold(), 0) if raw_marker else 0
+                    )
+                    if raw_marker is None:
+                        marker = f"snap_incl@L{line_number}"
+                    elif marker_occurrence:
+                        marker = f"{raw_marker}@L{line_number}"
+                    else:
+                        marker = raw_marker
                     included = include_resolver(
                         command,
                         (*include_chain, marker),
                     )
+                    if raw_marker is not None:
+                        seen_ids[raw_marker.casefold()] = marker_occurrence + 1
                     features = _overlay_features(
                         features,
                         included.features,
@@ -680,13 +763,10 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     unsupported += included.unsupported_record_count
                     invalid += included.invalid_record_count
                 case _:
-                    if (raw_id := options.get("id")) is not None and seen_ids.get(
-                        raw_id.casefold(), 0
-                    ):
-                        features = [
-                            _suffix_first_repeated_id(feature, raw_id=raw_id)
-                            for feature in features
-                        ]
+                    raw_id = options.get("id")
+                    repeated = raw_id is not None and bool(
+                        seen_ids.get(raw_id.casefold(), 0),
+                    )
                     created = _feature_instances(
                         code=code,
                         command=command,
@@ -694,6 +774,11 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         provenance=provenance,
                         seen_ids=seen_ids,
                     )
+                    if repeated and raw_id is not None:
+                        features = [
+                            _suffix_first_repeated_id(feature, raw_id=raw_id)
+                            for feature in features
+                        ]
                     features = _overlay_features(
                         features,
                         created,
@@ -715,22 +800,9 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
         except (IndexError, KeyError, TypeError, ValueError) as error:
             invalid += 1
             code_value = (
-                DiagnosticCode.CONNECTION_INVALID_GRID
-                if "grid" in str(error).casefold()
-                else (
-                    DiagnosticCode.CONNECTION_INVALID_TRANSFORM
-                    if any(
-                        word in str(error).casefold()
-                        for word in (
-                            "matrix",
-                            "orientation",
-                            "scale",
-                            "reflection",
-                            "mirror",
-                        )
-                    )
-                    else DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE
-                )
+                error.code
+                if isinstance(error, _MetadataValueError)
+                else DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE
             )
             diagnostics.append(
                 _diagnostic(
@@ -834,7 +906,6 @@ def _feature_instances(
             metadata_id=metadata_id,
             source=source,
             connection_provenance=provenance,
-            provenance=(_provenance_text(provenance),),
             scale_inheritance=options.get("scale", "none").casefold(),
             mirror_inheritance=options.get(
                 "mirror",
@@ -991,33 +1062,31 @@ def _feature_for_command(
             raise ValueError(message)
 
 
-def _transform_include(
+def _transform_include(  # noqa: PLR0913 - include context is explicit
     included: ShadowConnectionResult,
     *,
     command: _ParsedCommand,
     owner_code: str,
     reference: str,
     effective_source: ConnectionSource,
+    marker: str | None = None,
 ) -> ShadowConnectionResult:
     options = command.options
     position = _vector(options.get("pos"), default=Vector(0, 0, 0))
     orientation = _matrix(options.get("ori"), default=Identity())
     if scale_value := options.get("scale"):
         scale = _vector(scale_value, default=Vector(1, 1, 1))
-        if min(abs(scale.x), abs(scale.y), abs(scale.z)) == 0:
-            message = "include scale transform must be non-zero"
-            raise ValueError(message)
-        if not math.isclose(abs(scale.x), abs(scale.z), abs_tol=1e-6):
-            message = "include radial scale must match on X and Z"
-            raise ValueError(message)
         orientation = orientation.scale(scale.x, scale.y, scale.z)
     if orientation.det() < 0 and any(
         feature.mirror_inheritance == "none" for feature in included.features
     ):
         message = "include reflection is not allowed by inherited metadata"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     offsets = _grid_offsets(options.get("grid"))
-    marker = options.get("id") or f"snap_incl@L{command.line_number}"
+    marker = marker or options.get("id") or f"snap_incl@L{command.line_number}"
     include_slide = _boolean(options.get("slide"), default=False)
     transformed: list[ConnectionFeature] = []
     for instance, offset in enumerate(offsets):
@@ -1049,9 +1118,7 @@ def _transform_include(
                     ),
                     connection_provenance=provenance,
                     provenance=(
-                        _provenance_text(provenance)
-                        if provenance is not None
-                        else f"SNAP_INCL {reference}",
+                        () if provenance is not None else (f"SNAP_INCL {reference}",)
                     ),
                 ),
             )
@@ -1066,12 +1133,16 @@ def _overlay_features(
 ) -> list[ConnectionFeature]:
     values = list(existing)
     for feature in incoming:
+        feature_key = (
+            feature.feature_id.casefold() if feature.feature_id is not None else None
+        )
         replacement = next(
             (
                 index
                 for index, candidate in enumerate(values)
-                if candidate.feature_id is not None
-                and candidate.feature_id == feature.feature_id
+                if feature_key is not None
+                and candidate.feature_id is not None
+                and candidate.feature_id.casefold() == feature_key
             ),
             None,
         )
@@ -1122,17 +1193,26 @@ def _validate_common_options(  # noqa: C901 - shared option validation table
         scale = _vector(scale_value, default=Vector(1, 1, 1))
         if min(abs(scale.x), abs(scale.y), abs(scale.z)) == 0:
             message = "include scale transform must be non-zero"
-            raise ValueError(message)
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+            )
         if not math.isclose(abs(scale.x), abs(scale.z), abs_tol=1e-6):
             message = "include radial scale must match on X and Z"
-            raise ValueError(message)
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+            )
     if (
         kind != "SNAP_INCL"
         and "scale" in options
         and options["scale"].casefold() not in {"none", "yonly", "ronly", "yandr"}
     ):
         message = f"invalid scale inheritance mode {options['scale']!r}"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     if "mirror" in options and options["mirror"].casefold() not in {
         "none",
         "cor",
@@ -1140,7 +1220,10 @@ def _validate_common_options(  # noqa: C901 - shared option validation table
         "corz",
     }:
         message = f"invalid mirror mode {options['mirror']!r}"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     if "grid" in options:
         _grid_offsets(options["grid"])
 
@@ -1313,6 +1396,8 @@ def _deduplicate_cycle_diagnostics(
 
 def _shadow_candidates(code: str) -> tuple[str, ...]:
     code = _normalized_code(code)
+    if any(component in {"", ".", ".."} for component in code.split("/")):
+        return ()
     if code.startswith("parts/"):
         return (f"{code}.dat",)
     if code.startswith("p/"):
@@ -1329,14 +1414,18 @@ def _archive_logical_name(member: str) -> str | None:
     lowered = normalized.casefold()
     for marker in ("parts/", "p/"):
         index = lowered.find(marker)
-        if index == 0 or (index > 0 and lowered[index - 1] == "/"):
-            return normalized[index:]
+        while index >= 0:
+            if index == 0 or lowered[index - 1] == "/":
+                return normalized[index:]
+            index = lowered.find(marker, index + 1)
     return None
 
 
 def _case_insensitive_path(root: Path, relative: str) -> Path | None:
     current = root
     for component in relative.split("/"):
+        if component in {"", ".", ".."}:
+            return None
         direct = current / component
         if direct.exists():
             current = direct
@@ -1373,14 +1462,29 @@ def _matrix(value: str | None, *, default: Matrix) -> Matrix:
     numbers = _float_tuple(value)
     if len(numbers) != 9:
         message = "orientation matrix must contain nine numbers"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     matrix = Matrix([list(numbers[0:3]), list(numbers[3:6]), list(numbers[6:9])])
     if matrix.is_singular():
         message = "orientation matrix must not be singular"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     if not matrix.is_orthonormal(tolerance=5e-3):
         message = "orientation matrix must be orthonormal"
-        raise ValueError(message)
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
+    if matrix.det() < 0:
+        message = "orientation matrix must not mirror; use the mirror option"
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
     return frame_for_axis(
         matrix * Vector(0, 1, 0),
         radial=matrix * Vector(1, 0, 0),
@@ -1427,7 +1531,7 @@ def _grid_offsets(value: str | None) -> tuple[Vector, ...]:
     dimensions = 2 if numeric_count == 4 else 3 if numeric_count == 6 else 0
     if not dimensions:
         message = "grid must contain X/Z or X/Y/Z counts and steps"
-        raise ValueError(message)
+        raise _MetadataValueError(message, code=DiagnosticCode.CONNECTION_INVALID_GRID)
     index = 0
     counts: list[int] = []
     centered: list[bool] = []
@@ -1436,18 +1540,38 @@ def _grid_offsets(value: str | None) -> tuple[Vector, ...]:
         index += int(is_centered)
         if index >= len(tokens):
             message = "grid is missing an axis count"
-            raise ValueError(message)
-        count = int(tokens[index])
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            )
+        try:
+            count = int(tokens[index])
+        except ValueError as error:
+            message = f"grid count must be an integer, got {tokens[index]!r}"
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            ) from error
         if count <= 0:
             message = "grid counts must be positive"
-            raise ValueError(message)
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            )
         counts.append(count)
         centered.append(is_centered)
         index += 1
     if len(tokens) - index != dimensions:
         message = "grid has an invalid number of step values"
-        raise ValueError(message)
-    steps = [_finite_float(token) for token in tokens[index:]]
+        raise _MetadataValueError(message, code=DiagnosticCode.CONNECTION_INVALID_GRID)
+    try:
+        steps = [_finite_float(token) for token in tokens[index:]]
+    except ValueError as error:
+        message = f"grid steps must be finite numbers: {error}"
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_GRID,
+        ) from error
     if dimensions == 2:
         x_count, z_count = counts
         x_centered, z_centered = centered
