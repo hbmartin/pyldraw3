@@ -278,6 +278,43 @@ class ConnectionProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class _TransformScales:
+    """Scale and distortion measurements for one non-singular placement."""
+
+    radial: float
+    axial: float
+    mismatch: float
+    shear: float
+    reflected: bool
+
+
+def _transform_scales(
+    x_axis: Vector,
+    y_axis: Vector,
+    z_axis: Vector,
+    *,
+    reflected: bool,
+) -> _TransformScales:
+    x_scale = abs(x_axis)
+    y_scale = abs(y_axis)
+    z_scale = abs(z_axis)
+    normalized_x = x_axis / x_scale
+    normalized_y = y_axis / y_scale
+    normalized_z = z_axis / z_scale
+    return _TransformScales(
+        radial=(x_scale + z_scale) / 2,
+        axial=y_scale,
+        mismatch=abs(x_scale - z_scale) / max(x_scale, z_scale),
+        shear=max(
+            abs(normalized_x.dot(normalized_y)),
+            abs(normalized_x.dot(normalized_z)),
+            abs(normalized_y.dot(normalized_z)),
+        ),
+        reflected=reflected,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectionFeature:
     """One physical connection interface in a part's local coordinates.
 
@@ -363,77 +400,90 @@ class ConnectionFeature:
         x_axis = raw_frame * Vector(1, 0, 0)
         y_axis = raw_frame * Vector(0, 1, 0)
         z_axis = raw_frame * Vector(0, 0, 1)
-        x_scale = abs(x_axis)
-        y_scale = abs(y_axis)
-        z_scale = abs(z_axis)
-        if min(x_scale, y_scale, z_scale) == 0 or raw_frame.is_singular():
+        if min(abs(x_axis), abs(y_axis), abs(z_axis)) == 0 or raw_frame.is_singular():
             return replace(
                 self,
                 position=position + matrix * self.position,
                 frame=raw_frame,
                 confidence=0.0,
             )
-        normalized = _orthonormalized_frame(x_axis, y_axis, z_axis)
-        reflected = raw_frame.det() < 0
-        if reflected and self.mirror_inheritance in {"cor", "corx", "corz"}:
-            correction = (
-                Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
-                if self.mirror_inheritance != "corz"
-                else Matrix([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
-            )
-            normalized = normalized * correction
-        radial_scale = (x_scale + z_scale) / 2
-        radial_mismatch = abs(x_scale - z_scale) / max(x_scale, z_scale)
-        normalized_x = x_axis / x_scale
-        normalized_y = y_axis / y_scale
-        normalized_z = z_axis / z_scale
-        shear = max(
-            abs(normalized_x.dot(normalized_y)),
-            abs(normalized_x.dot(normalized_z)),
-            abs(normalized_y.dot(normalized_z)),
+        scales = _transform_scales(
+            x_axis,
+            y_axis,
+            z_axis,
+            reflected=raw_frame.det() < 0,
         )
         applied_radial, applied_axial = (
             _inherited_scales(
                 self.scale_inheritance,
-                radial=radial_scale,
-                axial=y_scale,
+                radial=scales.radial,
+                axial=scales.axial,
             )
             if inherit
-            else (radial_scale, y_scale)
+            else (scales.radial, scales.axial)
         )
-        has_radial_scale = not math.isclose(radial_scale, 1.0, abs_tol=1e-6)
-        has_axial_scale = not math.isclose(y_scale, 1.0, abs_tol=1e-6)
+        return replace(
+            self,
+            position=position + matrix * self.position,
+            frame=self._mirror_corrected(
+                _orthonormalized_frame(x_axis, y_axis, z_axis),
+                reflected=scales.reflected,
+            ),
+            profile=self.profile.scaled(
+                radial=applied_radial,
+                axial=applied_axial,
+            ),
+            confidence=self._transformed_confidence(scales, inherit=inherit),
+        )
+
+    def _mirror_corrected(self, frame: Matrix, *, reflected: bool) -> Matrix:
+        """Undo an inherited reflection when the feature's options request it."""
+        if not (reflected and self.mirror_inheritance in {"cor", "corx", "corz"}):
+            return frame
+        correction = (
+            Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
+            if self.mirror_inheritance != "corz"
+            else Matrix([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
+        )
+        return frame * correction
+
+    def _transformed_confidence(
+        self,
+        scales: _TransformScales,
+        *,
+        inherit: bool,
+    ) -> float:
+        """Downgrade confidence for distorting or disallowed placements."""
+        if self._transform_invalidates_metadata(scales, inherit=inherit):
+            return 0.0
+        if max(scales.mismatch, scales.shear) <= 1e-6:
+            return self.confidence
+        return self.confidence * 0.5
+
+    def _transform_invalidates_metadata(
+        self,
+        scales: _TransformScales,
+        *,
+        inherit: bool,
+    ) -> bool:
+        """Whether authoritative metadata forbids this placement's transform."""
+        has_radial_scale = not math.isclose(scales.radial, 1.0, abs_tol=1e-6)
+        has_axial_scale = not math.isclose(scales.axial, 1.0, abs_tol=1e-6)
         scale_allowed = {
             "none": not has_radial_scale and not has_axial_scale,
             "yonly": not has_radial_scale,
             "ronly": not has_axial_scale,
             "yandr": True,
         }.get(self.scale_inheritance.casefold(), False)
-        invalid_metadata_transform = self.source in {
+        return self.source in {
             ConnectionSource.LDCAD_INLINE,
             ConnectionSource.LDCAD_SHADOW,
             ConnectionSource.STUDIO,
         } and (
             (inherit and not scale_allowed)
-            or radial_mismatch > 1e-6
-            or shear > 1e-6
-            or (reflected and self.mirror_inheritance == "none")
-        )
-        return replace(
-            self,
-            position=position + matrix * self.position,
-            frame=normalized,
-            profile=self.profile.scaled(
-                radial=applied_radial,
-                axial=applied_axial,
-            ),
-            confidence=(
-                0.0
-                if invalid_metadata_transform
-                else self.confidence
-                if max(radial_mismatch, shear) <= 1e-6
-                else self.confidence * 0.5
-            ),
+            or scales.mismatch > 1e-6
+            or scales.shear > 1e-6
+            or (scales.reflected and self.mirror_inheritance == "none")
         )
 
 
@@ -495,7 +545,7 @@ _KIND_PAIRS = {
 _X_REFLECTION = Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
-def connections_compatible(  # noqa: C901, PLR0911
+def connections_compatible(
     left: ConnectionFeature,
     right: ConnectionFeature,
     *,
@@ -505,17 +555,7 @@ def connections_compatible(  # noqa: C901, PLR0911
     if radius_tolerance < 0:
         message = "radius tolerance must be non-negative"
         raise ValueError(message)
-    if not _features_available(left, right):
-        return False
-    if (
-        left.role is not ConnectionRole.NEUTRAL
-        and right.role is not ConnectionRole.NEUTRAL
-        and left.role is right.role
-    ):
-        return False
-    if (
-        left.group is not None or right.group is not None
-    ) and left.group != right.group:
+    if not _mating_preconditions_met(left, right):
         return False
     if left.kind is ConnectionKind.HINGE and right.kind is ConnectionKind.HINGE:
         return _hinges_compatible(left, right)
@@ -525,6 +565,35 @@ def connections_compatible(  # noqa: C901, PLR0911
         return False
     if not _part_restrictions_allow(left, right):
         return False
+    return _mated_profiles_compatible(left, right, radius_tolerance=radius_tolerance)
+
+
+def _mating_preconditions_met(
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+) -> bool:
+    """Availability, role, and group gates shared by every feature pairing."""
+    if not _features_available(left, right):
+        return False
+    if (
+        left.role is not ConnectionRole.NEUTRAL
+        and right.role is not ConnectionRole.NEUTRAL
+        and left.role is right.role
+    ):
+        return False
+    return not (
+        (left.group is not None or right.group is not None)
+        and left.group != right.group
+    )
+
+
+def _mated_profiles_compatible(
+    left: ConnectionFeature,
+    right: ConnectionFeature,
+    *,
+    radius_tolerance: float,
+) -> bool:
+    """Compare the paired profiles of one known mating kind pair."""
     match left.profile, right.profile:
         case (
             CylindricalProfile() as left_profile,
@@ -559,15 +628,7 @@ def _generic_profiles_compatible(  # noqa: PLR0911
         left.group is not None or right.group is not None
     ):
         return False
-    mode = (
-        GenericMatch.GROUP
-        if GenericMatch.GROUP in {left.profile.match, right.profile.match}
-        else (
-            GenericMatch.SIZE
-            if GenericMatch.SIZE in {left.profile.match, right.profile.match}
-            else GenericMatch.SHAPE
-        )
-    )
+    mode = _generic_match_mode(left.profile, right.profile)
     if mode is GenericMatch.GROUP:
         return left.group == right.group
     if left.profile.bounds is None or right.profile.bounds is None:
@@ -576,13 +637,25 @@ def _generic_profiles_compatible(  # noqa: PLR0911
         return False
     if mode is GenericMatch.SHAPE:
         return True
-    return len(left.profile.bounds.dimensions) == len(
-        right.profile.bounds.dimensions,
-    ) and all(
+    return _bounds_dimensions_close(left.profile.bounds, right.profile.bounds)
+
+
+def _generic_match_mode(left: GenericProfile, right: GenericProfile) -> GenericMatch:
+    """Pick the strictest match mode requested by either generic profile."""
+    modes = {left.match, right.match}
+    if GenericMatch.GROUP in modes:
+        return GenericMatch.GROUP
+    if GenericMatch.SIZE in modes:
+        return GenericMatch.SIZE
+    return GenericMatch.SHAPE
+
+
+def _bounds_dimensions_close(left: GenericBounds, right: GenericBounds) -> bool:
+    return len(left.dimensions) == len(right.dimensions) and all(
         math.isclose(left_value, right_value, abs_tol=0.35)
         for left_value, right_value in zip(
-            left.profile.bounds.dimensions,
-            right.profile.bounds.dimensions,
+            left.dimensions,
+            right.dimensions,
             strict=True,
         )
     )

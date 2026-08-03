@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import threading
@@ -625,34 +624,22 @@ _SourceStatKey = tuple[str, str, int, int, str]
 
 
 def _source_stat_key(source: str | Path) -> _SourceStatKey:
-    """Key a connection source by path, kind, and relevant tree metadata.
+    """Key a connection source without walking directory descendants.
 
-    Directory sources are fingerprinted by statting every descendant
-    file, so each ``Parts.get`` call walks unpacked shadow trees in
-    full. A stat failure mid-walk yields the stable ``unreadable`` key,
-    which at worst forces one extra rebuild once the tree is readable.
+    Root metadata catches cheap, common changes such as replacing a source
+    directory. In-place edits below that root require the explicit
+    ``Parts.fresh`` or ``Parts.clear_cache`` invalidation path.
     """
     path = Path(source).expanduser()
     try:
         stat_result = path.stat()
         if path.is_dir():
-            digest = hashlib.sha256()
-            descendants = sorted(item for item in path.rglob("*") if item.is_file())
-            for descendant in descendants:
-                descendant_stat = descendant.stat()
-                relative_path = descendant.relative_to(path).as_posix()
-                digest.update(
-                    (
-                        f"{relative_path}\0{descendant_stat.st_size}\0"
-                        f"{descendant_stat.st_mtime_ns}\n"
-                    ).encode(),
-                )
             return (
                 str(path),
                 "directory",
                 stat_result.st_mtime_ns,
                 stat_result.st_size,
-                digest.hexdigest(),
+                f"{stat_result.st_dev}:{stat_result.st_ino}",
             )
     except OSError:
         return (str(path), "unreadable", -1, -1, "")
@@ -718,6 +705,8 @@ class Parts:
 
         Omitting ``parts_lst_md5`` memoizes under a different key than
         passing it, so mixing both styles for one file parses it twice.
+        Directory connection sources are deliberately not walked on cache
+        lookup; call ``fresh`` after editing their nested contents.
         """
         path = Path(parts_lst).expanduser()
         stat_result = path.stat()
@@ -732,7 +721,7 @@ class Parts:
 
     @classmethod
     def clear_cache(cls) -> None:
-        """Clear the memoized Parts instances."""
+        """Clear memoized instances, including stale directory sources."""
         _parts_for_stat.cache_clear()
 
     @classmethod
@@ -748,7 +737,8 @@ class Parts:
         """Return a freshly constructed Parts, replacing the memoized one.
 
         Explicit rebuild paths call this to guarantee a genuinely fresh
-        categorization; the memo is repopulated with the fresh instance.
+        categorization and reload nested connection-source edits; the memo
+        is repopulated with the fresh instance.
         """
         cls.clear_cache()
         return cls.get(

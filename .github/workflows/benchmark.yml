@@ -6,9 +6,15 @@ on:
   pull_request:
     branches: main
 
+permissions: {}
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    permissions:
+      # github-action-benchmark pushes gh-pages history on main and posts
+      # commit comments on alerts; both fall under the contents scope.
+      contents: write
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
@@ -69,6 +75,8 @@ jobs:
 
   memory-profile:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

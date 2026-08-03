@@ -8,6 +8,8 @@ on:
   schedule:
     - cron: '0 6 * * 1'  # Weekly on Mondays
 
+permissions: {}
+
 jobs:
   codeql:
     name: CodeQL Analysis
@@ -53,6 +55,8 @@ jobs:
   semgrep:
     name: Semgrep
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
     - name: Set up Python
@@ -62,12 +66,15 @@ jobs:
     - name: Run repository Semgrep rules
       run: |
         pipx run semgrep scan --config .semgrep.yml --error
+        pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/.github/workflows/permissions.yml
         pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/downloads.py
         pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/rendering.py
 
   safety:
     name: Safety Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
     - name: Run Safety CLI to check for vulnerabilities

@@ -44,6 +44,16 @@ were found. Diagnostics have stable codes for unsupported records/options,
 invalid values/transforms/grids, missing values/includes, include cycles, and
 feature overrides.
 
+### Source caching and invalidation
+
+`Parts.get` memoizes instances keyed by cheap source metadata: file sources
+by size and modification time, directory sources by their root stat identity
+(device and inode) only — descendants are deliberately not walked on lookup.
+Replacing a shadow directory wholesale or touching a file source is picked up
+automatically; editing a file nested inside a registered shadow directory is
+not. After such in-place edits, call `Parts.fresh(...)` or
+`Parts.clear_cache()` to rebuild from current disk contents.
+
 ### Diagnostic code compatibility
 
 `DiagnosticCode.CONNECTION_METADATA_INVALID` is retained as an attribute

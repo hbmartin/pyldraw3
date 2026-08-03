@@ -141,9 +141,21 @@ class _LocalGeometry:
     resolved_codes: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True, slots=True)
+class _CombinedConnectionMetadata:
+    """Document-level metadata shared by repeated geometry queries."""
+
+    diagnostics: tuple[Diagnostic, ...]
+    report: ConnectionMetadataReport | None
+
+
 _caches: WeakKeyDictionary[_PartGeometryLibrary, dict[str, _LocalGeometry | None]] = (
     WeakKeyDictionary()
 )
+_metadata_caches: WeakKeyDictionary[
+    _PartGeometryLibrary,
+    dict[str, _CombinedConnectionMetadata],
+] = WeakKeyDictionary()
 
 
 def part_bounding_box(parts: _PartGeometryLibrary, code: str) -> BoundingBox:
@@ -169,6 +181,30 @@ def part_bounding_box(parts: _PartGeometryLibrary, code: str) -> BoundingBox:
 def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
     """Return exact expanded points, bounds, connectors, and diagnostics."""
     local = _require_local(parts, code)
+    combined_metadata = _combined_connection_metadata(parts, code, local)
+    return PartGeometry(
+        code=code,
+        description=local.description,
+        bounds=local.box,
+        points=local.points,
+        studs=local.studs,
+        connections=local.connections,
+        diagnostics=(*local.diagnostics, *combined_metadata.diagnostics),
+        connection_metadata=combined_metadata.report,
+    )
+
+
+def _combined_connection_metadata(
+    parts: _PartGeometryLibrary,
+    code: str,
+    local: _LocalGeometry,
+) -> _CombinedConnectionMetadata:
+    """Combine and cache document-level metadata for one normalized code."""
+    cache = _metadata_cache_for(parts)
+    key = _local_key(code)
+    if (cached := cache.get(key)) is not None:
+        return cached
+
     metadata_result = local.metadata_result
     document_diagnostics: list[Diagnostic] = []
     has_document_result = False
@@ -185,8 +221,11 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
             ):
                 continue
             has_document_result = True
+            previous_diagnostic_count = len(metadata_result.diagnostics)
             metadata_result = metadata_result.combined(result)
-            document_diagnostics.extend(result.diagnostics)
+            document_diagnostics.extend(
+                metadata_result.diagnostics[previous_diagnostic_count:],
+            )
     connection_metadata = local.connection_metadata
     if has_document_result:
         connection_metadata = metadata_report(
@@ -198,16 +237,12 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
                 and connection_metadata.coverage is ConnectionMetadataCoverage.COMPLETE
             ),
         )
-    return PartGeometry(
-        code=code,
-        description=local.description,
-        bounds=local.box,
-        points=local.points,
-        studs=local.studs,
-        connections=local.connections,
-        diagnostics=(*local.diagnostics, *document_diagnostics),
-        connection_metadata=connection_metadata,
+    combined = _CombinedConnectionMetadata(
+        diagnostics=tuple(document_diagnostics),
+        report=connection_metadata,
     )
+    cache[key] = combined
+    return combined
 
 
 def part_studs(parts: _PartGeometryLibrary, code: str) -> tuple[StudReference, ...]:
@@ -233,8 +268,10 @@ def clear_part_geometry_cache(parts: _PartGeometryLibrary | None = None) -> None
     """Clear derived geometry for one parts library or for all libraries."""
     if parts is None:
         _caches.clear()
+        _metadata_caches.clear()
     else:
         _caches.pop(parts, None)
+        _metadata_caches.pop(parts, None)
 
 
 def _require_local(parts: _PartGeometryLibrary, code: str) -> _LocalGeometry:
@@ -251,6 +288,12 @@ def _require_local(parts: _PartGeometryLibrary, code: str) -> _LocalGeometry:
 
 def _cache_for(parts: _PartGeometryLibrary) -> dict[str, _LocalGeometry | None]:
     return _caches.setdefault(parts, {})
+
+
+def _metadata_cache_for(
+    parts: _PartGeometryLibrary,
+) -> dict[str, _CombinedConnectionMetadata]:
+    return _metadata_caches.setdefault(parts, {})
 
 
 def _local_key(code: str) -> str:

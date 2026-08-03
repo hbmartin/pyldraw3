@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import zipfile
 from dataclasses import replace
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 from ldraw.connection_metadata import (
@@ -39,6 +42,14 @@ from ldraw.parts import Parts
 
 _IDENTITY = "1 0 0 0 1 0 0 0 1"
 _FLIP_Y = "1 0 0 0 -1 0 0 0 -1"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_parts_memo() -> Iterator[None]:
+    """Keep test-specific Parts instances out of the module-level memo."""
+    Parts.clear_cache()
+    yield
+    Parts.clear_cache()
 
 
 def _write_tree(root: Path, files: dict[str, str]) -> None:
@@ -257,6 +268,12 @@ def test_stud_contacts_reject_misaligned_sole_receptacle(
         Parts(root / "parts.lst"),
     )
 
+    receptacles = tuple(
+        feature
+        for feature in inspection.occurrences[1].connections
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+    assert len(receptacles) == 1
     assert inspection.stud_contacts() == ()
     assert inspection.connection_graphs().confirmed.edges == ()
 
@@ -513,10 +530,19 @@ def test_studio_rejects_non_numeric_scalars(
     assert "radius must be a finite number" in result.diagnostics[0].message
 
 
-@pytest.mark.parametrize("digit_count", [4_000, 5_000])
+@pytest.mark.parametrize(
+    ("digit_count", "expected_message"),
+    [
+        # Below the integer-conversion limit the record parses and fails
+        # the finite-number check; above it json.loads itself fails.
+        (4_000, "radius must be a finite number"),
+        (5_000, "could not read Studio connectivity JSON"),
+    ],
+)
 def test_studio_oversized_numbers_are_recoverable_diagnostics(
     tmp_path: Path,
     digit_count: int,
+    expected_message: str,
 ) -> None:
     source = tmp_path / f"oversized-{digit_count}.json"
     source.write_text(
@@ -527,11 +553,17 @@ def test_studio_oversized_numbers_are_recoverable_diagnostics(
         encoding="utf-8",
     )
 
-    result = StudioConnectionLibrary(source).connections_for("3001")
+    previous_limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4_300)
+    try:
+        result = StudioConnectionLibrary(source).connections_for("3001")
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
 
     assert result.recognized_record_count == 0
     assert result.invalid_record_count == 1
     assert len(result.diagnostics) == 1
+    assert expected_message in result.diagnostics[0].message
 
 
 def test_studio_document_failure_is_counted_once_for_assembly(
@@ -576,6 +608,63 @@ def test_studio_document_failure_is_counted_once_for_assembly(
     assert len(report.diagnostics) == 1
     assert "Studio" in report.diagnostics[0].message
     assert geometry.diagnostics == report.diagnostics
+
+
+def test_document_metadata_aggregation_is_cached_and_invalidated(
+    tmp_path: Path,
+) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    studio = tmp_path / "broken-studio.json"
+    studio.write_text('{"parts": [', encoding="utf-8")
+    parts.add_studio_metadata(studio)
+
+    aggregate = parts._connection_document_results  # noqa: SLF001
+    with patch.object(
+        parts,
+        "_connection_document_results",
+        wraps=aggregate,
+    ) as aggregate_mock:
+        first = parts.geometry("oneplate")
+        second = parts.geometry("ONEPLATE")
+
+        assert first.connection_metadata == second.connection_metadata
+        assert first.diagnostics == second.diagnostics
+        assert aggregate_mock.call_count == 1
+
+        parts.clear_studio_metadata()
+        parts.geometry("oneplate")
+        assert aggregate_mock.call_count == 2
+
+
+def test_document_metadata_conflicts_mark_geometry_incomplete(tmp_path: Path) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    first = parse_ldcad_text(
+        "first-document",
+        "0 !LDCAD SNAP_CYL [id=document-stud] [gender=M] [secs=R 6 4]\n",
+    )
+    second = parse_ldcad_text(
+        "second-document",
+        "0 !LDCAD SNAP_CYL [id=document-stud] [gender=M] [secs=R 6 4] [pos=0 0 20]\n",
+    )
+
+    with patch.object(
+        parts,
+        "_connection_document_results",
+        return_value=(first, second),
+    ):
+        geometry = parts.geometry("oneplate")
+
+    report = geometry.connection_metadata
+    assert report is not None
+    conflicts = [
+        diagnostic
+        for diagnostic in geometry.diagnostics
+        if diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+    ]
+    assert len(conflicts) == 1
+    assert conflicts[0] in report.diagnostics
+    assert geometry.diagnostics == report.diagnostics
+    assert geometry.complete is False
 
 
 def test_studio_valid_and_document_failure_contributions_share_one_source(
@@ -713,7 +802,9 @@ def test_parts_get_memo_is_not_aliased_by_source_mutation(tmp_path: Path) -> Non
     assert rekeyed is not keyed
 
 
-def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
+def test_nested_shadow_edits_use_explicit_parts_cache_invalidation(
+    tmp_path: Path,
+) -> None:
     parts = _stud_shadow_parts(tmp_path)
     shadow = tmp_path / "shadow"
     target = shadow / "p" / "stud.dat"
@@ -723,7 +814,6 @@ def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
             "p/stud.dat": ("0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=old]\n"),
         },
     )
-    Parts.clear_cache()
 
     first = Parts.get(parts.path, connection_shadows=(shadow,))
     assert {feature.metadata_id for feature in first.connections("oneplate")} == {"old"}
@@ -742,6 +832,52 @@ def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
         shadow,
         ns=(root_stat.st_atime_ns, root_stat.st_mtime_ns),
     )
+
+    with patch(
+        "ldraw.parts.Path.rglob",
+        side_effect=AssertionError("memo lookup walked the source tree"),
+    ):
+        cached = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert cached is first
+    assert {feature.metadata_id for feature in cached.connections("oneplate")} == {
+        "old"
+    }
+
+    second = Parts.fresh(parts.path, connection_shadows=(shadow,))
+    assert second is not first
+    assert {feature.metadata_id for feature in second.connections("oneplate")} == {
+        "new"
+    }
+
+
+def test_replaced_shadow_directory_rekeys_parts_cache(tmp_path: Path) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    shadow = tmp_path / "shadow"
+    replacement = tmp_path / "replacement"
+    retired = tmp_path / "retired"
+    _write_tree(
+        shadow,
+        {"p/stud.dat": "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=old]\n"},
+    )
+    _write_tree(
+        replacement,
+        {"p/stud.dat": "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=new]\n"},
+    )
+
+    first = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert {feature.metadata_id for feature in first.connections("oneplate")} == {"old"}
+
+    original_stat = shadow.stat()
+    os.utime(
+        replacement,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    shadow.rename(retired)
+    replacement.rename(shadow)
+    replacement_stat = shadow.stat()
+    assert replacement_stat.st_mtime_ns == original_stat.st_mtime_ns
+    assert replacement_stat.st_size == original_stat.st_size
+    assert replacement_stat.st_ino != original_stat.st_ino
 
     second = Parts.get(parts.path, connection_shadows=(shadow,))
     assert second is not first

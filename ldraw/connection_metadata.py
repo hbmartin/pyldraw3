@@ -6,7 +6,7 @@ import math
 import re
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -609,7 +609,264 @@ def metadata_report(
     )
 
 
-def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
+@dataclass(slots=True)
+class _CommandParser:
+    """One metadata document parse: fixed context plus running totals."""
+
+    code: str
+    path: Path | None
+    archive_member: str | None
+    effective_source: ConnectionSource
+    include_chain: tuple[str, ...]
+    include_resolver: IncludeResolver
+    strict_lines: bool
+    source_count: int
+    processed_documents: list[str]
+    features: list[ConnectionFeature] = field(default_factory=list)
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+    clear_all: bool = False
+    clear_ids: list[str] = field(default_factory=list)
+    recognized: int = 0
+    unsupported: int = 0
+    invalid: int = 0
+    seen_ids: dict[str, int] = field(default_factory=dict)
+
+    def parse(self, text: str) -> ShadowConnectionResult:
+        """Fold every metadata line into one combined result."""
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            self._parse_line(line, line_number)
+        return ShadowConnectionResult(
+            features=tuple(self.features),
+            clear_all=self.clear_all,
+            clear_ids=tuple(self.clear_ids),
+            diagnostics=_deduplicate_cycle_diagnostics(self.diagnostics),
+            source_count=(
+                len(dict.fromkeys(self.processed_documents))
+                if self.processed_documents
+                else self.source_count
+            ),
+            recognized_record_count=self.recognized,
+            unsupported_record_count=self.unsupported,
+            invalid_record_count=self.invalid,
+            document_ids=tuple(dict.fromkeys(self.processed_documents)),
+        )
+
+    def _parse_line(self, line: str, line_number: int) -> None:
+        if (match := _SHADOW_LINE_RE.match(line)) is None:
+            self._flag_suspect_line(line, line_number)
+            return
+        kind = match.group(1).upper()
+        raw = line.strip()
+        options = self._screened_options(
+            kind,
+            match.group(2),
+            line_number=line_number,
+            raw=raw,
+        )
+        if options is None:
+            return
+        if self._apply_command(_ParsedCommand(kind, options, line_number, raw)):
+            self.recognized += 1
+
+    def _flag_suspect_line(self, line: str, line_number: int) -> None:
+        stripped = line.strip()
+        suspect = (
+            bool(stripped)
+            if self.strict_lines
+            else _SUSPECT_SNAP_RE.match(line) is not None
+        )
+        if not suspect:
+            return
+        self._record_invalid(
+            DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+            f"unrecognized LDCad metadata line: {stripped!r}",
+            line_number=line_number,
+            offending_value=stripped,
+        )
+
+    def _screened_options(
+        self,
+        kind: str,
+        raw_options: str,
+        *,
+        line_number: int,
+        raw: str,
+    ) -> dict[str, str] | None:
+        """Tokenize and screen one record's options; None consumes the line."""
+        try:
+            options = _tokenize_options(raw_options)
+        except ValueError as error:
+            self._record_invalid(
+                DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+                f"invalid LDCad {kind} record: {error}",
+                line_number=line_number,
+                offending_value=raw,
+                cause=error,
+            )
+            return None
+        if (allowed := _SUPPORTED_OPTIONS.get(kind)) is None:
+            self.unsupported += 1
+            self.diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.CONNECTION_UNSUPPORTED_RECORD,
+                    f"unsupported LDCad connection record {kind}",
+                    line_number=line_number,
+                    path=self.path,
+                    offending_value=raw,
+                ),
+            )
+            return None
+        if unknown := tuple(key for key in options if key not in allowed):
+            self.unsupported += 1
+            self.diagnostics.extend(
+                _diagnostic(
+                    DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION,
+                    f"unsupported {kind} option {key!r}",
+                    line_number=line_number,
+                    path=self.path,
+                    offending_value=raw,
+                )
+                for key in unknown
+            )
+            options = {key: value for key, value in options.items() if key in allowed}
+        if missing := tuple(
+            key for key in _REQUIRED_OPTIONS.get(kind, ()) if not options.get(key)
+        ):
+            self._record_invalid(
+                DiagnosticCode.CONNECTION_MISSING_REQUIRED_OPTION,
+                f"{kind} is missing required option(s): {', '.join(missing)}",
+                line_number=line_number,
+                offending_value=raw,
+            )
+            return None
+        return options
+
+    def _apply_command(self, command: _ParsedCommand) -> bool:
+        """Validate and apply one recognized command; False when it fails."""
+        try:
+            _validate_common_options(command.kind, command.options)
+            match command.kind:
+                case "SNAP_CLEAR":
+                    self._apply_clear(command.options)
+                case "SNAP_INCL":
+                    self._apply_include(command)
+                case _:
+                    self._apply_feature(command)
+        except FileNotFoundError as error:
+            self._record_invalid(
+                DiagnosticCode.CONNECTION_INCLUDE_NOT_FOUND,
+                str(error),
+                line_number=command.line_number,
+                offending_value=command.raw,
+                cause=error,
+            )
+            return False
+        except (IndexError, KeyError, TypeError, ValueError) as error:
+            self._record_invalid(
+                error.code
+                if isinstance(error, _MetadataValueError)
+                else DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
+                f"invalid LDCad {command.kind} metadata: {error}",
+                line_number=command.line_number,
+                offending_value=command.raw,
+                cause=error,
+            )
+            return False
+        return True
+
+    def _apply_clear(self, options: dict[str, str]) -> None:
+        if identifier := options.get("id"):
+            self.clear_ids.append(identifier)
+            self.features = [
+                feature
+                for feature in self.features
+                if (feature.metadata_id or "").casefold() != identifier.casefold()
+            ]
+        else:
+            self.clear_all = True
+            self.clear_ids.clear()
+            self.features.clear()
+
+    def _apply_include(self, command: _ParsedCommand) -> None:
+        raw_marker = command.options.get("id")
+        marker_occurrence = (
+            self.seen_ids.get(raw_marker.casefold(), 0) if raw_marker else 0
+        )
+        if raw_marker is None:
+            marker = f"snap_incl@L{command.line_number}"
+        elif marker_occurrence:
+            marker = f"{raw_marker}@L{command.line_number}"
+        else:
+            marker = raw_marker
+        included = self.include_resolver(command, (*self.include_chain, marker))
+        if raw_marker is not None:
+            self.seen_ids[raw_marker.casefold()] = marker_occurrence + 1
+        self.features = _overlay_features(
+            self.features,
+            included.features,
+            diagnostics=self.diagnostics,
+        )
+        self.diagnostics.extend(included.diagnostics)
+        self.source_count += included.source_count
+        self.processed_documents.extend(included.document_ids)
+        self.recognized += included.recognized_record_count
+        self.unsupported += included.unsupported_record_count
+        self.invalid += included.invalid_record_count
+
+    def _apply_feature(self, command: _ParsedCommand) -> None:
+        provenance = ConnectionProvenance(
+            source=self.effective_source,
+            path=self.path,
+            archive_member=self.archive_member,
+            line_number=command.line_number,
+            command=command.raw,
+            include_chain=self.include_chain,
+        )
+        raw_id = command.options.get("id")
+        repeated = raw_id is not None and bool(
+            self.seen_ids.get(raw_id.casefold(), 0),
+        )
+        created = _feature_instances(
+            code=self.code,
+            command=command,
+            source=self.effective_source,
+            provenance=provenance,
+            seen_ids=self.seen_ids,
+        )
+        if repeated and raw_id is not None:
+            self.features = [
+                _suffix_first_repeated_id(feature, raw_id=raw_id)
+                for feature in self.features
+            ]
+        self.features = _overlay_features(
+            self.features,
+            created,
+            diagnostics=self.diagnostics,
+        )
+
+    def _record_invalid(
+        self,
+        diagnostic_code: DiagnosticCode,
+        message: str,
+        *,
+        line_number: int,
+        offending_value: object,
+        cause: Exception | None = None,
+    ) -> None:
+        self.invalid += 1
+        self.diagnostics.append(
+            _diagnostic(
+                diagnostic_code,
+                message,
+                line_number=line_number,
+                path=self.path,
+                offending_value=offending_value,
+                cause=cause,
+            ),
+        )
+
+
+def _parse_commands(  # noqa: PLR0913
     *,
     code: str,
     text: str,
@@ -622,215 +879,17 @@ def _parse_commands(  # noqa: C901, PLR0912, PLR0913, PLR0915
     document_ids: tuple[str, ...],
     strict_lines: bool = False,
 ) -> ShadowConnectionResult:
-    features: list[ConnectionFeature] = []
-    diagnostics: list[Diagnostic] = []
-    clear_all = False
-    clear_ids: list[str] = []
-    recognized = 0
-    unsupported = 0
-    invalid = 0
-    seen_ids: dict[str, int] = {}
-    processed_documents = list(document_ids)
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if (match := _SHADOW_LINE_RE.match(line)) is None:
-            stripped = line.strip()
-            suspect = (
-                bool(stripped)
-                if strict_lines
-                else _SUSPECT_SNAP_RE.match(line) is not None
-            )
-            if suspect:
-                invalid += 1
-                diagnostics.append(
-                    _diagnostic(
-                        DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
-                        f"unrecognized LDCad metadata line: {stripped!r}",
-                        line_number=line_number,
-                        path=path,
-                        offending_value=stripped,
-                    ),
-                )
-            continue
-        kind = match.group(1).upper()
-        raw = line.strip()
-        try:
-            options = _tokenize_options(match.group(2))
-        except ValueError as error:
-            invalid += 1
-            diagnostics.append(
-                _diagnostic(
-                    DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE,
-                    f"invalid LDCad {kind} record: {error}",
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                    cause=error,
-                ),
-            )
-            continue
-        if (allowed := _SUPPORTED_OPTIONS.get(kind)) is None:
-            unsupported += 1
-            diagnostics.append(
-                _diagnostic(
-                    DiagnosticCode.CONNECTION_UNSUPPORTED_RECORD,
-                    f"unsupported LDCad connection record {kind}",
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                ),
-            )
-            continue
-        unknown = tuple(key for key in options if key not in allowed)
-        if unknown:
-            unsupported += 1
-            diagnostics.extend(
-                _diagnostic(
-                    DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION,
-                    f"unsupported {kind} option {key!r}",
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                )
-                for key in unknown
-            )
-            options = {key: value for key, value in options.items() if key in allowed}
-        missing = tuple(
-            key for key in _REQUIRED_OPTIONS.get(kind, ()) if not options.get(key)
-        )
-        if missing:
-            invalid += 1
-            diagnostics.append(
-                _diagnostic(
-                    DiagnosticCode.CONNECTION_MISSING_REQUIRED_OPTION,
-                    f"{kind} is missing required option(s): {', '.join(missing)}",
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                ),
-            )
-            continue
-        command = _ParsedCommand(kind, options, line_number, raw)
-        provenance = ConnectionProvenance(
-            source=effective_source,
-            path=path,
-            archive_member=archive_member,
-            line_number=line_number,
-            command=raw,
-            include_chain=include_chain,
-        )
-        try:
-            _validate_common_options(kind, options)
-            match kind:
-                case "SNAP_CLEAR":
-                    if identifier := options.get("id"):
-                        clear_ids.append(identifier)
-                        features = [
-                            feature
-                            for feature in features
-                            if (feature.metadata_id or "").casefold()
-                            != identifier.casefold()
-                        ]
-                    else:
-                        clear_all = True
-                        clear_ids.clear()
-                        features.clear()
-                case "SNAP_INCL":
-                    raw_marker = options.get("id")
-                    marker_occurrence = (
-                        seen_ids.get(raw_marker.casefold(), 0) if raw_marker else 0
-                    )
-                    if raw_marker is None:
-                        marker = f"snap_incl@L{line_number}"
-                    elif marker_occurrence:
-                        marker = f"{raw_marker}@L{line_number}"
-                    else:
-                        marker = raw_marker
-                    included = include_resolver(
-                        command,
-                        (*include_chain, marker),
-                    )
-                    if raw_marker is not None:
-                        seen_ids[raw_marker.casefold()] = marker_occurrence + 1
-                    features = _overlay_features(
-                        features,
-                        included.features,
-                        diagnostics=diagnostics,
-                    )
-                    diagnostics.extend(included.diagnostics)
-                    source_count += included.source_count
-                    processed_documents.extend(included.document_ids)
-                    recognized += included.recognized_record_count
-                    unsupported += included.unsupported_record_count
-                    invalid += included.invalid_record_count
-                case _:
-                    raw_id = options.get("id")
-                    repeated = raw_id is not None and bool(
-                        seen_ids.get(raw_id.casefold(), 0),
-                    )
-                    created = _feature_instances(
-                        code=code,
-                        command=command,
-                        source=effective_source,
-                        provenance=provenance,
-                        seen_ids=seen_ids,
-                    )
-                    if repeated and raw_id is not None:
-                        features = [
-                            _suffix_first_repeated_id(feature, raw_id=raw_id)
-                            for feature in features
-                        ]
-                    features = _overlay_features(
-                        features,
-                        created,
-                        diagnostics=diagnostics,
-                    )
-        except FileNotFoundError as error:
-            invalid += 1
-            diagnostics.append(
-                _diagnostic(
-                    DiagnosticCode.CONNECTION_INCLUDE_NOT_FOUND,
-                    str(error),
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                    cause=error,
-                ),
-            )
-            continue
-        except (IndexError, KeyError, TypeError, ValueError) as error:
-            invalid += 1
-            code_value = (
-                error.code
-                if isinstance(error, _MetadataValueError)
-                else DiagnosticCode.CONNECTION_INVALID_OPTION_VALUE
-            )
-            diagnostics.append(
-                _diagnostic(
-                    code_value,
-                    f"invalid LDCad {kind} metadata: {error}",
-                    line_number=line_number,
-                    path=path,
-                    offending_value=raw,
-                    cause=error,
-                ),
-            )
-            continue
-        recognized += 1
-    return ShadowConnectionResult(
-        features=tuple(features),
-        clear_all=clear_all,
-        clear_ids=tuple(clear_ids),
-        diagnostics=_deduplicate_cycle_diagnostics(diagnostics),
-        source_count=(
-            len(dict.fromkeys(processed_documents))
-            if processed_documents
-            else source_count
-        ),
-        recognized_record_count=recognized,
-        unsupported_record_count=unsupported,
-        invalid_record_count=invalid,
-        document_ids=tuple(dict.fromkeys(processed_documents)),
-    )
+    return _CommandParser(
+        code=code,
+        path=path,
+        archive_member=archive_member,
+        effective_source=effective_source,
+        include_chain=include_chain,
+        include_resolver=include_resolver,
+        strict_lines=strict_lines,
+        source_count=source_count,
+        processed_documents=list(document_ids),
+    ).parse(text)
 
 
 def _tokenize_options(value: str) -> dict[str, str]:
@@ -940,126 +999,162 @@ def _feature_for_command(
     code: str,
     command: _ParsedCommand,
 ) -> ConnectionFeature:
-    options = command.options
-    identifier = options.get("id")
-    group = options.get("group")
     match command.kind:
         case "SNAP_CYL":
-            sections = _sections(options["secs"])
-            role = _role(options.get("gender"))
-            slide = _boolean(options.get("slide"), default=False)
-            kind = _cylinder_kind(
-                role=role,
-                sections=sections,
-                label=" ".join(value for value in (identifier, group) if value),
-                slide=slide,
-                caps=_caps(options.get("caps")),
-            )
-            freedoms = {ConnectionFreedom.ROTATE}
-            if slide:
-                freedoms.add(ConnectionFreedom.SLIDE)
-            return ConnectionFeature(
-                kind=kind,
-                role=role,
-                position=Vector(0, 0, 0),
-                frame=Identity(),
-                profile=CylindricalProfile(
-                    sections=sections,
-                    centered=_boolean(options.get("center"), default=False),
-                    friction=not slide,
-                    caps=_caps(options.get("caps")),
-                ),
-                name=identifier or group or "LDCad cylinder",
-                group=group,
-                freedoms=frozenset(freedoms),
-                owner_code=code,
-            )
+            return _cylinder_feature(code=code, options=command.options)
         case "SNAP_CLP":
-            if (gender := options.get("gender")) is not None and _role(
-                gender
-            ) is not ConnectionRole.FEMALE:
-                message = "SNAP_CLP gender must be female"
-                raise ValueError(message)
-            freedoms = {ConnectionFreedom.ROTATE}
-            if _boolean(options.get("slide"), default=False):
-                freedoms.add(ConnectionFreedom.SLIDE)
-            radius = _finite_float(options.get("radius", "4"))
-            length = _finite_float(options.get("length", "8"))
-            if radius <= 0 or length <= 0:
-                message = "SNAP_CLP radius and length must be positive"
-                raise ValueError(message)
-            return ConnectionFeature(
-                kind=ConnectionKind.CLIP,
-                role=ConnectionRole.FEMALE,
-                position=Vector(0, 0, 0),
-                frame=Identity(),
-                profile=CylindricalProfile(
-                    sections=(
-                        CylindricalSection(
-                            SectionShape.ROUND,
-                            radius,
-                            length,
-                        ),
-                    ),
-                    centered=_boolean(options.get("center"), default=False),
-                ),
-                name=identifier or group or "LDCad clip",
-                group=group,
-                freedoms=frozenset(freedoms),
-                owner_code=code,
-            )
+            return _clip_feature(code=code, options=command.options)
         case "SNAP_FGR":
-            freedoms = {ConnectionFreedom.ROTATE}
-            sequence = _float_tuple(options["seq"])
-            radius = _finite_float(options.get("radius", "6"))
-            if any(value <= 0 for value in sequence) or radius <= 0:
-                message = "SNAP_FGR sequence and radius must be positive"
-                raise ValueError(message)
-            return ConnectionFeature(
-                kind=ConnectionKind.HINGE,
-                role=ConnectionRole.NEUTRAL,
-                position=Vector(0, 0, 0),
-                frame=Identity(),
-                profile=FingerProfile(
-                    sequence=sequence,
-                    radius=radius,
-                    first_role=_role(options.get("genderofs")),
-                    centered=_boolean(options.get("center"), default=True),
-                ),
-                name=identifier or group or "LDCad fingers",
-                group=group,
-                freedoms=frozenset(freedoms),
-                owner_code=code,
-            )
+            return _finger_feature(code=code, options=command.options)
         case "SNAP_GEN":
-            placement = GenericPlacement(options.get("placement", "aligned").casefold())
-            match_mode = GenericMatch(options.get("match", "shape").casefold())
-            freedoms = (
-                frozenset((ConnectionFreedom.FREE_ROTATE,))
-                if placement is GenericPlacement.FREE
-                else frozenset()
-            )
-            bounds = _generic_bounds(options.get("bounding"))
-            return ConnectionFeature(
-                kind=ConnectionKind.GENERIC,
-                role=_role(options.get("gender")),
-                position=Vector(0, 0, 0),
-                frame=Identity(),
-                profile=GenericProfile(
-                    name=group or identifier or "generic",
-                    length=_generic_length(bounds),
-                    bounds=bounds,
-                    match=match_mode,
-                    placement=placement,
-                ),
-                name=identifier or group or "LDCad generic",
-                group=group,
-                freedoms=freedoms,
-                owner_code=code,
-            )
+            return _generic_feature(code=code, options=command.options)
         case _:
             message = f"unsupported feature command {command.kind}"
             raise ValueError(message)
+
+
+def _cylinder_feature(
+    *,
+    code: str,
+    options: Mapping[str, str],
+) -> ConnectionFeature:
+    identifier = options.get("id")
+    group = options.get("group")
+    sections = _sections(options["secs"])
+    role = _role(options.get("gender"))
+    slide = _boolean(options.get("slide"), default=False)
+    kind = _cylinder_kind(
+        role=role,
+        sections=sections,
+        label=" ".join(value for value in (identifier, group) if value),
+        slide=slide,
+        caps=_caps(options.get("caps")),
+    )
+    freedoms = {ConnectionFreedom.ROTATE}
+    if slide:
+        freedoms.add(ConnectionFreedom.SLIDE)
+    return ConnectionFeature(
+        kind=kind,
+        role=role,
+        position=Vector(0, 0, 0),
+        frame=Identity(),
+        profile=CylindricalProfile(
+            sections=sections,
+            centered=_boolean(options.get("center"), default=False),
+            friction=not slide,
+            caps=_caps(options.get("caps")),
+        ),
+        name=identifier or group or "LDCad cylinder",
+        group=group,
+        freedoms=frozenset(freedoms),
+        owner_code=code,
+    )
+
+
+def _clip_feature(
+    *,
+    code: str,
+    options: Mapping[str, str],
+) -> ConnectionFeature:
+    identifier = options.get("id")
+    group = options.get("group")
+    if (gender := options.get("gender")) is not None and _role(
+        gender
+    ) is not ConnectionRole.FEMALE:
+        message = "SNAP_CLP gender must be female"
+        raise ValueError(message)
+    freedoms = {ConnectionFreedom.ROTATE}
+    if _boolean(options.get("slide"), default=False):
+        freedoms.add(ConnectionFreedom.SLIDE)
+    radius = _finite_float(options.get("radius", "4"))
+    length = _finite_float(options.get("length", "8"))
+    if radius <= 0 or length <= 0:
+        message = "SNAP_CLP radius and length must be positive"
+        raise ValueError(message)
+    return ConnectionFeature(
+        kind=ConnectionKind.CLIP,
+        role=ConnectionRole.FEMALE,
+        position=Vector(0, 0, 0),
+        frame=Identity(),
+        profile=CylindricalProfile(
+            sections=(
+                CylindricalSection(
+                    SectionShape.ROUND,
+                    radius,
+                    length,
+                ),
+            ),
+            centered=_boolean(options.get("center"), default=False),
+        ),
+        name=identifier or group or "LDCad clip",
+        group=group,
+        freedoms=frozenset(freedoms),
+        owner_code=code,
+    )
+
+
+def _finger_feature(
+    *,
+    code: str,
+    options: Mapping[str, str],
+) -> ConnectionFeature:
+    identifier = options.get("id")
+    group = options.get("group")
+    sequence = _float_tuple(options["seq"])
+    radius = _finite_float(options.get("radius", "6"))
+    if any(value <= 0 for value in sequence) or radius <= 0:
+        message = "SNAP_FGR sequence and radius must be positive"
+        raise ValueError(message)
+    return ConnectionFeature(
+        kind=ConnectionKind.HINGE,
+        role=ConnectionRole.NEUTRAL,
+        position=Vector(0, 0, 0),
+        frame=Identity(),
+        profile=FingerProfile(
+            sequence=sequence,
+            radius=radius,
+            first_role=_role(options.get("genderofs")),
+            centered=_boolean(options.get("center"), default=True),
+        ),
+        name=identifier or group or "LDCad fingers",
+        group=group,
+        freedoms=frozenset({ConnectionFreedom.ROTATE}),
+        owner_code=code,
+    )
+
+
+def _generic_feature(
+    *,
+    code: str,
+    options: Mapping[str, str],
+) -> ConnectionFeature:
+    identifier = options.get("id")
+    group = options.get("group")
+    placement = GenericPlacement(options.get("placement", "aligned").casefold())
+    match_mode = GenericMatch(options.get("match", "shape").casefold())
+    freedoms = (
+        frozenset((ConnectionFreedom.FREE_ROTATE,))
+        if placement is GenericPlacement.FREE
+        else frozenset()
+    )
+    bounds = _generic_bounds(options.get("bounding"))
+    return ConnectionFeature(
+        kind=ConnectionKind.GENERIC,
+        role=_role(options.get("gender")),
+        position=Vector(0, 0, 0),
+        frame=Identity(),
+        profile=GenericProfile(
+            name=group or identifier or "generic",
+            length=_generic_length(bounds),
+            bounds=bounds,
+            match=match_mode,
+            placement=placement,
+        ),
+        name=identifier or group or "LDCad generic",
+        group=group,
+        freedoms=freedoms,
+        owner_code=code,
+    )
 
 
 def _transform_include(  # noqa: PLR0913 - include context is explicit
@@ -1176,7 +1271,7 @@ def _overlay_features(
     return values
 
 
-def _validate_common_options(  # noqa: C901 - shared option validation table
+def _validate_common_options(
     kind: str,
     options: Mapping[str, str],
 ) -> None:
@@ -1189,6 +1284,24 @@ def _validate_common_options(  # noqa: C901 - shared option validation table
             _boolean(options[key], default=False)
     if "gender" in options and kind == "SNAP_FGR":
         _role(options["gender"])
+    _validate_scale_option(kind, options)
+    if "mirror" in options and options["mirror"].casefold() not in {
+        "none",
+        "cor",
+        "corx",
+        "corz",
+    }:
+        message = f"invalid mirror mode {options['mirror']!r}"
+        raise _MetadataValueError(
+            message,
+            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        )
+    if "grid" in options:
+        _grid_offsets(options["grid"])
+
+
+def _validate_scale_option(kind: str, options: Mapping[str, str]) -> None:
+    """SNAP_INCL scales are vectors; every other record names an inherit mode."""
     if kind == "SNAP_INCL" and (scale_value := options.get("scale")) is not None:
         scale = _vector(scale_value, default=Vector(1, 1, 1))
         if min(abs(scale.x), abs(scale.y), abs(scale.z)) == 0:
@@ -1213,19 +1326,6 @@ def _validate_common_options(  # noqa: C901 - shared option validation table
             message,
             code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
         )
-    if "mirror" in options and options["mirror"].casefold() not in {
-        "none",
-        "cor",
-        "corx",
-        "corz",
-    }:
-        message = f"invalid mirror mode {options['mirror']!r}"
-        raise _MetadataValueError(
-            message,
-            code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
-        )
-    if "grid" in options:
-        _grid_offsets(options["grid"])
 
 
 def _sections(value: str) -> tuple[CylindricalSection, ...]:
@@ -1275,37 +1375,55 @@ def _cylinder_kind(
     slide: bool,
     caps: CylindricalCaps,
 ) -> ConnectionKind:
-    shapes = {section.shape for section in sections}
-    if SectionShape.AXLE in shapes:
+    if any(section.shape is SectionShape.AXLE for section in sections):
         return (
             ConnectionKind.AXLE
             if role is ConnectionRole.MALE
             else ConnectionKind.AXLE_HOLE
         )
-    lowered = label.casefold()
-    rigid = tuple(section for section in sections if not section.flexible)
-    radius = min((section.radius for section in rigid), default=0.0)
-    length = sum(section.length for section in sections)
-    stud_shape = (
-        len(rigid) == 1
-        and abs(radius - 6.0) <= 0.25
-        and abs(length - 4.0) <= 0.5
-        and caps is not CylindricalCaps.NONE
-    )
-    if "stud" in lowered or stud_shape:
+    if "stud" in label.casefold() or _is_stud_shaped(sections, caps=caps):
         return (
             ConnectionKind.STUD
             if role is ConnectionRole.MALE
             else ConnectionKind.STUD_RECEPTACLE
         )
-    if (
-        role is ConnectionRole.MALE
-        and abs(radius - 4.0) <= 0.35
-        and (slide or caps is CylindricalCaps.TWO)
-    ):
+    if role is ConnectionRole.MALE and _is_bar_shaped(sections, slide=slide, caps=caps):
         return ConnectionKind.BAR
     return (
         ConnectionKind.PIN if role is ConnectionRole.MALE else ConnectionKind.PIN_HOLE
+    )
+
+
+def _min_rigid_radius(sections: tuple[CylindricalSection, ...]) -> float:
+    return min(
+        (section.radius for section in sections if not section.flexible),
+        default=0.0,
+    )
+
+
+def _is_stud_shaped(
+    sections: tuple[CylindricalSection, ...],
+    *,
+    caps: CylindricalCaps,
+) -> bool:
+    rigid_count = sum(not section.flexible for section in sections)
+    length = sum(section.length for section in sections)
+    return (
+        rigid_count == 1
+        and abs(_min_rigid_radius(sections) - 6.0) <= 0.25
+        and abs(length - 4.0) <= 0.5
+        and caps is not CylindricalCaps.NONE
+    )
+
+
+def _is_bar_shaped(
+    sections: tuple[CylindricalSection, ...],
+    *,
+    slide: bool,
+    caps: CylindricalCaps,
+) -> bool:
+    return abs(_min_rigid_radius(sections) - 4.0) <= 0.35 and (
+        slide or caps is CylindricalCaps.TWO
     )
 
 
@@ -1532,35 +1650,7 @@ def _grid_offsets(value: str | None) -> tuple[Vector, ...]:
     if not dimensions:
         message = "grid must contain X/Z or X/Y/Z counts and steps"
         raise _MetadataValueError(message, code=DiagnosticCode.CONNECTION_INVALID_GRID)
-    index = 0
-    counts: list[int] = []
-    centered: list[bool] = []
-    for _ in range(dimensions):
-        is_centered = index < len(tokens) and tokens[index].casefold() == "c"
-        index += int(is_centered)
-        if index >= len(tokens):
-            message = "grid is missing an axis count"
-            raise _MetadataValueError(
-                message,
-                code=DiagnosticCode.CONNECTION_INVALID_GRID,
-            )
-        try:
-            count = int(tokens[index])
-        except ValueError as error:
-            message = f"grid count must be an integer, got {tokens[index]!r}"
-            raise _MetadataValueError(
-                message,
-                code=DiagnosticCode.CONNECTION_INVALID_GRID,
-            ) from error
-        if count <= 0:
-            message = "grid counts must be positive"
-            raise _MetadataValueError(
-                message,
-                code=DiagnosticCode.CONNECTION_INVALID_GRID,
-            )
-        counts.append(count)
-        centered.append(is_centered)
-        index += 1
+    counts, centered, index = _grid_axes(tokens, dimensions)
     if len(tokens) - index != dimensions:
         message = "grid has an invalid number of step values"
         raise _MetadataValueError(message, code=DiagnosticCode.CONNECTION_INVALID_GRID)
@@ -1608,6 +1698,43 @@ def _grid_offsets(value: str | None) -> tuple[Vector, ...]:
         for y_index, y_centered, y_step in y_values
         for z_index in range(z_count)
     )
+
+
+def _grid_axes(
+    tokens: list[str],
+    dimensions: int,
+) -> tuple[list[int], list[bool], int]:
+    """Parse per-axis counts and centering flags; return the next token index."""
+    index = 0
+    counts: list[int] = []
+    centered: list[bool] = []
+    for _ in range(dimensions):
+        is_centered = index < len(tokens) and tokens[index].casefold() == "c"
+        index += int(is_centered)
+        if index >= len(tokens):
+            message = "grid is missing an axis count"
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            )
+        try:
+            count = int(tokens[index])
+        except ValueError as error:
+            message = f"grid count must be an integer, got {tokens[index]!r}"
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            ) from error
+        if count <= 0:
+            message = "grid counts must be positive"
+            raise _MetadataValueError(
+                message,
+                code=DiagnosticCode.CONNECTION_INVALID_GRID,
+            )
+        counts.append(count)
+        centered.append(is_centered)
+        index += 1
+    return counts, centered, index
 
 
 def _grid_coordinate(
