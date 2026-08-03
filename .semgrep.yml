@@ -1,15 +1,17 @@
 # Root-anchored paths scope each rule, so intentionally unsafe fixtures under
-# tests/semgrep/ do not match enforcing rules limited to /ldraw/**. CI exercises
-# those fixtures separately with `semgrep scan --test`.
+# tests/semgrep/ do not match root-anchored enforcing rules. CI exercises those
+# fixtures separately with `semgrep scan --test`.
 rules:
-  - id: pyldraw-lint-test-workflow-must-declare-permissions
+  - id: pyldraw-workflow-must-default-deny-permissions
     languages:
       - yaml
     severity: ERROR
     paths:
       include:
-        - /.github/workflows/lint-test.yml
-    message: Deny default GITHUB_TOKEN access and grant explicit job permissions.
+        - /.github/workflows/**
+    message: >-
+      Declare top-level `permissions: {}` before `jobs:` so every job must
+      opt into GITHUB_TOKEN scopes explicitly.
     patterns:
       - pattern: |
           jobs: $JOBS

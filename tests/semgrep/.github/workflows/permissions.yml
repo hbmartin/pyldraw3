@@ -2,7 +2,7 @@ name: Missing explicit permissions
 
 on: pull_request
 
-# ruleid: pyldraw-lint-test-workflow-must-declare-permissions
+# ruleid: pyldraw-workflow-must-default-deny-permissions
 jobs:
   lint-test:
     runs-on: ubuntu-latest
@@ -14,7 +14,20 @@ on: pull_request
 
 permissions: write-all
 
-# ruleid: pyldraw-lint-test-workflow-must-declare-permissions
+# ruleid: pyldraw-workflow-must-default-deny-permissions
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+
+---
+name: Non-empty default permissions
+
+on: pull_request
+
+permissions:
+  contents: read
+
+# ruleid: pyldraw-workflow-must-default-deny-permissions
 jobs:
   lint-test:
     runs-on: ubuntu-latest
@@ -26,7 +39,7 @@ on: pull_request
 
 permissions: {}
 
-# ok: pyldraw-lint-test-workflow-must-declare-permissions
+# ok: pyldraw-workflow-must-default-deny-permissions
 jobs:
   lint-test:
     runs-on: ubuntu-latest
