@@ -1084,6 +1084,7 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    error_prefix = "could not load parts or connection metadata"
     studio = tmp_path / "studio.json"
     studio.write_text("{}", encoding="utf-8")
     model = tmp_path / "model.ldr"
@@ -1106,8 +1107,7 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
     )
     captured = capsys.readouterr()
     assert captured.err.strip() == (
-        "could not load parts or connection metadata: "
-        "shadow directory became unreadable"
+        f"{error_prefix}: shadow directory became unreadable"
     )
     assert captured.out == ""
 
@@ -1128,8 +1128,7 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
         )
     captured = capsys.readouterr()
     assert captured.err.strip() == (
-        "could not load parts or connection metadata: "
-        "shadow directory became unreadable"
+        f"{error_prefix}: shadow directory became unreadable"
     )
     assert captured.out == ""
     assert load_parts_mock.call_count == 2
@@ -1216,7 +1215,33 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
     assert edge["residual"]["entry_face_gap"] == pytest.approx(0.0)
     assert edge["residual"]["penetration"] == pytest.approx(8.0)
     contacts = payload["stud_contacts"]
-    assert contacts
+    assert len(contacts) == 16
+    assert {
+        (
+            contact["supported_index"],
+            contact["stud_feature"],
+            contact["receptacle_feature"],
+        )
+        for contact in contacts
+    } == {
+        (1, "stud@R10/stud", "stud4@R2/stud4"),
+        (1, "stud@R11/stud", "stud4@R6/stud4"),
+        (1, "stud@R12/stud", "stud4@R1/stud4"),
+        (1, "stud@R13/stud", "stud4@R5/stud4"),
+        (1, "stud@R14/stud", "stud4@R0/stud4"),
+        (1, "stud@R15/stud", "stud4@R4/stud4"),
+        (1, "stud@R8/stud", "stud4@R3/stud4"),
+        (1, "stud@R9/stud", "stud4@R7/stud4"),
+        (2, "stud@R0/stud", "stud4@R3/stud4"),
+        (2, "stud@R1/stud", "stud4@R7/stud4"),
+        (2, "stud@R2/stud", "stud4@R2/stud4"),
+        (2, "stud@R3/stud", "stud4@R6/stud4"),
+        (2, "stud@R4/stud", "stud4@R1/stud4"),
+        (2, "stud@R5/stud", "stud4@R5/stud4"),
+        (2, "stud@R6/stud", "stud4@R0/stud4"),
+        (2, "stud@R7/stud", "stud4@R4/stud4"),
+    }
+    assert {contact["stud_index"] for contact in contacts} == {0}
     assert all(contact["stud_feature"] for contact in contacts)
     assert all(contact["receptacle_feature"] for contact in contacts)
     assert all(contact["residual"]["penetration"] > 0 for contact in contacts)

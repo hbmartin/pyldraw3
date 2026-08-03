@@ -605,6 +605,37 @@ def test_document_metadata_aggregation_is_cached_and_invalidated(
         assert aggregate_mock.call_count == 2
 
 
+def test_document_metadata_conflicts_mark_geometry_incomplete(tmp_path: Path) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    first = parse_ldcad_text(
+        "first-document",
+        "0 !LDCAD SNAP_CYL [id=document-stud] [gender=M] [secs=R 6 4]\n",
+    )
+    second = parse_ldcad_text(
+        "second-document",
+        "0 !LDCAD SNAP_CYL [id=document-stud] [gender=M] [secs=R 6 4] [pos=0 0 20]\n",
+    )
+
+    with patch.object(
+        parts,
+        "_connection_document_results",
+        return_value=(first, second),
+    ):
+        geometry = parts.geometry("oneplate")
+
+    report = geometry.connection_metadata
+    assert report is not None
+    conflicts = [
+        diagnostic
+        for diagnostic in geometry.diagnostics
+        if diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+    ]
+    assert len(conflicts) == 1
+    assert conflicts[0] in report.diagnostics
+    assert geometry.diagnostics == report.diagnostics
+    assert geometry.complete is False
+
+
 def test_studio_valid_and_document_failure_contributions_share_one_source(
     tmp_path: Path,
 ) -> None:
@@ -783,6 +814,43 @@ def test_nested_shadow_edits_use_explicit_parts_cache_invalidation(
     }
 
     second = Parts.fresh(parts.path, connection_shadows=(shadow,))
+    assert second is not first
+    assert {feature.metadata_id for feature in second.connections("oneplate")} == {
+        "new"
+    }
+
+
+def test_replaced_shadow_directory_rekeys_parts_cache(tmp_path: Path) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    shadow = tmp_path / "shadow"
+    replacement = tmp_path / "replacement"
+    retired = tmp_path / "retired"
+    _write_tree(
+        shadow,
+        {"p/stud.dat": "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=old]\n"},
+    )
+    _write_tree(
+        replacement,
+        {"p/stud.dat": "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=new]\n"},
+    )
+    Parts.clear_cache()
+
+    first = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert {feature.metadata_id for feature in first.connections("oneplate")} == {"old"}
+
+    original_stat = shadow.stat()
+    os.utime(
+        replacement,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    shadow.rename(retired)
+    replacement.rename(shadow)
+    replacement_stat = shadow.stat()
+    assert replacement_stat.st_mtime_ns == original_stat.st_mtime_ns
+    assert replacement_stat.st_size == original_stat.st_size
+    assert replacement_stat.st_ino != original_stat.st_ino
+
+    second = Parts.get(parts.path, connection_shadows=(shadow,))
     assert second is not first
     assert {feature.metadata_id for feature in second.connections("oneplate")} == {
         "new"

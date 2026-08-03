@@ -221,8 +221,11 @@ def _combined_connection_metadata(
             ):
                 continue
             has_document_result = True
+            previous_diagnostic_count = len(metadata_result.diagnostics)
             metadata_result = metadata_result.combined(result)
-            document_diagnostics.extend(result.diagnostics)
+            document_diagnostics.extend(
+                metadata_result.diagnostics[previous_diagnostic_count:],
+            )
     connection_metadata = local.connection_metadata
     if has_document_result:
         connection_metadata = metadata_report(

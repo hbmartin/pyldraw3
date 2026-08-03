@@ -639,7 +639,7 @@ def _source_stat_key(source: str | Path) -> _SourceStatKey:
                 "directory",
                 stat_result.st_mtime_ns,
                 stat_result.st_size,
-                "",
+                f"{stat_result.st_dev}:{stat_result.st_ino}",
             )
     except OSError:
         return (str(path), "unreadable", -1, -1, "")

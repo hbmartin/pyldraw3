@@ -762,20 +762,22 @@ def _strict_stud_direction(
     for stud in studs:
         # The entry-face residual depends only on the stud and the
         # receptacle occurrence, so one check covers every candidate.
-        entry = _entry_face_residual(
-            stud,
-            receptacle_occurrence,
-            tolerance=tolerance,
-        )
-        if entry is None:
+        if (
+            entry := _entry_face_residual(
+                stud,
+                receptacle_occurrence,
+                tolerance=tolerance,
+            )
+        ) is None:
             continue
-        best = _best_strict_candidate(
-            stud,
-            receptacles,
-            tolerance=tolerance,
-            angular_tolerance=angular_tolerance,
-        )
-        if best is None:
+        if (
+            best := _best_strict_candidate(
+                stud,
+                receptacles,
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            )
+        ) is None:
             continue
         receptacle, residual = best
         entry_gap, penetration = entry
