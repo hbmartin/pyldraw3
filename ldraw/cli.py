@@ -616,8 +616,13 @@ def _load_parts_with_connection_sources(
 
 
 def _report_connection_source_error(error: BadZipFile | OSError) -> None:
-    """Print one controlled metadata-source failure."""
-    print(f"could not load connection metadata source: {error}", file=sys.stderr)
+    """Print one controlled failure from parts or metadata loading."""
+    match error:
+        case BadZipFile():
+            message = f"could not load connection metadata source: {error}"
+        case _:
+            message = f"could not load parts or connection metadata: {error}"
+    print(message, file=sys.stderr)
 
 
 def _suggested_import(entry: CatalogEntry) -> str | None:

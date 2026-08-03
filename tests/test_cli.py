@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from zipfile import BadZipFile
 
 import pytest
 import requests
@@ -1036,31 +1037,43 @@ def test_wrong_kind_connection_sources_fail_before_parts_loading(
     config_load_mock.assert_not_called()
 
 
-@patch("ldraw.cli._load_parts", side_effect=OSError("unreadable source"))
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            OSError("unreadable source"),
+            "could not load parts or connection metadata: unreadable source",
+        ),
+        (
+            BadZipFile("truncated archive"),
+            "could not load connection metadata source: truncated archive",
+        ),
+    ],
+)
 def test_connection_source_load_failure_is_reported_without_traceback(
-    load_parts_mock: MagicMock,
+    error: OSError | BadZipFile,
+    expected: str,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     studio = tmp_path / "studio.json"
     studio.write_text("{}", encoding="utf-8")
 
-    assert (
-        main(
-            [
-                "parts",
-                "geometry",
-                "3001",
-                "--studio-metadata",
-                str(studio),
-            ],
+    with patch("ldraw.cli._load_parts", side_effect=error) as load_parts_mock:
+        assert (
+            main(
+                [
+                    "parts",
+                    "geometry",
+                    "3001",
+                    "--studio-metadata",
+                    str(studio),
+                ],
+            )
+            == 1
         )
-        == 1
-    )
     captured = capsys.readouterr()
-    assert captured.err.strip() == (
-        "could not load connection metadata source: unreadable source"
-    )
+    assert captured.err.strip() == expected
     assert captured.out == ""
     load_parts_mock.assert_called_once()
 
@@ -1093,7 +1106,8 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
     )
     captured = capsys.readouterr()
     assert captured.err.strip() == (
-        "could not load connection metadata source: shadow directory became unreadable"
+        "could not load parts or connection metadata: "
+        "shadow directory became unreadable"
     )
     assert captured.out == ""
 
@@ -1114,7 +1128,8 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
         )
     captured = capsys.readouterr()
     assert captured.err.strip() == (
-        "could not load connection metadata source: shadow directory became unreadable"
+        "could not load parts or connection metadata: "
+        "shadow directory became unreadable"
     )
     assert captured.out == ""
     assert load_parts_mock.call_count == 2
@@ -1176,7 +1191,8 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
 
     assert main(["inspect", str(model), "--format", "json"]) == 0
 
-    graphs = json.loads(capsys.readouterr().out)["connection_graphs"]
+    payload = json.loads(capsys.readouterr().out)
+    graphs = payload["connection_graphs"]
     assert graphs["nodes"] == [0, 1, 2]
     assert len(graphs["confirmed"]) == 16
     assert graphs["optimistic"] == graphs["confirmed"]
@@ -1199,6 +1215,14 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
     assert edge["residual"]["roll_alignment"] == pytest.approx(1.0)
     assert edge["residual"]["entry_face_gap"] == pytest.approx(0.0)
     assert edge["residual"]["penetration"] == pytest.approx(8.0)
+    contacts = payload["stud_contacts"]
+    assert contacts
+    assert all(contact["stud_feature"] for contact in contacts)
+    assert all(contact["receptacle_feature"] for contact in contacts)
+    assert all(contact["residual"]["penetration"] > 0 for contact in contacts)
+    assert all(
+        contact["residual"]["distance"] == pytest.approx(0.0) for contact in contacts
+    )
 
 
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
