@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -620,14 +621,42 @@ def _catalog_search_rank(entry: CatalogEntry, query: str) -> int:
     return 5
 
 
-def _source_stat_key(source: str | Path) -> tuple[str, int, int]:
-    """Key a connection source by path and shallow content fingerprint."""
+_SourceStatKey = tuple[str, str, int, int, str]
+
+
+def _source_stat_key(source: str | Path) -> _SourceStatKey:
+    """Key a connection source by path, kind, and relevant tree metadata."""
     path = Path(source).expanduser()
     try:
         stat_result = path.stat()
+        if path.is_dir():
+            digest = hashlib.sha256()
+            descendants = sorted(item for item in path.rglob("*") if item.is_file())
+            for descendant in descendants:
+                descendant_stat = descendant.stat()
+                relative_path = descendant.relative_to(path).as_posix()
+                digest.update(
+                    (
+                        f"{relative_path}\0{descendant_stat.st_size}\0"
+                        f"{descendant_stat.st_mtime_ns}\n"
+                    ).encode(),
+                )
+            return (
+                str(path),
+                "directory",
+                stat_result.st_mtime_ns,
+                stat_result.st_size,
+                digest.hexdigest(),
+            )
     except OSError:
-        return (str(path), -1, -1)
-    return (str(path), stat_result.st_mtime_ns, stat_result.st_size)
+        return (str(path), "unreadable", -1, -1, "")
+    return (
+        str(path),
+        "file",
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        "",
+    )
 
 
 @lru_cache(maxsize=8)
@@ -636,15 +665,15 @@ def _parts_for_stat(
     _stat_key: tuple[int, int],
     _tree_fingerprint: str | None,
     _parts_lst_md5: str | None,
-    connection_shadows: tuple[tuple[str, int, int], ...],
-    studio_metadata: tuple[tuple[str, int, int], ...],
+    connection_shadows: tuple[_SourceStatKey, ...],
+    studio_metadata: tuple[_SourceStatKey, ...],
 ) -> Parts:
     parts = Parts(parts_lst)
     parts._memo_building = True  # noqa: SLF001 - factory owns the instance
     try:
-        for source, _, _ in connection_shadows:
+        for source, *_ in connection_shadows:
             parts.add_connection_shadow(source)
-        for source, _, _ in studio_metadata:
+        for source, *_ in studio_metadata:
             parts.add_studio_metadata(source)
     finally:
         parts._memo_building = False  # noqa: SLF001
@@ -756,7 +785,7 @@ class Parts:
             tuple[tuple[ConnectionFeature, ...], bool],
         ] = {}
         self._tyre_rim_compatibility: tuple[PartCompatibility, ...] | None = None
-        self._memo_building = False
+        self._memo_building: bool = False
 
         self.load()
 
@@ -1206,9 +1235,18 @@ class Parts:
         return (
             *(library.connections_for(code, siblings=shadows) for library in shadows),
             *(
-                library.connections_for(code)
+                library._part_feature_contribution(code)  # noqa: SLF001
                 for library in self._studio_connection_libraries
             ),
+        )
+
+    def _connection_document_results(
+        self,
+        codes: frozenset[str],
+    ) -> tuple[ShadowConnectionResult, ...]:
+        return tuple(
+            library._document_result_for(codes)  # noqa: SLF001
+            for library in self._studio_connection_libraries
         )
 
     def _connection_overrides_for(

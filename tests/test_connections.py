@@ -69,6 +69,11 @@ class _TyreOnlyCompatibilityLibrary(_PartLibraryAdapter):
 
 def _connection_parts(tmp_path: Path) -> Parts:
     root = tmp_path / "ldraw"
+    scout_receptacles = "".join(
+        f"1 16 {x} 0 {z} {_FLIP_Y} stud4.dat\n"
+        for x in (-4, 4)
+        for z in (-30, -10, 10, 30)
+    )
     files = {
         "p/clip5.dat": ("0 Clip Primitive\n2 24 -8 -4 -8 8 4 8\n"),
         "p/peghole.dat": ("0 Technic Pin Hole End\n2 24 -8 0 -8 8 2 8\n"),
@@ -151,8 +156,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         ),
         "parts/3958.dat": (
             "0 Synthetic Scout Receptacle Plate\n"
-            "2 24 -6 0 -40 6 4 40\n"
-            f"1 16 0 0 0 {_FLIP_Y} stud4.dat\n"
+            f"2 24 -6 0 -40 6 4 40\n{scout_receptacles}"
         ),
         "parts/studmeta.dat": (
             "0 Plate with One Stud and Inline Metadata\n"
@@ -960,10 +964,11 @@ def test_strict_stud_contacts_require_entry_orientation_and_penetration(
     plate, receptacle = inspection.occurrences
     assert len(plate.connections) == 16
     assert {feature.kind for feature in plate.connections} == {ConnectionKind.STUD}
-    assert [feature.kind for feature in receptacle.connections] == [
+    assert len(receptacle.connections) == 8
+    assert {feature.kind for feature in receptacle.connections} == {
         ConnectionKind.STUD_RECEPTACLE,
-    ]
-    assert receptacle.connections[0].axis == receptacle_axis
+    }
+    assert all(feature.axis == receptacle_axis for feature in receptacle.connections)
     assert bounds_gap(plate.bounds, receptacle.bounds).intersects
     assert inspection.connection_contacts() == ()
     assert inspection.stud_contacts() == ()
@@ -974,7 +979,7 @@ def test_stud_contacts_pair_each_stud_with_the_nearest_receptacle(
 ) -> None:
     parts = _connection_parts(tmp_path)
     model = parse_model(
-        f"1 16 0 0 18 {_IDENTITY} onestud.dat\n"
+        f"1 16 0 0 20 {_IDENTITY} onestud.dat\n"
         f"1 16 0 -4 0 {_IDENTITY} dualrecept.dat\n",
     )
 
@@ -982,8 +987,8 @@ def test_stud_contacts_pair_each_stud_with_the_nearest_receptacle(
 
     contacts = inspection.connection_contacts()
     assert len(contacts) == 1
-    # Lexicographically "stud4@R0/stud4" sorts first; the nearest
-    # receptacle to the stud at z=18 is the second one at z=20.
+    # Lexicographically "stud4@R0/stud4" sorts first; the aligned
+    # receptacle at z=20 is the second one.
     assert contacts[0].first.feature_id == "stud@R0/stud"
     assert contacts[0].second.feature_id == "stud4@R1/stud4"
     assert contacts[0].second.position == Vector(0, -4, 20)

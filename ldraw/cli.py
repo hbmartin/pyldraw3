@@ -14,7 +14,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from zipfile import BadZipFile
+from zipfile import BadZipFile, is_zipfile
 
 import requests
 import yaml
@@ -564,20 +564,60 @@ def _load_parts(
     return parts
 
 
-def _missing_connection_source(
+def _invalid_connection_source(
     *,
     connection_shadows: tuple[Path, ...],
     studio_metadata: tuple[Path, ...],
 ) -> str | None:
-    """Return an error message for the first nonexistent connection source."""
+    """Return an error message for the first unusable connection source."""
     for flag, sources in (
         ("--ldcad-shadow", connection_shadows),
         ("--studio-metadata", studio_metadata),
     ):
         for source in sources:
-            if not Path(source).expanduser().exists():
+            path = Path(source).expanduser()
+            if not path.exists():
                 return f"{flag} source not found: {source}"
+            if flag == "--ldcad-shadow":
+                try:
+                    valid = path.is_dir() or (path.is_file() and is_zipfile(path))
+                except OSError:
+                    valid = False
+                if not valid:
+                    return (
+                        "--ldcad-shadow source must be a directory or ZIP/CSL "
+                        f"archive: {source}"
+                    )
+                continue
+            try:
+                if not path.is_file():
+                    return f"--studio-metadata source must be a JSON file: {source}"
+                with path.open("rb") as source_file:
+                    source_file.read(1)
+            except OSError:
+                return f"--studio-metadata source must be a JSON file: {source}"
     return None
+
+
+def _load_parts_with_connection_sources(
+    *,
+    connection_shadows: tuple[Path, ...],
+    studio_metadata: tuple[Path, ...],
+) -> Parts | None:
+    """Load parts with controlled failures for optional metadata sources."""
+    try:
+        return _load_parts(
+            connection_shadows=connection_shadows,
+            studio_metadata=studio_metadata,
+        )
+    except (BadZipFile, OSError) as error:
+        _report_connection_source_error(error)
+        return None
+
+
+def _report_connection_source_error(error: BadZipFile | OSError) -> None:
+    """Print one controlled metadata-source failure."""
+    print(f"could not load connection metadata source: {error}", file=sys.stderr)
 
 
 def _suggested_import(entry: CatalogEntry) -> str | None:
@@ -629,7 +669,7 @@ def parts_geometry_command(
 ) -> int:
     """Show expanded geometry and completeness diagnostics for one part."""
     if (
-        error := _missing_connection_source(
+        error := _invalid_connection_source(
             connection_shadows=connection_shadows,
             studio_metadata=studio_metadata,
         )
@@ -637,7 +677,7 @@ def parts_geometry_command(
         print(error, file=sys.stderr)
         return 1
     if (
-        parts := _load_parts(
+        parts := _load_parts_with_connection_sources(
             connection_shadows=connection_shadows,
             studio_metadata=studio_metadata,
         )
@@ -645,6 +685,9 @@ def parts_geometry_command(
         return 1
     try:
         geometry = parts.geometry(code)
+    except (BadZipFile, OSError) as error:
+        _report_connection_source_error(error)
+        return 1
     except PartError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -719,7 +762,7 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
         print("--gap-threshold must be non-negative", file=sys.stderr)
         return 1
     if (
-        error := _missing_connection_source(
+        error := _invalid_connection_source(
             connection_shadows=connection_shadows,
             studio_metadata=studio_metadata,
         )
@@ -727,7 +770,7 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
         print(error, file=sys.stderr)
         return 1
     if (
-        parts := _load_parts(
+        parts := _load_parts_with_connection_sources(
             connection_shadows=connection_shadows,
             studio_metadata=studio_metadata,
         )
@@ -748,6 +791,9 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
             minimum_gap=gap_threshold,
             chronological=chronological,
         )
+    except (BadZipFile, OSError) as error:
+        _report_connection_source_error(error)
+        return 1
     except PartError as exc:
         print(f"{file}: {exc}", file=sys.stderr)
         return 1
