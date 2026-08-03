@@ -12,6 +12,7 @@ permissions: {}
 
 jobs:
   lint-test:
+    name: Lint and test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,8 +41,6 @@ jobs:
         uv run ty check ldraw
         uv run pyrefly check ldraw
     - name: Run complexity checks
-      # Pre-existing warnings are grandfathered per function in
-      # whitelizard.txt; any newly introduced warning fails CI.
       run: uv run lizard --languages python ldraw tests
     - name: Run package metadata checks
       run: uv run pyroma --min 10 .

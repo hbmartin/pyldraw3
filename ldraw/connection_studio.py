@@ -352,9 +352,7 @@ def _studio_feature(
         name=metadata_id or f"Studio {normalized_type}",
         feature_id=feature_id,
         metadata_id=metadata_id,
-        group=(
-            str(connection["group"]) if connection.get("group") is not None else None
-        ),
+        group=(str(group) if (group := connection.get("group")) is not None else None),
         freedoms=freedoms,
         source=ConnectionSource.STUDIO,
         confidence=0.95,
