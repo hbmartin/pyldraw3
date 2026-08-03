@@ -992,27 +992,103 @@ def test_missing_connection_sources_fail_before_parts_loading(
             assert captured.out == ""
 
 
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_wrong_kind_connection_sources_fail_before_parts_loading(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+    ordinary = tmp_path / "ordinary.txt"
+    ordinary.write_text("not an archive", encoding="utf-8")
+    corrupt = tmp_path / "corrupt.csl"
+    corrupt.write_bytes(b"PK\x03\x04not a valid archive")
+    studio_directory = tmp_path / "studio"
+    studio_directory.mkdir()
+
+    cases = (
+        (
+            "--ldcad-shadow",
+            ordinary,
+            f"--ldcad-shadow source must be a directory or ZIP/CSL archive: {ordinary}",
+        ),
+        (
+            "--ldcad-shadow",
+            corrupt,
+            f"--ldcad-shadow source must be a directory or ZIP/CSL archive: {corrupt}",
+        ),
+        (
+            "--studio-metadata",
+            studio_directory,
+            f"--studio-metadata source must be a JSON file: {studio_directory}",
+        ),
+    )
+    for command in (["parts", "geometry", "3001"], ["inspect", str(model)]):
+        for flag, source, expected in cases:
+            assert main([*command, flag, str(source)]) == 1
+            captured = capsys.readouterr()
+            assert captured.err.strip() == expected
+            assert captured.out == ""
+    config_load_mock.assert_not_called()
+
+
+@patch("ldraw.cli._load_parts", side_effect=OSError("unreadable source"))
+def test_connection_source_load_failure_is_reported_without_traceback(
+    load_parts_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    studio = tmp_path / "studio.json"
+    studio.write_text("{}", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "parts",
+                "geometry",
+                "3001",
+                "--studio-metadata",
+                str(studio),
+            ],
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.err.strip() == (
+        "could not load connection metadata source: unreadable source"
+    )
+    assert captured.out == ""
+    load_parts_mock.assert_called_once()
+
+
 def _scout_library_config(tmp_path: Path) -> Config:
     """Write the synthetic Scout parts library used by the fixture models."""
     root = tmp_path / "ldraw"
     identity = "1 0 0 0 1 0 0 0 1"
     flip_y = "1 0 0 0 -1 0 0 0 -1"
+    stud_references = "".join(
+        f"1 16 {x} 0 {z} {identity} stud.dat\n"
+        for x in (-70, -50, -30, -10, 10, 30, 50, 70)
+        for z in (-4, 4)
+    )
+    receptacle_references = "".join(
+        f"1 16 {x} 0 {z} {flip_y} stud4.dat\n"
+        for x in (-4, 4)
+        for z in (-30, -10, 10, 30)
+    )
     files = {
         "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
         "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
         "parts/3035.dat": (
-            "0 Synthetic Scout Upper Plate\n"
-            "2 24 -80 0 -6 80 4 6\n"
-            + "".join(
-                f"1 16 {x} 0 {z} {identity} stud.dat\n"
-                for x in (-70, -50, -30, -10, 10, 30, 50, 70)
-                for z in (-4, 4)
-            )
+            f"0 Synthetic Scout Upper Plate\n2 24 -80 0 -6 80 4 6\n{stud_references}"
         ),
         "parts/3958.dat": (
             "0 Synthetic Scout Receptacle Plate\n"
-            "2 24 -6 0 -40 6 4 40\n"
-            f"1 16 0 0 0 {flip_y} stud4.dat\n"
+            f"2 24 -6 0 -40 6 4 40\n{receptacle_references}"
         ),
     }
     for name, text in files.items():
@@ -1062,7 +1138,7 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
     assert edge["first"] == 0
     assert edge["second"] == 1
     assert edge["first_feature"] == "stud@R10/stud"
-    assert edge["second_feature"] == "stud4@R0/stud4"
+    assert edge["second_feature"] == "stud4@R2/stud4"
     assert edge["status"] == "confirmed"
     assert edge["residual"]["alignment"] == pytest.approx(1.0)
     assert edge["residual"]["roll_alignment"] == pytest.approx(1.0)
@@ -1099,10 +1175,8 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert "connection_contacts" in payload
     assert set(payload["connection_graphs"]) == {"confirmed", "nodes", "optimistic"}
     assert payload["connection_graphs"]["nodes"] == [0, 1]
-    assert payload["stud_contacts"]
-    assert payload["stud_contacts"][0]["stud_feature"]
-    assert payload["stud_contacts"][0]["receptacle_feature"]
-    assert payload["stud_contacts"][0]["residual"]["penetration"] > 0
+    assert payload["stud_contacts"] == []
+    assert payload["connection_graphs"]["confirmed"] == []
     assert {item["code"] for item in payload["diagnostics"]} == {
         "part.reference_unresolved"
     }

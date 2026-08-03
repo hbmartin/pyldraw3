@@ -23,6 +23,7 @@ from ldraw.connection_inference import (
     same_interface,
 )
 from ldraw.connection_metadata import (
+    ConnectionMetadataCoverage,
     ShadowConnectionResult,
     metadata_report,
     parse_ldcad_text,
@@ -46,14 +47,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ldraw")
 
 _STUD_PREFIX = "stud"
-_INFERRED_SOURCES = frozenset(
+_INFERRED_SOURCES: frozenset[ConnectionSource] = frozenset(
     {
         ConnectionSource.HEURISTIC,
         ConnectionSource.PRIMITIVE,
         ConnectionSource.SHORTCUT,
     },
 )
-_METADATA_SOURCES = frozenset(
+_METADATA_SOURCES: frozenset[ConnectionSource] = frozenset(
     {
         ConnectionSource.LDCAD_INLINE,
         ConnectionSource.LDCAD_SHADOW,
@@ -108,6 +109,11 @@ class _ConnectionMetadataSource(Protocol):
 
 
 @runtime_checkable
+class _ConnectionDocumentFailureSource(Protocol):
+    def _connection_document_failures(self) -> tuple[ShadowConnectionResult, ...]: ...
+
+
+@runtime_checkable
 class _ConnectionOverrideSource(Protocol):
     def _connection_overrides_for(
         self,
@@ -159,6 +165,34 @@ def part_bounding_box(parts: _PartGeometryLibrary, code: str) -> BoundingBox:
 def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
     """Return exact expanded points, bounds, connectors, and diagnostics."""
     local = _require_local(parts, code)
+    metadata_result = local.metadata_result
+    document_diagnostics: list[Diagnostic] = []
+    if isinstance(parts, _ConnectionDocumentFailureSource):
+        seen_documents: set[str] = set()
+        for failure in parts._connection_document_failures():  # noqa: SLF001
+            documents = set(failure.document_ids)
+            if documents and documents <= seen_documents:
+                continue
+            seen_documents.update(documents)
+            if not (
+                failure.source_count
+                or failure.invalid_record_count
+                or failure.diagnostics
+            ):
+                continue
+            metadata_result = metadata_result.combined(failure)
+            document_diagnostics.extend(failure.diagnostics)
+    connection_metadata = local.connection_metadata
+    if document_diagnostics:
+        connection_metadata = metadata_report(
+            code,
+            features=local.connections,
+            result=metadata_result,
+            authoritative=(
+                connection_metadata is not None
+                and connection_metadata.coverage is ConnectionMetadataCoverage.COMPLETE
+            ),
+        )
     return PartGeometry(
         code=code,
         description=local.description,
@@ -166,8 +200,8 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
         points=local.points,
         studs=local.studs,
         connections=local.connections,
-        diagnostics=local.diagnostics,
-        connection_metadata=local.connection_metadata,
+        diagnostics=(*local.diagnostics, *document_diagnostics),
+        connection_metadata=connection_metadata,
     )
 
 

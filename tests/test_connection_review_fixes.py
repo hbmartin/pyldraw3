@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import zipfile
 from dataclasses import replace
@@ -213,6 +214,51 @@ def test_stud_contacts_pair_with_nearest_receptacle(tmp_path: Path) -> None:
     assert receptacle.position.z == pytest.approx(40)
     assert contacts[0].residual is not None
     assert contacts[0].residual.distance == pytest.approx(0)
+
+
+@pytest.mark.parametrize("offset", [2, 40])
+def test_stud_contacts_reject_misaligned_sole_receptacle(
+    tmp_path: Path,
+    offset: int,
+) -> None:
+    """Entry-face overlap cannot substitute for stud centerline alignment."""
+    root = tmp_path / "ldraw"
+    _write_tree(
+        root,
+        {
+            "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
+            "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
+            "parts/oneplate.dat": (
+                "0 Single Stud Plate\n"
+                "2 24 -10 0 -10 10 4 10\n"
+                f"1 16 0 0 0 {_IDENTITY} stud.dat\n"
+            ),
+            "parts/widesocket.dat": (
+                "0 Wide Single Receptacle Plate\n"
+                "2 24 -10 0 -50 10 4 50\n"
+                f"1 16 0 0 {offset} {_FLIP_Y} stud4.dat\n"
+            ),
+        },
+    )
+    (root / "parts.lst").write_text(
+        "oneplate.dat Single Stud Plate\nwidesocket.dat Wide Single Receptacle Plate\n",
+        encoding="utf-8",
+    )
+    (root / "p.lst").write_text(
+        "stud.dat Stud\nstud4.dat Stud Tube Open\n",
+        encoding="utf-8",
+    )
+    inspection = inspect_model(
+        parse_model(
+            "0 misaligned stack\n"
+            f"1 16 0 0 0 {_IDENTITY} oneplate.dat\n"
+            f"1 16 0 -4 0 {_IDENTITY} widesocket.dat\n",
+        ),
+        Parts(root / "parts.lst"),
+    )
+
+    assert inspection.stud_contacts() == ()
+    assert inspection.connection_graphs().confirmed.edges == ()
 
 
 def test_snap_transform_mates_non_centered_profiles_axis_to_axis() -> None:
@@ -432,6 +478,101 @@ def test_studio_document_failures_are_single_source_diagnostics(
     assert result.document_ids == library.connections_for("9999").document_ids
 
 
+def test_studio_document_failure_is_counted_once_for_assembly(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ldraw"
+    _write_tree(
+        root,
+        {
+            "parts/childa.dat": (
+                "0 Child A\n"
+                "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=a]\n"
+                "2 24 -1 0 -1 1 1 1\n"
+            ),
+            "parts/childb.dat": (
+                "0 Child B\n"
+                "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=b]\n"
+                "2 24 -1 0 -1 1 1 1\n"
+            ),
+            "parts/parent.dat": (
+                "0 Parent Assembly\n"
+                f"1 16 0 0 0 {_IDENTITY} childa.dat\n"
+                f"1 16 20 0 0 {_IDENTITY} childb.dat\n"
+            ),
+        },
+    )
+    (root / "parts.lst").write_text(
+        "childa.dat Child A\nchildb.dat Child B\nparent.dat Parent Assembly\n",
+        encoding="utf-8",
+    )
+    studio = tmp_path / "broken-studio.json"
+    studio.write_text('{"parts": [', encoding="utf-8")
+    parts = Parts(root / "parts.lst")
+    parts.add_studio_metadata(studio)
+
+    geometry = parts.geometry("parent")
+    report = geometry.connection_metadata
+    assert report is not None
+    assert report.source_count == 3
+    assert report.recognized_record_count == 2
+    assert report.invalid_record_count == 1
+    assert len(report.diagnostics) == 1
+    assert "Studio" in report.diagnostics[0].message
+    assert geometry.diagnostics == report.diagnostics
+
+
+def test_studio_valid_and_document_failure_contributions_share_one_source(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ldraw"
+    _write_tree(
+        root,
+        {
+            "parts/child.dat": "0 Child\n2 24 -1 0 -1 1 1 1\n",
+            "parts/parent.dat": (
+                f"0 Parent Assembly\n1 16 0 0 0 {_IDENTITY} child.dat\n"
+            ),
+        },
+    )
+    (root / "parts.lst").write_text(
+        "child.dat Child\nparent.dat Parent Assembly\n",
+        encoding="utf-8",
+    )
+    studio = tmp_path / "mixed-studio.json"
+    studio.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "child",
+                        "connections": [
+                            {
+                                "id": "studio-stud",
+                                "type": "stud",
+                                "position": [0, 0, 0],
+                                "axis": [0, -1, 0],
+                                "gender": "male",
+                            },
+                        ],
+                    },
+                    {"connections": []},
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    parts = Parts(root / "parts.lst")
+    parts.add_studio_metadata(studio)
+
+    report = parts.connection_metadata("parent")
+    assert report.source_count == 1
+    assert report.recognized_record_count == 1
+    assert report.invalid_record_count == 1
+    assert len(report.diagnostics) == 1
+    assert "part_id" in report.diagnostics[0].message
+
+
 def test_parts_get_memo_is_not_aliased_by_source_mutation(tmp_path: Path) -> None:
     parts = _stud_shadow_parts(tmp_path)
     parts_lst = parts.path
@@ -454,6 +595,43 @@ def test_parts_get_memo_is_not_aliased_by_source_mutation(tmp_path: Path) -> Non
     os.utime(studio_path, ns=(stat_result.st_atime_ns, stat_result.st_mtime_ns + 1))
     rekeyed = Parts.get(parts_lst, studio_metadata=(studio_path,))
     assert rekeyed is not keyed
+
+
+def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    shadow = tmp_path / "shadow"
+    target = shadow / "p" / "stud.dat"
+    _write_tree(
+        shadow,
+        {
+            "p/stud.dat": ("0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=old]\n"),
+        },
+    )
+    Parts.clear_cache()
+
+    first = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert {feature.metadata_id for feature in first.connections("oneplate")} == {"old"}
+
+    root_stat = shadow.stat()
+    target_stat = target.stat()
+    target.write_text(
+        "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 4] [id=new]\n",
+        encoding="utf-8",
+    )
+    os.utime(
+        target,
+        ns=(target_stat.st_atime_ns, target_stat.st_mtime_ns + 1),
+    )
+    os.utime(
+        shadow,
+        ns=(root_stat.st_atime_ns, root_stat.st_mtime_ns),
+    )
+
+    second = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert second is not first
+    assert {feature.metadata_id for feature in second.connections("oneplate")} == {
+        "new"
+    }
 
 
 def test_explicit_provenance_survives_replace() -> None:

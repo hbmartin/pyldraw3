@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from itertools import product
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ldraw.connection_types import (
     ConnectionFeature,
@@ -630,7 +630,8 @@ def _candidate_occurrence_pairs(
                 )
             )
             for cell in product(*ranges):
-                members = cells.setdefault(cell, [])
+                cell_key = cast("tuple[int, int, int]", cell)
+                members = cells.setdefault(cell_key, [])
                 if not members or members[-1] != index:
                     members.append(index)
     candidates: set[tuple[int, int]] = set()
@@ -757,40 +758,48 @@ def _strict_stud_direction(
         if feature.kind is ConnectionKind.STUD_RECEPTACLE
     )
     for stud in studs:
-        ordered = sorted(
-            receptacles,
-            key=lambda feature: (
-                abs(feature.position - stud.position),
-                feature.feature_id or "",
-                feature.name,
-            ),
-        )
-        evidence = next(
-            (
-                (receptacle, entry_gap, penetration)
-                for receptacle in ordered
-                if connections_compatible(stud, receptacle)
-                and angular_alignment_within(
-                    -stud.axis.dot(receptacle.axis),
-                    angular_tolerance,
-                )
-                and (
-                    entry := _entry_face_residual(
-                        stud,
-                        receptacle_occurrence,
-                        tolerance=tolerance,
-                    )
-                )
-                is not None
-                for entry_gap, penetration in (entry,)
-            ),
-            None,
-        )
-        if evidence is None:
+        candidates: list[
+            tuple[
+                tuple[float, float, str, str],
+                ConnectionFeature,
+                ConnectionResidual,
+                float,
+                float,
+            ]
+        ] = []
+        for receptacle in receptacles:
+            evidence = _strict_stud_candidate(
+                stud,
+                receptacle,
+                receptacle_occurrence,
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            )
+            if evidence is None:
+                continue
+            residual, entry_gap, penetration = evidence
+            candidates.append(
+                (
+                    (
+                        residual.distance,
+                        abs(receptacle.position - stud.position),
+                        receptacle.feature_id or "",
+                        receptacle.name,
+                    ),
+                    receptacle,
+                    residual,
+                    entry_gap,
+                    penetration,
+                ),
+            )
+        if not candidates:
             continue
-        receptacle, entry_gap, penetration = evidence
+        _, receptacle, residual, entry_gap, penetration = min(
+            candidates,
+            key=lambda candidate: candidate[0],
+        )
         residual = replace(
-            connection_residual(stud, receptacle),
+            residual,
             entry_face_gap=entry_gap,
             penetration=penetration,
         )
@@ -806,6 +815,36 @@ def _strict_stud_direction(
             residual=residual,
             status=_contact_status(stud, receptacle),
         )
+
+
+def _strict_stud_candidate(
+    stud: ConnectionFeature,
+    receptacle: ConnectionFeature,
+    receptacle_occurrence: OccurrenceGeometry,
+    *,
+    tolerance: float,
+    angular_tolerance: float,
+) -> tuple[ConnectionResidual, float, float] | None:
+    """Return strict alignment evidence for one stud/receptacle pair."""
+    if not connections_compatible(stud, receptacle):
+        return None
+    if not angular_alignment_within(
+        -stud.axis.dot(receptacle.axis),
+        angular_tolerance,
+    ):
+        return None
+    residual = connection_residual(stud, receptacle)
+    if residual.distance > tolerance:
+        return None
+    entry = _entry_face_residual(
+        stud,
+        receptacle_occurrence,
+        tolerance=tolerance,
+    )
+    if entry is None:
+        return None
+    entry_gap, penetration = entry
+    return residual, entry_gap, penetration
 
 
 def _entry_face_residual(

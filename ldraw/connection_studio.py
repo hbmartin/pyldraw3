@@ -6,7 +6,7 @@ import json
 import math
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 from ldraw.connection_metadata import ShadowConnectionResult
 from ldraw.connection_types import (
@@ -26,6 +26,9 @@ from ldraw.connection_types import (
 )
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.geometry import Vector
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _CONNECTIVITY_FIELDS = frozenset(
     {
@@ -61,7 +64,7 @@ class StudioConnectionLibrary:
     def __init__(self, source: str | Path) -> None:
         self.source = Path(source).expanduser()
         self._parts: dict[str, ShadowConnectionResult] = {}
-        self._fallback_result = ShadowConnectionResult()
+        self._fallback_result: ShadowConnectionResult = ShadowConnectionResult()
         self._load()
 
     def connections_for(self, code: str) -> ShadowConnectionResult:
@@ -70,6 +73,14 @@ class StudioConnectionLibrary:
         result = self._parts.get(key)
         if result is not None:
             return result
+        return self._fallback_result
+
+    def _part_connections_for(self, code: str) -> ShadowConnectionResult:
+        """Return only metadata attached to a matching Studio part row."""
+        return self._parts.get(_part_key(code), ShadowConnectionResult())
+
+    def _document_failure_result(self) -> ShadowConnectionResult:
+        """Return document-level failures independently of part lookup."""
         return self._fallback_result
 
     def _load(self) -> None:
@@ -135,7 +146,10 @@ def _studio_part(
     part_index: int,
     document_diagnostics: list[Diagnostic],
 ) -> _StudioPart | None:
-    if not isinstance(value, dict) or not isinstance(value.get("part_id"), str):
+    if not isinstance(value, dict) or not isinstance(
+        part_id := value.get("part_id"),
+        str,
+    ):
         document_diagnostics.append(
             _diagnostic(
                 "Studio part record has no string part_id",
@@ -144,13 +158,14 @@ def _studio_part(
             ),
         )
         return None
-    code = _part_key(value["part_id"])
+    part = cast("dict[str, object]", value)
+    code = _part_key(part_id)
     diagnostics = [
         _excluded_field_diagnostic(field, path=path, part_id=code)
-        for field in value
+        for field in part
         if field not in _PART_FIELDS
     ]
-    rows = value.get("connections", [])
+    rows = part.get("connections", [])
     invalid = 0
     if not isinstance(rows, list):
         invalid += 1
@@ -162,12 +177,49 @@ def _studio_part(
             ),
         )
         rows = []
+    features, feature_diagnostics, feature_invalid = _studio_features(
+        cast("list[object]", rows),
+        code=code,
+        path=path,
+        part_index=part_index,
+    )
+    diagnostics.extend(feature_diagnostics)
+    invalid += feature_invalid
+    has_evidence = bool(features) or invalid > 0
+    return _StudioPart(
+        code,
+        ShadowConnectionResult(
+            features=tuple(features),
+            diagnostics=tuple(diagnostics),
+            source_count=int(has_evidence),
+            recognized_record_count=len(features),
+            unsupported_record_count=sum(
+                diagnostic.code is DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION
+                for diagnostic in diagnostics
+            ),
+            invalid_record_count=invalid,
+            document_ids=(str(path.resolve()),) if has_evidence else (),
+        ),
+    )
+
+
+def _studio_features(
+    rows: list[object],
+    *,
+    code: str,
+    path: Path,
+    part_index: int,
+) -> tuple[list[ConnectionFeature], list[Diagnostic], int]:
+    """Parse and identify every supported connection row for one part."""
     features: list[ConnectionFeature] = []
+    diagnostics: list[Diagnostic] = []
+    invalid = 0
     for index, row in enumerate(rows):
         normalized_row = row
         if isinstance(row, dict):
+            connection = cast("dict[str, object]", row)
             excluded = tuple(
-                field for field in row if field not in _CONNECTIVITY_FIELDS
+                field for field in connection if field not in _CONNECTIVITY_FIELDS
             )
             diagnostics.extend(
                 _excluded_field_diagnostic(field, path=path, part_id=code)
@@ -175,7 +227,7 @@ def _studio_part(
             )
             normalized_row = {
                 field: item
-                for field, item in row.items()
+                for field, item in connection.items()
                 if field in _CONNECTIVITY_FIELDS
             }
         try:
@@ -198,6 +250,19 @@ def _studio_part(
                     cause=error,
                 ),
             )
+    return (
+        _disambiguate_studio_feature_ids(features, part_index=part_index),
+        diagnostics,
+        invalid,
+    )
+
+
+def _disambiguate_studio_feature_ids(
+    features: list[ConnectionFeature],
+    *,
+    part_index: int,
+) -> list[ConnectionFeature]:
+    """Suffix repeated Studio metadata IDs without changing unique IDs."""
     identifiers = [feature.metadata_id for feature in features]
     repeated = {
         identifier.casefold()
@@ -209,7 +274,7 @@ def _studio_part(
         )
         > 1
     }
-    features = [
+    return [
         replace(
             feature,
             feature_id=f"{feature.metadata_id}@P{part_index}:I{index}",
@@ -219,22 +284,6 @@ def _studio_part(
         else feature
         for index, feature in enumerate(features)
     ]
-    has_evidence = bool(features) or invalid > 0
-    return _StudioPart(
-        code,
-        ShadowConnectionResult(
-            features=tuple(features),
-            diagnostics=tuple(diagnostics),
-            source_count=int(has_evidence),
-            recognized_record_count=len(features),
-            unsupported_record_count=sum(
-                diagnostic.code is DiagnosticCode.CONNECTION_UNSUPPORTED_OPTION
-                for diagnostic in diagnostics
-            ),
-            invalid_record_count=invalid,
-            document_ids=(str(path.resolve()),) if has_evidence else (),
-        ),
-    )
 
 
 def _studio_feature(
@@ -248,21 +297,22 @@ def _studio_feature(
     if not isinstance(value, dict):
         message = "connection must be an object"
         raise TypeError(message)
-    raw_type = _required_string(value, "type")
+    connection = cast("dict[str, object]", value)
+    raw_type = _required_string(connection, "type")
     normalized_type = raw_type.strip().casefold().replace("-", "_")
-    role = _studio_role(value.get("gender"))
-    position = _vector(value.get("position"), label="position")
-    axis = _vector(value.get("axis"), label="axis")
+    role = _studio_role(connection.get("gender"))
+    position = _vector(connection.get("position"), label="position")
+    axis = _vector(connection.get("axis"), label="axis")
     if not abs(axis):
         message = "axis cannot be zero"
         raise ValueError(message)
-    raw_id = value.get("id")
+    raw_id = connection.get("id")
     metadata_id = raw_id if isinstance(raw_id, str) and raw_id else None
     feature_id = metadata_id or f"studio@P{part_index}:I{index}"
     kind, profile, freedoms = _studio_semantics(
         normalized_type,
         role=role,
-        value=value,
+        value=connection,
     )
     provenance = ConnectionProvenance(
         source=ConnectionSource.STUDIO,
@@ -278,7 +328,9 @@ def _studio_feature(
         name=metadata_id or f"Studio {normalized_type}",
         feature_id=feature_id,
         metadata_id=metadata_id,
-        group=(str(value["group"]) if value.get("group") is not None else None),
+        group=(
+            str(connection["group"]) if connection.get("group") is not None else None
+        ),
         freedoms=freedoms,
         source=ConnectionSource.STUDIO,
         confidence=0.95,
@@ -292,7 +344,7 @@ def _studio_semantics(  # noqa: PLR0911
     kind: str,
     *,
     role: ConnectionRole,
-    value: dict[str, Any],
+    value: Mapping[str, object],
 ) -> tuple[
     ConnectionKind,
     CylindricalProfile | FingerProfile | AnnularProfile | GenericProfile,
@@ -385,7 +437,7 @@ def _studio_role(value: object) -> ConnectionRole:
         raise ValueError(message) from error
 
 
-def _required_string(value: dict[str, Any], key: str) -> str:
+def _required_string(value: Mapping[str, object], key: str) -> str:
     item = value.get(key)
     if not isinstance(item, str) or not item.strip():
         message = f"{key} must be a non-empty string"
@@ -397,17 +449,25 @@ def _vector(value: object, *, label: str) -> Vector:
     if not isinstance(value, list | tuple) or len(value) != 3:
         message = f"{label} must contain three finite numbers"
         raise ValueError(message)
-    numbers = tuple(float(item) for item in value)
-    if not all(math.isfinite(item) for item in numbers):
-        message = f"{label} must contain three finite numbers"
-        raise ValueError(message)
+    numbers = tuple(_number(item, label=label) for item in value)
     return Vector(*numbers)
 
 
 def _positive_number(value: object, *, label: str) -> float:
-    number = float(value)
-    if not math.isfinite(number) or number <= 0:
+    number = _number(value, label=label)
+    if number <= 0:
         message = f"{label} must be finite and positive"
+        raise ValueError(message)
+    return number
+
+
+def _number(value: object, *, label: str) -> float:
+    if not isinstance(value, str | int | float):
+        message = f"{label} must be a finite number"
+        raise TypeError(message)
+    number = float(value)
+    if not math.isfinite(number):
+        message = f"{label} must be a finite number"
         raise ValueError(message)
     return number
 
