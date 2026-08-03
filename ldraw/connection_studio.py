@@ -68,7 +68,13 @@ class StudioConnectionLibrary:
         self._load()
 
     def connections_for(self, code: str) -> ShadowConnectionResult:
-        """Return Studio connection metadata for one normalized part code."""
+        """Return one part's row, or the document fallback when absent.
+
+        This single-part view carries per-part statistics, so summing it
+        over an assembly double-counts document evidence. Assembly
+        aggregation must use ``_part_feature_contribution`` per child and
+        ``_document_result_for`` once per root query instead.
+        """
         key = _part_key(code)
         result = self._parts.get(key)
         if result is not None:
@@ -485,7 +491,7 @@ def _number(value: object, *, label: str) -> float:
         raise TypeError(message)
     try:
         number = float(value)
-    except OverflowError as error:
+    except (OverflowError, ValueError) as error:
         message = f"{label} must be a finite number"
         raise ValueError(message) from error
     if not math.isfinite(number):

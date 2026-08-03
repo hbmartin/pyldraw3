@@ -36,8 +36,9 @@ jobs:
         uv run ty check ldraw
         uv run pyrefly check ldraw
     - name: Run complexity checks
-      # Ratchet the eight pre-existing complexity warnings: new warnings fail CI.
-      run: uv run lizard --ignore_warnings 8 --languages python ldraw tests
+      # Pre-existing warnings are grandfathered per function in
+      # whitelizard.txt; any newly introduced warning fails CI.
+      run: uv run lizard --languages python ldraw tests
     - name: Run package metadata checks
       run: uv run pyroma --min 10 .
     - run: uv run deptry .

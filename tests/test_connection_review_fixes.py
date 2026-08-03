@@ -478,8 +478,13 @@ def test_studio_document_failures_are_single_source_diagnostics(
     assert result.document_ids == library.connections_for("9999").document_ids
 
 
-def test_studio_rejects_boolean_numeric_scalars(tmp_path: Path) -> None:
-    source = tmp_path / "boolean-radius.json"
+@pytest.mark.parametrize("scalar", [True, "not-a-number"])
+def test_studio_rejects_non_numeric_scalars(
+    tmp_path: Path,
+    scalar: object,
+) -> None:
+    """Booleans and unparseable strings both earn the labeled diagnostic."""
+    source = tmp_path / "bad-radius.json"
     source.write_text(
         json.dumps(
             {
@@ -491,7 +496,7 @@ def test_studio_rejects_boolean_numeric_scalars(tmp_path: Path) -> None:
                                 "type": "stud",
                                 "position": [0, 0, 0],
                                 "axis": [0, -1, 0],
-                                "radius": True,
+                                "radius": scalar,
                             },
                         ],
                     },
@@ -505,7 +510,7 @@ def test_studio_rejects_boolean_numeric_scalars(tmp_path: Path) -> None:
 
     assert result.recognized_record_count == 0
     assert result.invalid_record_count == 1
-    assert "finite number" in result.diagnostics[0].message
+    assert "radius must be a finite number" in result.diagnostics[0].message
 
 
 @pytest.mark.parametrize("digit_count", [4_000, 5_000])

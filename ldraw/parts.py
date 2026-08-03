@@ -625,7 +625,13 @@ _SourceStatKey = tuple[str, str, int, int, str]
 
 
 def _source_stat_key(source: str | Path) -> _SourceStatKey:
-    """Key a connection source by path, kind, and relevant tree metadata."""
+    """Key a connection source by path, kind, and relevant tree metadata.
+
+    Directory sources are fingerprinted by statting every descendant
+    file, so each ``Parts.get`` call walks unpacked shadow trees in
+    full. A stat failure mid-walk yields the stable ``unreadable`` key,
+    which at worst forces one extra rebuild once the tree is readable.
+    """
     path = Path(source).expanduser()
     try:
         stat_result = path.stat()
