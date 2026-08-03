@@ -961,6 +961,115 @@ def test_build_parser_geometry_inspect_and_render_defaults() -> None:
     assert render.overwrite is False
 
 
+def test_build_parser_connection_metadata_sources_default_to_empty() -> None:
+    geometry = build_parser().parse_args(["parts", "geometry", "3001"])
+    assert geometry.ldcad_shadow == []
+    assert geometry.studio_metadata == []
+
+    inspection = build_parser().parse_args(["inspect", "model.mpd"])
+    assert inspection.ldcad_shadow == []
+    assert inspection.studio_metadata == []
+
+
+@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+def test_missing_connection_sources_fail_before_parts_loading(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text(
+        "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n",
+        encoding="utf-8",
+    )
+    missing = tmp_path / "missing-source.csl"
+
+    for command in (["parts", "geometry", "3001"], ["inspect", str(model)]):
+        for flag in ("--ldcad-shadow", "--studio-metadata"):
+            assert main([*command, flag, str(missing)]) == 1
+            captured = capsys.readouterr()
+            assert captured.err.strip() == f"{flag} source not found: {missing}"
+            assert captured.out == ""
+
+
+def _scout_library_config(tmp_path: Path) -> Config:
+    """Write the synthetic Scout parts library used by the fixture models."""
+    root = tmp_path / "ldraw"
+    identity = "1 0 0 0 1 0 0 0 1"
+    flip_y = "1 0 0 0 -1 0 0 0 -1"
+    files = {
+        "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
+        "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
+        "parts/3035.dat": (
+            "0 Synthetic Scout Upper Plate\n"
+            "2 24 -80 0 -6 80 4 6\n"
+            + "".join(
+                f"1 16 {x} 0 {z} {identity} stud.dat\n"
+                for x in (-70, -50, -30, -10, 10, 30, 50, 70)
+                for z in (-4, 4)
+            )
+        ),
+        "parts/3958.dat": (
+            "0 Synthetic Scout Receptacle Plate\n"
+            "2 24 -6 0 -40 6 4 40\n"
+            f"1 16 0 0 0 {flip_y} stud4.dat\n"
+        ),
+    }
+    for name, text in files.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    (root / "parts.lst").write_text(
+        "3035.dat Synthetic Scout Upper Plate\n"
+        "3958.dat Synthetic Scout Receptacle Plate\n",
+        encoding="utf-8",
+    )
+    (root / "p.lst").write_text(
+        "stud.dat Stud\nstud4.dat Stud Tube Open\n",
+        encoding="utf-8",
+    )
+    return Config(
+        ldraw_library_path=str(tmp_path),
+        generated_path=str(tmp_path / "generated"),
+    )
+
+
+@patch("ldraw.cli.Config.load")
+def test_inspect_json_reports_connection_graph_edge_payloads(
+    config_load_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_load_mock.return_value = _scout_library_config(tmp_path)
+    model = TESTS_DIR / "models" / "scout-connectivity-corrected.ldr"
+
+    assert main(["inspect", str(model), "--format", "json"]) == 0
+
+    graphs = json.loads(capsys.readouterr().out)["connection_graphs"]
+    assert graphs["nodes"] == [0, 1, 2]
+    assert len(graphs["confirmed"]) == 16
+    assert graphs["optimistic"] == graphs["confirmed"]
+    assert {edge["second"] for edge in graphs["confirmed"]} == {1, 2}
+    edge = graphs["confirmed"][0]
+    assert sorted(edge) == [
+        "first",
+        "first_feature",
+        "residual",
+        "second",
+        "second_feature",
+        "status",
+    ]
+    assert edge["first"] == 0
+    assert edge["second"] == 1
+    assert edge["first_feature"] == "stud@R10/stud"
+    assert edge["second_feature"] == "stud4@R0/stud4"
+    assert edge["status"] == "confirmed"
+    assert edge["residual"]["alignment"] == pytest.approx(1.0)
+    assert edge["residual"]["roll_alignment"] == pytest.approx(1.0)
+    assert edge["residual"]["entry_face_gap"] == pytest.approx(0.0)
+    assert edge["residual"]["penetration"] == pytest.approx(8.0)
+
+
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
 def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     config_load_mock: MagicMock,

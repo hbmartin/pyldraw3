@@ -652,7 +652,8 @@ def _feature_reach(
 ) -> BoundingBox:
     margin = tolerance + feature.length / 2
     pad = Vector(margin, margin, margin)
-    reach = BoundingBox(min=feature.position - pad, max=feature.position + pad)
+    midpoint = feature.axial_midpoint
+    reach = BoundingBox(min=midpoint - pad, max=midpoint + pad)
     if feature.kind not in {ConnectionKind.STUD, ConnectionKind.STUD_RECEPTACLE}:
         return reach
     return BoundingBox(
@@ -751,20 +752,23 @@ def _strict_stud_direction(
         if feature.kind is ConnectionKind.STUD
     )
     receptacles = tuple(
-        sorted(
-            (
-                feature
-                for feature in receptacle_occurrence.connections
-                if feature.kind is ConnectionKind.STUD_RECEPTACLE
-            ),
-            key=lambda feature: (feature.feature_id or "", feature.name),
-        ),
+        feature
+        for feature in receptacle_occurrence.connections
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
     )
     for stud in studs:
+        ordered = sorted(
+            receptacles,
+            key=lambda feature: (
+                abs(feature.position - stud.position),
+                feature.feature_id or "",
+                feature.name,
+            ),
+        )
         evidence = next(
             (
                 (receptacle, entry_gap, penetration)
-                for receptacle in receptacles
+                for receptacle in ordered
                 if connections_compatible(stud, receptacle)
                 and angular_alignment_within(
                     -stud.axis.dot(receptacle.axis),

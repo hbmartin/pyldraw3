@@ -620,20 +620,34 @@ def _catalog_search_rank(entry: CatalogEntry, query: str) -> int:
     return 5
 
 
+def _source_stat_key(source: str | Path) -> tuple[str, int, int]:
+    """Key a connection source by path and shallow content fingerprint."""
+    path = Path(source).expanduser()
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return (str(path), -1, -1)
+    return (str(path), stat_result.st_mtime_ns, stat_result.st_size)
+
+
 @lru_cache(maxsize=8)
 def _parts_for_stat(
     parts_lst: str,
     _stat_key: tuple[int, int],
     _tree_fingerprint: str | None,
     _parts_lst_md5: str | None,
-    connection_shadows: tuple[str, ...],
-    studio_metadata: tuple[str, ...],
+    connection_shadows: tuple[tuple[str, int, int], ...],
+    studio_metadata: tuple[tuple[str, int, int], ...],
 ) -> Parts:
     parts = Parts(parts_lst)
-    for source in connection_shadows:
-        parts.add_connection_shadow(source)
-    for source in studio_metadata:
-        parts.add_studio_metadata(source)
+    parts._memo_building = True  # noqa: SLF001 - factory owns the instance
+    try:
+        for source, _, _ in connection_shadows:
+            parts.add_connection_shadow(source)
+        for source, _, _ in studio_metadata:
+            parts.add_studio_metadata(source)
+    finally:
+        parts._memo_building = False  # noqa: SLF001
     return parts
 
 
@@ -677,8 +691,8 @@ class Parts:
             (stat_result.st_mtime_ns, stat_result.st_size),
             tree_fingerprint,
             parts_lst_md5,
-            tuple(str(Path(source).expanduser()) for source in connection_shadows),
-            tuple(str(Path(source).expanduser()) for source in studio_metadata),
+            tuple(_source_stat_key(source) for source in connection_shadows),
+            tuple(_source_stat_key(source) for source in studio_metadata),
         )
 
     @classmethod
@@ -742,6 +756,7 @@ class Parts:
             tuple[tuple[ConnectionFeature, ...], bool],
         ] = {}
         self._tyre_rim_compatibility: tuple[PartCompatibility, ...] | None = None
+        self._memo_building = False
 
         self.load()
 
@@ -1172,9 +1187,12 @@ class Parts:
     def _shadow_connections_for(self, code: str) -> ShadowConnectionResult:
         from ldraw.connection_metadata import ShadowConnectionResult  # noqa: PLC0415
 
+        shadows = tuple(self._connection_shadow_libraries)
         combined = ShadowConnectionResult()
-        for library in self._connection_shadow_libraries:
-            combined = combined.combined(library.connections_for(code))
+        for library in shadows:
+            combined = combined.combined(
+                library.connections_for(code, siblings=shadows),
+            )
         return combined
 
     def _connection_shadows_for_inline(self) -> tuple[LDCadShadowLibrary, ...]:
@@ -1184,12 +1202,13 @@ class Parts:
         self,
         code: str,
     ) -> tuple[ShadowConnectionResult, ...]:
-        return tuple(
-            library.connections_for(code)
-            for library in (
-                *self._connection_shadow_libraries,
-                *self._studio_connection_libraries,
-            )
+        shadows = tuple(self._connection_shadow_libraries)
+        return (
+            *(library.connections_for(code, siblings=shadows) for library in shadows),
+            *(
+                library.connections_for(code)
+                for library in self._studio_connection_libraries
+            ),
         )
 
     def _connection_overrides_for(
@@ -1202,6 +1221,10 @@ class Parts:
         from ldraw.part_geometry import clear_part_geometry_cache  # noqa: PLC0415
 
         clear_part_geometry_cache(self)
+        if not self._memo_building:
+            # Mutating connection sources changes what any memo key would
+            # rebuild, so drop memoized instances rather than alias them.
+            _parts_for_stat.cache_clear()
 
     def _build_tyre_rim_compatibility(self) -> tuple[PartCompatibility, ...]:
         from ldraw.connection_types import (  # noqa: PLC0415

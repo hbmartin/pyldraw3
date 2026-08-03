@@ -613,7 +613,8 @@ def _opposite_endpoint(
     return abs(delta - along) <= 0.1
 
 
-def _same_interface(left: ConnectionFeature, right: ConnectionFeature) -> bool:
+def same_interface(left: ConnectionFeature, right: ConnectionFeature) -> bool:
+    """Whether two features describe the same colocated physical interface."""
     if left.kind is not right.kind or abs(left.position - right.position) > 0.05:
         return False
     return abs(left.axis.dot(right.axis)) >= 0.999

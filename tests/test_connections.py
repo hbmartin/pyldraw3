@@ -33,7 +33,7 @@ from ldraw.connection_types import (
 )
 from ldraw.diagnostics import DiagnosticCode
 from ldraw.geometry import Identity, Matrix, Vector, YAxis
-from ldraw.inspection import inspect_model
+from ldraw.inspection import bounds_gap, inspect_model
 from ldraw.model import parse_model
 from ldraw.part_geometry import part_connections
 from ldraw.parts import Parts
@@ -154,8 +154,30 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -6 0 -40 6 4 40\n"
             f"1 16 0 0 0 {_FLIP_Y} stud4.dat\n"
         ),
-        "parts/scouttile.dat": (
-            "0 Synthetic Scout Tile Without Receptacle\n2 24 -6 0 -40 6 4 40\n"
+        "parts/studmeta.dat": (
+            "0 Plate with One Stud and Inline Metadata\n"
+            "2 24 -10 0 -10 10 4 10\n"
+            f"1 16 0 0 0 {_IDENTITY} stud.dat\n"
+            "0 !LDCAD SNAP_CYL [gender=M] [caps=one] [secs=R 6 4] "
+            "[pos=0 0 0] [id=meta-stud]\n"
+        ),
+        "parts/precedence.dat": (
+            "0 Precedence Test Cylinder\n"
+            "0 !LDCAD SNAP_CYL [gender=M] [center=true] [slide=true] "
+            "[secs=R 4 20] [pos=0 -5 0] [id=Cross-Bar]\n"
+            "2 24 -4 -10 -4 4 10 4\n"
+        ),
+        "parts/deckplate.dat": ("0 Studio Precedence Plate\n2 24 -10 0 -10 10 4 10\n"),
+        "parts/dualrecept.dat": (
+            "0 Dual Receptacle Strip\n"
+            "2 24 -6 0 -40 6 4 40\n"
+            f"1 16 0 0 -20 {_FLIP_Y} stud4.dat\n"
+            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
+        ),
+        "parts/onestud.dat": (
+            "0 Single Stud Plate\n"
+            "2 24 -10 0 -10 10 4 10\n"
+            f"1 16 0 0 0 {_IDENTITY} stud.dat\n"
         ),
     }
     for name, text in files.items():
@@ -183,7 +205,11 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "wheelc01.dat Wheel Rim 20 x 30 with Tyre 20 x 30\n"
         "3035.dat Synthetic Scout Upper Plate\n"
         "3958.dat Synthetic Scout Receptacle Plate\n"
-        "scouttile.dat Synthetic Scout Tile Without Receptacle\n",
+        "studmeta.dat Plate with One Stud and Inline Metadata\n"
+        "precedence.dat Precedence Test Cylinder\n"
+        "deckplate.dat Studio Precedence Plate\n"
+        "dualrecept.dat Dual Receptacle Strip\n"
+        "onestud.dat Single Stud Plate\n",
         encoding="utf-8",
     )
     (root / "p.lst").write_text(
@@ -363,6 +389,7 @@ def test_inline_ldcad_metadata_is_consumed_without_a_shadow_library(
     assert connections[0].feature_id == "inline-bar"
     assert connections[0].kind is ConnectionKind.BAR
     assert connections[0].source is ConnectionSource.LDCAD_INLINE
+    assert connections[0].position == Vector(0, 0, 0)
 
     assert parts.connection_metadata("inline").coverage is (
         ConnectionMetadataCoverage.COMPLETE
@@ -376,6 +403,109 @@ def test_inline_ldcad_metadata_is_consumed_without_a_shadow_library(
     cleared = parts.connection_metadata("emptyclear")
     assert cleared.coverage is ConnectionMetadataCoverage.COMPLETE
     assert cleared.features == ()
+
+
+def test_inline_metadata_supersedes_colocated_primitive_without_snap_clear(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    connections = parts.connections("studmeta")
+
+    assert len(connections) == 1
+    assert connections[0].kind is ConnectionKind.STUD
+    assert connections[0].feature_id == "meta-stud"
+    assert connections[0].source is ConnectionSource.LDCAD_INLINE
+    assert connections[0].position == Vector(0, 0, 0)
+    assert not any(
+        diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+        for diagnostic in parts.connection_metadata("studmeta").diagnostics
+    )
+
+
+def test_shadow_replaces_inline_feature_by_case_insensitive_id(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    shadow = tmp_path / "shadow"
+    (shadow / "parts").mkdir(parents=True)
+    (shadow / "parts" / "precedence.dat").write_text(
+        "0 !LDCAD SNAP_CYL [gender=M] [center=true] [slide=true] "
+        "[secs=R 4 20] [pos=0 5 0] [id=cross-bar]\n",
+        encoding="utf-8",
+    )
+    before = parts.connections("precedence")
+    assert [
+        (feature.feature_id, feature.source, feature.position) for feature in before
+    ] == [("Cross-Bar", ConnectionSource.LDCAD_INLINE, Vector(0, -5, 0))]
+
+    parts.add_connection_shadow(shadow)
+
+    after = parts.connections("precedence")
+    assert [
+        (feature.feature_id, feature.source, feature.position) for feature in after
+    ] == [("cross-bar", ConnectionSource.LDCAD_SHADOW, Vector(0, 5, 0))]
+    conflict = next(
+        diagnostic
+        for diagnostic in parts.connection_metadata("precedence").diagnostics
+        if diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+    )
+    assert "'cross-bar'" in conflict.message
+
+
+def test_studio_metadata_replaces_shadow_feature_with_same_id(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    shadow = tmp_path / "shadow"
+    (shadow / "parts").mkdir(parents=True)
+    (shadow / "parts" / "deckplate.dat").write_text(
+        "0 !LDCAD SNAP_CYL [gender=M] [center=true] [slide=true] "
+        "[secs=R 4 20] [pos=0 -6 0] [id=deck]\n",
+        encoding="utf-8",
+    )
+    studio_path = tmp_path / "studio.json"
+    studio_path.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "deckplate.dat",
+                        "connections": [
+                            {
+                                "id": "deck",
+                                "type": "bar",
+                                "gender": "male",
+                                "position": [0, 6, 0],
+                                "axis": [0, 1, 0],
+                                "radius": 4,
+                                "length": 20,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    parts.add_connection_shadow(shadow)
+    shadowed = parts.connections("deckplate")
+    assert [
+        (feature.feature_id, feature.source, feature.position) for feature in shadowed
+    ] == [("deck", ConnectionSource.LDCAD_SHADOW, Vector(0, -6, 0))]
+
+    parts.add_studio_metadata(studio_path)
+
+    final = parts.connections("deckplate")
+    assert [
+        (feature.feature_id, feature.source, feature.position) for feature in final
+    ] == [("deck", ConnectionSource.STUDIO, Vector(0, 6, 0))]
+    conflict = next(
+        diagnostic
+        for diagnostic in parts.connection_metadata("deckplate").diagnostics
+        if diagnostic.code is DiagnosticCode.CONNECTION_FEATURE_CONFLICT
+    )
+    assert str(studio_path) in conflict.message
 
 
 def test_inherited_metadata_counts_each_document_once_and_rejects_bad_scale(
@@ -793,7 +923,74 @@ def test_scout_fixture_requires_ry90_and_receptacle_evidence(
         parse_model((models / "scout-overlapping-tiles.ldr").read_text()),
         parts,
     )
+    assert len(tiles.occurrences) == 2
+    for occurrence in tiles.occurrences:
+        assert len(occurrence.connections) == 16
+        assert {feature.kind for feature in occurrence.connections} == {
+            ConnectionKind.STUD,
+        }
+    assert bounds_gap(
+        tiles.occurrences[0].bounds,
+        tiles.occurrences[1].bounds,
+    ).intersects
     assert tiles.connection_contacts() == ()
+    assert tiles.stud_contacts() == ()
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "receptacle_axis"),
+    [
+        ("scout-studs-sideways.ldr", Vector(-1, 0, 0)),
+        ("scout-studs-averted.ldr", Vector(0, 1, 0)),
+    ],
+)
+def test_strict_stud_contacts_require_entry_orientation_and_penetration(
+    tmp_path: Path,
+    fixture_name: str,
+    receptacle_axis: Vector,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    models = Path(__file__).parent / "models"
+
+    inspection = inspect_model(
+        parse_model((models / fixture_name).read_text()),
+        parts,
+    )
+
+    plate, receptacle = inspection.occurrences
+    assert len(plate.connections) == 16
+    assert {feature.kind for feature in plate.connections} == {ConnectionKind.STUD}
+    assert [feature.kind for feature in receptacle.connections] == [
+        ConnectionKind.STUD_RECEPTACLE,
+    ]
+    assert receptacle.connections[0].axis == receptacle_axis
+    assert bounds_gap(plate.bounds, receptacle.bounds).intersects
+    assert inspection.connection_contacts() == ()
+    assert inspection.stud_contacts() == ()
+
+
+def test_stud_contacts_pair_each_stud_with_the_nearest_receptacle(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    model = parse_model(
+        f"1 16 0 0 18 {_IDENTITY} onestud.dat\n"
+        f"1 16 0 -4 0 {_IDENTITY} dualrecept.dat\n",
+    )
+
+    inspection = inspect_model(model, parts)
+
+    contacts = inspection.connection_contacts()
+    assert len(contacts) == 1
+    # Lexicographically "stud4@R0/stud4" sorts first; the nearest
+    # receptacle to the stud at z=18 is the second one at z=20.
+    assert contacts[0].first.feature_id == "stud@R0/stud"
+    assert contacts[0].second.feature_id == "stud4@R1/stud4"
+    assert contacts[0].second.position == Vector(0, -4, 20)
+    stud_contacts = inspection.stud_contacts()
+    assert len(stud_contacts) == 1
+    assert stud_contacts[0].receptacle_feature is not None
+    assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R1/stud4"
 
 
 def test_spatial_hash_matches_exhaustive_contact_oracle(tmp_path: Path) -> None:

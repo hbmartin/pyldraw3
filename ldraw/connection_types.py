@@ -307,7 +307,7 @@ class ConnectionFeature:
     mirror_inheritance: str = "none"
 
     def __post_init__(self) -> None:
-        if self.connection_provenance is not None:
+        if self.connection_provenance is not None and not self.provenance:
             provenance = self.connection_provenance
             location = provenance.archive_member or (
                 str(provenance.path)
@@ -336,6 +336,20 @@ class ConnectionFeature:
     def length(self) -> float:
         """Axial span represented by the profile."""
         return self.profile.length
+
+    @property
+    def centered(self) -> bool:
+        """Whether the profile spans symmetrically around ``position``."""
+        if isinstance(self.profile, CylindricalProfile | FingerProfile):
+            return self.profile.centered
+        return True
+
+    @property
+    def axial_midpoint(self) -> Vector:
+        """Center of the feature's axial extent in its coordinate frame."""
+        if self.centered:
+            return self.position
+        return self.position + self.axis * (self.length / 2)
 
     def transformed(
         self,
@@ -696,13 +710,10 @@ def _feature_interval(
     origin: float,
     direction: float,
 ) -> tuple[float, float]:
-    centered = (
-        feature.profile.centered
-        if isinstance(feature.profile, CylindricalProfile | FingerProfile)
-        else True
-    )
     local = (
-        (-feature.length / 2, feature.length / 2) if centered else (0.0, feature.length)
+        (-feature.length / 2, feature.length / 2)
+        if feature.centered
+        else (0.0, feature.length)
     )
     values = (origin + direction * local[0], origin + direction * local[1])
     return min(values), max(values)
@@ -734,11 +745,12 @@ def snap_transform(
 ) -> SnapTransform:
     """Return a rigid transform placing ``moving`` onto ``target``.
 
-    Cylindrical interfaces are direction-symmetric, so the target frame is
-    flipped when that gives the smaller axis rotation. Cross-section roll is
-    preserved for axle profiles. Candidate frames are matched to the moving
-    frame's handedness, so the delta is always a proper rotation and a part
-    placed with a mirroring matrix is never reflected.
+    Centered cylindrical interfaces are direction-symmetric, so their target
+    frame is flipped when that gives the smaller axis rotation; non-centered
+    profiles extend one-sided and always mate axis-to-axis. Cross-section
+    roll is preserved for axle profiles. Candidate frames are matched to the
+    moving frame's handedness, so the delta is always a proper rotation and
+    a part placed with a mirroring matrix is never reflected.
     """
     _validate_snap_frame(moving, argument="moving")
     _validate_snap_frame(target, argument="target")
@@ -778,7 +790,12 @@ def _equivalent_target_frames(
     moving: ConnectionFeature,
     target: ConnectionFeature,
 ) -> tuple[Matrix, ...]:
-    target_axis = target.axis if moving.axis.dot(target.axis) >= 0 else -1 * target.axis
+    direction_symmetric = moving.centered and target.centered
+    target_axis = (
+        -1 * target.axis
+        if direction_symmetric and moving.axis.dot(target.axis) < 0
+        else target.axis
+    )
     if (
         isinstance(moving.profile, CylindricalProfile)
         and isinstance(target.profile, CylindricalProfile)
