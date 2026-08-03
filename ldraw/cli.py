@@ -611,8 +611,13 @@ def _load_parts_with_connection_sources(
             studio_metadata=studio_metadata,
         )
     except (BadZipFile, OSError) as error:
-        print(f"could not load connection metadata source: {error}", file=sys.stderr)
+        _report_connection_source_error(error)
         return None
+
+
+def _report_connection_source_error(error: BadZipFile | OSError) -> None:
+    """Print one controlled metadata-source failure."""
+    print(f"could not load connection metadata source: {error}", file=sys.stderr)
 
 
 def _suggested_import(entry: CatalogEntry) -> str | None:
@@ -680,6 +685,9 @@ def parts_geometry_command(
         return 1
     try:
         geometry = parts.geometry(code)
+    except (BadZipFile, OSError) as error:
+        _report_connection_source_error(error)
+        return 1
     except PartError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -783,6 +791,9 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
             minimum_gap=gap_threshold,
             chronological=chronological,
         )
+    except (BadZipFile, OSError) as error:
+        _report_connection_source_error(error)
+        return 1
     except PartError as exc:
         print(f"{file}: {exc}", file=sys.stderr)
         return 1

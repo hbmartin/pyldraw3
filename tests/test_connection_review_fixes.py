@@ -478,6 +478,57 @@ def test_studio_document_failures_are_single_source_diagnostics(
     assert result.document_ids == library.connections_for("9999").document_ids
 
 
+def test_studio_rejects_boolean_numeric_scalars(tmp_path: Path) -> None:
+    source = tmp_path / "boolean-radius.json"
+    source.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": "3001",
+                        "connections": [
+                            {
+                                "type": "stud",
+                                "position": [0, 0, 0],
+                                "axis": [0, -1, 0],
+                                "radius": True,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    result = StudioConnectionLibrary(source).connections_for("3001")
+
+    assert result.recognized_record_count == 0
+    assert result.invalid_record_count == 1
+    assert "finite number" in result.diagnostics[0].message
+
+
+@pytest.mark.parametrize("digit_count", [4_000, 5_000])
+def test_studio_oversized_numbers_are_recoverable_diagnostics(
+    tmp_path: Path,
+    digit_count: int,
+) -> None:
+    source = tmp_path / f"oversized-{digit_count}.json"
+    source.write_text(
+        '{"parts":[{"part_id":"3001","connections":['
+        '{"type":"stud","position":[0,0,0],"axis":[0,-1,0],"radius":'
+        f"{'9' * digit_count}"
+        "}]}]}",
+        encoding="utf-8",
+    )
+
+    result = StudioConnectionLibrary(source).connections_for("3001")
+
+    assert result.recognized_record_count == 0
+    assert result.invalid_record_count == 1
+    assert len(result.diagnostics) == 1
+
+
 def test_studio_document_failure_is_counted_once_for_assembly(
     tmp_path: Path,
 ) -> None:
@@ -571,6 +622,66 @@ def test_studio_valid_and_document_failure_contributions_share_one_source(
     assert report.invalid_record_count == 1
     assert len(report.diagnostics) == 1
     assert "part_id" in report.diagnostics[0].message
+
+
+def test_studio_document_counts_distinct_part_rows_once_per_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ldraw"
+    _write_tree(
+        root,
+        {
+            "parts/childa.dat": "0 Child A\n2 24 -1 0 -1 1 1 1\n",
+            "parts/childb.dat": "0 Child B\n2 24 -1 0 -1 1 1 1\n",
+            "parts/parent.dat": (
+                "0 Parent Assembly\n"
+                f"1 16 0 0 0 {_IDENTITY} childa.dat\n"
+                f"1 16 20 0 0 {_IDENTITY} childa.dat\n"
+                f"1 16 40 0 0 {_IDENTITY} childb.dat\n"
+            ),
+        },
+    )
+    (root / "parts.lst").write_text(
+        "childa.dat Child A\nchildb.dat Child B\nparent.dat Parent Assembly\n",
+        encoding="utf-8",
+    )
+    studio = tmp_path / "two-parts.json"
+    studio.write_text(
+        json.dumps(
+            {
+                "parts": [
+                    {
+                        "part_id": code,
+                        "connections": [
+                            {
+                                "id": f"{code}-stud",
+                                "type": "stud",
+                                "position": [0, 0, 0],
+                                "axis": [0, -1, 0],
+                                "gender": "male",
+                            },
+                        ],
+                    }
+                    for code in ("childa", "childb")
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    parts = Parts(root / "parts.lst")
+    parts.add_studio_metadata(studio)
+
+    report = parts.connection_metadata("parent")
+    studio_features = [
+        feature
+        for feature in report.features
+        if feature.source is ConnectionSource.STUDIO
+    ]
+
+    assert report.source_count == 1
+    assert report.recognized_record_count == 2
+    assert report.invalid_record_count == 0
+    assert len(studio_features) == 3
 
 
 def test_parts_get_memo_is_not_aliased_by_source_mutation(tmp_path: Path) -> None:

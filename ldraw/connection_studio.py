@@ -79,16 +79,34 @@ class StudioConnectionLibrary:
         """Return only metadata attached to a matching Studio part row."""
         return self._parts.get(_part_key(code), ShadowConnectionResult())
 
-    def _document_failure_result(self) -> ShadowConnectionResult:
-        """Return document-level failures independently of part lookup."""
-        return self._fallback_result
+    def _part_feature_contribution(self, code: str) -> ShadowConnectionResult:
+        """Return part features without copying statistics into child results."""
+        result = self._part_connections_for(code)
+        return replace(
+            result,
+            diagnostics=(),
+            source_count=0,
+            recognized_record_count=0,
+            unsupported_record_count=0,
+            invalid_record_count=0,
+            document_ids=(),
+        )
+
+    def _document_result_for(self, codes: frozenset[str]) -> ShadowConnectionResult:
+        """Summarize one Studio document for the resolved part codes."""
+        combined = ShadowConnectionResult()
+        for key in sorted({_part_key(code) for code in codes}):
+            if (result := self._parts.get(key)) is None:
+                continue
+            combined = combined.combined(replace(result, features=()))
+        return combined.combined(self._fallback_result)
 
     def _load(self) -> None:
         diagnostics: list[Diagnostic] = []
         document_id = str(self.source.resolve())
         try:
             document = json.loads(self.source.read_text(encoding="utf-8-sig"))
-        except (OSError, RecursionError, UnicodeError, json.JSONDecodeError) as error:
+        except (OSError, RecursionError, UnicodeError, ValueError) as error:
             self._fallback_result = ShadowConnectionResult(
                 diagnostics=(
                     _diagnostic(
@@ -462,10 +480,14 @@ def _positive_number(value: object, *, label: str) -> float:
 
 
 def _number(value: object, *, label: str) -> float:
-    if not isinstance(value, str | int | float):
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
         message = f"{label} must be a finite number"
         raise TypeError(message)
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError as error:
+        message = f"{label} must be a finite number"
+        raise ValueError(message) from error
     if not math.isfinite(number):
         message = f"{label} must be a finite number"
         raise ValueError(message)

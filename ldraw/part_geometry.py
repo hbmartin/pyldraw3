@@ -109,8 +109,11 @@ class _ConnectionMetadataSource(Protocol):
 
 
 @runtime_checkable
-class _ConnectionDocumentFailureSource(Protocol):
-    def _connection_document_failures(self) -> tuple[ShadowConnectionResult, ...]: ...
+class _ConnectionDocumentResultSource(Protocol):
+    def _connection_document_results(
+        self,
+        codes: frozenset[str],
+    ) -> tuple[ShadowConnectionResult, ...]: ...
 
 
 @runtime_checkable
@@ -135,6 +138,7 @@ class _LocalGeometry:
     metadata_result: ShadowConnectionResult = field(
         default_factory=ShadowConnectionResult,
     )
+    resolved_codes: frozenset[str] = frozenset()
 
 
 _caches: WeakKeyDictionary[_PartGeometryLibrary, dict[str, _LocalGeometry | None]] = (
@@ -167,23 +171,24 @@ def part_geometry(parts: _PartGeometryLibrary, code: str) -> PartGeometry:
     local = _require_local(parts, code)
     metadata_result = local.metadata_result
     document_diagnostics: list[Diagnostic] = []
-    if isinstance(parts, _ConnectionDocumentFailureSource):
-        seen_documents: set[str] = set()
-        for failure in parts._connection_document_failures():  # noqa: SLF001
-            documents = set(failure.document_ids)
-            if documents and documents <= seen_documents:
-                continue
-            seen_documents.update(documents)
+    has_document_result = False
+    if isinstance(parts, _ConnectionDocumentResultSource):
+        for result in parts._connection_document_results(  # noqa: SLF001
+            local.resolved_codes,
+        ):
             if not (
-                failure.source_count
-                or failure.invalid_record_count
-                or failure.diagnostics
+                result.source_count
+                or result.recognized_record_count
+                or result.unsupported_record_count
+                or result.invalid_record_count
+                or result.diagnostics
             ):
                 continue
-            metadata_result = metadata_result.combined(failure)
-            document_diagnostics.extend(failure.diagnostics)
+            has_document_result = True
+            metadata_result = metadata_result.combined(result)
+            document_diagnostics.extend(result.diagnostics)
     connection_metadata = local.connection_metadata
-    if document_diagnostics:
+    if has_document_result:
         connection_metadata = metadata_report(
             code,
             features=local.connections,
@@ -269,7 +274,15 @@ def _local_geometry(
         cache[key] = source
         return source
     part, objects = source
-    box, points, studs, connections, diagnostics, inherited_metadata = _fold_objects(
+    (
+        box,
+        points,
+        studs,
+        connections,
+        diagnostics,
+        inherited_metadata,
+        resolved_codes,
+    ) = _fold_objects(
         parts,
         code=code,
         description=part.description,
@@ -295,6 +308,7 @@ def _local_geometry(
         diagnostics=tuple(diagnostics),
         connection_metadata=connection_report,
         metadata_result=metadata_result,
+        resolved_codes=frozenset((*resolved_codes, key)),
     )
     cache[key] = local
     return local
@@ -383,6 +397,7 @@ def _fold_objects(
     list[ConnectionFeature],
     list[Diagnostic],
     ShadowConnectionResult,
+    set[str],
 ]:
     box = _BoxAccumulator()
     points: list[Vector] = []
@@ -390,6 +405,7 @@ def _fold_objects(
     connections: list[ConnectionFeature] = []
     diagnostics: list[Diagnostic] = []
     metadata_results: list[ShadowConnectionResult] = []
+    resolved_codes: set[str] = set()
     piece_instance = 0
     for obj in objects:
         match obj:
@@ -417,6 +433,7 @@ def _fold_objects(
                     parent_description=description,
                     traversal_marker=(f"{_local_key(obj.part)}@R{piece_instance}"),
                     metadata_results=metadata_results,
+                    resolved_codes=resolved_codes,
                 )
                 piece_instance += 1
     return (
@@ -426,6 +443,7 @@ def _fold_objects(
         connections,
         diagnostics,
         _metadata_statistics(metadata_results),
+        resolved_codes,
     )
 
 
@@ -526,12 +544,14 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     parent_description: str,
     traversal_marker: str,
     metadata_results: list[ShadowConnectionResult],
+    resolved_codes: set[str],
 ) -> None:
     local = _local_geometry(parts, piece.part, visiting)
     if local is None:
         return
     diagnostics.extend(local.diagnostics)
     metadata_results.append(local.metadata_result)
+    resolved_codes.update(local.resolved_codes)
     for point in local.points:
         transformed = piece.position + piece.matrix * point
         box.add(transformed)

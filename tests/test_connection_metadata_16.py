@@ -348,7 +348,7 @@ def _shadow_documents() -> dict[str, str]:
             "0 !LDCAD SNAP_INCL [id=inc] [ref=s/child.dat] "
             "[grid=2 1 10 0] [slide=true]\n"
         ),
-        "PARTS/S/Child.dat": (
+        "PaRtS/S/Child.dat": (
             "0 Child\n"
             "0 !LDCAD SNAP_CLP [id=clip]\n"
             "0 !LDCAD SNAP_INCL [id=primitive] [ref=8/socket.dat]\n"

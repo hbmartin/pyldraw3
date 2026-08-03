@@ -1235,14 +1235,17 @@ class Parts:
         return (
             *(library.connections_for(code, siblings=shadows) for library in shadows),
             *(
-                library._part_connections_for(code)  # noqa: SLF001
+                library._part_feature_contribution(code)  # noqa: SLF001
                 for library in self._studio_connection_libraries
             ),
         )
 
-    def _connection_document_failures(self) -> tuple[ShadowConnectionResult, ...]:
+    def _connection_document_results(
+        self,
+        codes: frozenset[str],
+    ) -> tuple[ShadowConnectionResult, ...]:
         return tuple(
-            library._document_failure_result()  # noqa: SLF001
+            library._document_result_for(codes)  # noqa: SLF001
             for library in self._studio_connection_libraries
         )
 

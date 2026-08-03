@@ -1065,6 +1065,61 @@ def test_connection_source_load_failure_is_reported_without_traceback(
     load_parts_mock.assert_called_once()
 
 
+@patch("ldraw.cli._load_parts")
+def test_lazy_connection_source_failures_are_reported_without_traceback(
+    load_parts_mock: MagicMock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    studio = tmp_path / "studio.json"
+    studio.write_text("{}", encoding="utf-8")
+    model = tmp_path / "model.ldr"
+    model.write_text("0 Model\n", encoding="utf-8")
+    parts = MagicMock()
+    parts.geometry.side_effect = OSError("shadow directory became unreadable")
+    load_parts_mock.return_value = parts
+
+    assert (
+        main(
+            [
+                "parts",
+                "geometry",
+                "3001",
+                "--studio-metadata",
+                str(studio),
+            ],
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.err.strip() == (
+        "could not load connection metadata source: shadow directory became unreadable"
+    )
+    assert captured.out == ""
+
+    with patch(
+        "ldraw.cli.inspect_model",
+        side_effect=OSError("shadow directory became unreadable"),
+    ):
+        assert (
+            main(
+                [
+                    "inspect",
+                    str(model),
+                    "--studio-metadata",
+                    str(studio),
+                ],
+            )
+            == 1
+        )
+    captured = capsys.readouterr()
+    assert captured.err.strip() == (
+        "could not load connection metadata source: shadow directory became unreadable"
+    )
+    assert captured.out == ""
+    assert load_parts_mock.call_count == 2
+
+
 def _scout_library_config(tmp_path: Path) -> Config:
     """Write the synthetic Scout parts library used by the fixture models."""
     root = tmp_path / "ldraw"
