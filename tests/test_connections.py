@@ -178,6 +178,12 @@ def _connection_parts(tmp_path: Path) -> Parts:
             f"1 16 0 0 -20 {_FLIP_Y} stud4.dat\n"
             f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
         ),
+        "parts/rankedrecept.dat": (
+            "0 Coincident Receptacle Ranking Fixture\n"
+            "2 24 -6 0 10 6 4 30\n"
+            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
+            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
+        ),
         "parts/onestud.dat": (
             "0 Single Stud Plate\n"
             "2 24 -10 0 -10 10 4 10\n"
@@ -213,6 +219,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "precedence.dat Precedence Test Cylinder\n"
         "deckplate.dat Studio Precedence Plate\n"
         "dualrecept.dat Dual Receptacle Strip\n"
+        "rankedrecept.dat Coincident Receptacle Ranking Fixture\n"
         "onestud.dat Single Stud Plate\n",
         encoding="utf-8",
     )
@@ -974,28 +981,37 @@ def test_strict_stud_contacts_require_entry_orientation_and_penetration(
     assert inspection.stud_contacts() == ()
 
 
-def test_stud_contacts_pair_each_stud_with_the_nearest_receptacle(
+def test_stud_contacts_choose_lowest_ranked_valid_receptacle(
     tmp_path: Path,
 ) -> None:
     parts = _connection_parts(tmp_path)
     model = parse_model(
         f"1 16 0 0 20 {_IDENTITY} onestud.dat\n"
-        f"1 16 0 -4 0 {_IDENTITY} dualrecept.dat\n",
+        f"1 16 0 -4 0 {_IDENTITY} rankedrecept.dat\n",
     )
 
     inspection = inspect_model(model, parts)
 
+    receptacles = tuple(
+        feature
+        for feature in inspection.occurrences[1].connections
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+    assert {feature.feature_id for feature in receptacles} == {
+        "stud4@R0/stud4",
+        "stud4@R1/stud4",
+    }
+    assert all(feature.position == Vector(0, -4, 20) for feature in receptacles)
+
     contacts = inspection.connection_contacts()
     assert len(contacts) == 1
-    # Lexicographically "stud4@R0/stud4" sorts first; the aligned
-    # receptacle at z=20 is the second one.
     assert contacts[0].first.feature_id == "stud@R0/stud"
-    assert contacts[0].second.feature_id == "stud4@R1/stud4"
+    assert contacts[0].second.feature_id == "stud4@R0/stud4"
     assert contacts[0].second.position == Vector(0, -4, 20)
     stud_contacts = inspection.stud_contacts()
     assert len(stud_contacts) == 1
     assert stud_contacts[0].receptacle_feature is not None
-    assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R1/stud4"
+    assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R0/stud4"
 
 
 def test_spatial_hash_matches_exhaustive_contact_oracle(tmp_path: Path) -> None:

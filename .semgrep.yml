@@ -2,6 +2,22 @@
 # tests/semgrep/ do not match enforcing rules limited to /ldraw/**. CI exercises
 # those fixtures separately with `semgrep scan --test`.
 rules:
+  - id: pyldraw-lint-test-workflow-must-declare-permissions
+    languages:
+      - yaml
+    severity: ERROR
+    paths:
+      include:
+        - /.github/workflows/lint-test.yml
+    message: Deny default GITHUB_TOKEN access and grant explicit job permissions.
+    patterns:
+      - pattern: |
+          jobs: $JOBS
+      - pattern-not-inside: |
+          permissions: {}
+          ...
+          jobs: $JOBS
+
   - id: pyldraw-unsafe-archive-extractall
     languages:
       - python

@@ -7,6 +7,7 @@ import os
 import zipfile
 from dataclasses import replace
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -578,6 +579,32 @@ def test_studio_document_failure_is_counted_once_for_assembly(
     assert geometry.diagnostics == report.diagnostics
 
 
+def test_document_metadata_aggregation_is_cached_and_invalidated(
+    tmp_path: Path,
+) -> None:
+    parts = _stud_shadow_parts(tmp_path)
+    studio = tmp_path / "broken-studio.json"
+    studio.write_text('{"parts": [', encoding="utf-8")
+    parts.add_studio_metadata(studio)
+
+    aggregate = parts._connection_document_results  # noqa: SLF001
+    with patch.object(
+        parts,
+        "_connection_document_results",
+        wraps=aggregate,
+    ) as aggregate_mock:
+        first = parts.geometry("oneplate")
+        second = parts.geometry("ONEPLATE")
+
+        assert first.connection_metadata == second.connection_metadata
+        assert first.diagnostics == second.diagnostics
+        assert aggregate_mock.call_count == 1
+
+        parts.clear_studio_metadata()
+        parts.geometry("oneplate")
+        assert aggregate_mock.call_count == 2
+
+
 def test_studio_valid_and_document_failure_contributions_share_one_source(
     tmp_path: Path,
 ) -> None:
@@ -713,7 +740,9 @@ def test_parts_get_memo_is_not_aliased_by_source_mutation(tmp_path: Path) -> Non
     assert rekeyed is not keyed
 
 
-def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
+def test_nested_shadow_edits_use_explicit_parts_cache_invalidation(
+    tmp_path: Path,
+) -> None:
     parts = _stud_shadow_parts(tmp_path)
     shadow = tmp_path / "shadow"
     target = shadow / "p" / "stud.dat"
@@ -743,7 +772,17 @@ def test_parts_get_rekeys_after_nested_shadow_file_edit(tmp_path: Path) -> None:
         ns=(root_stat.st_atime_ns, root_stat.st_mtime_ns),
     )
 
-    second = Parts.get(parts.path, connection_shadows=(shadow,))
+    with patch(
+        "ldraw.parts.Path.rglob",
+        side_effect=AssertionError("memo lookup walked the source tree"),
+    ):
+        cached = Parts.get(parts.path, connection_shadows=(shadow,))
+    assert cached is first
+    assert {feature.metadata_id for feature in cached.connections("oneplate")} == {
+        "old"
+    }
+
+    second = Parts.fresh(parts.path, connection_shadows=(shadow,))
     assert second is not first
     assert {feature.metadata_id for feature in second.connections("oneplate")} == {
         "new"

@@ -1,0 +1,34 @@
+name: Missing explicit permissions
+
+on: pull_request
+
+# ruleid: pyldraw-lint-test-workflow-must-declare-permissions
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+
+---
+name: Broad default permissions
+
+on: pull_request
+
+permissions: write-all
+
+# ruleid: pyldraw-lint-test-workflow-must-declare-permissions
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+
+---
+name: Least-privilege permissions
+
+on: pull_request
+
+permissions: {}
+
+# ok: pyldraw-lint-test-workflow-must-declare-permissions
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read

@@ -62,6 +62,7 @@ jobs:
     - name: Run repository Semgrep rules
       run: |
         pipx run semgrep scan --config .semgrep.yml --error
+        pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/.github/workflows/lint-test.yml
         pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/downloads.py
         pipx run semgrep scan --test --config .semgrep.yml tests/semgrep/ldraw/rendering.py
 
