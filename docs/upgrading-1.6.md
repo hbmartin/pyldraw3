@@ -222,11 +222,11 @@ tracked unreleased development snapshots in which that member serialized as
 
 `Parts.get` memoizes instances keyed by cheap source metadata, and the key
 now also folds in every registered connection source: file sources by size
-and modification time, directory sources by their root stat identity (device
-and inode) only — descendants are deliberately not walked on lookup.
-Replacing a shadow directory wholesale or touching a file source is picked up
-automatically; editing a file nested inside a registered shadow directory is
-not. After such in-place edits, call `Parts.fresh(...)` or
+and modification time, directory sources by their root modification time,
+size, device, and inode. Descendants are deliberately not walked on lookup.
+Replacing a shadow directory wholesale or touching a file source is picked
+up automatically; a nested edit that leaves the root directory's metadata
+unchanged is not detected. After any nested edit, call `Parts.fresh(...)` or
 `Parts.clear_cache()` to rebuild from current disk contents.
 
 Mutating an instance's sources — `add_connection_shadow()`,
