@@ -1279,8 +1279,12 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert "connection_contacts" in payload
     assert set(payload["connection_graphs"]) == {"confirmed", "nodes", "optimistic"}
     assert payload["connection_graphs"]["nodes"] == [0, 1]
-    assert payload["stud_contacts"] == []
-    assert payload["connection_graphs"]["confirmed"] == []
+    assert len(payload["stud_contacts"]) == 8
+    assert {
+        contact["receptacle_feature"].rsplit("/", 1)[-1].split(":")[0]
+        for contact in payload["stud_contacts"]
+    } == {"stud4"}
+    assert len(payload["connection_graphs"]["confirmed"]) == 8
     assert {item["code"] for item in payload["diagnostics"]} == {
         "part.reference_unresolved"
     }

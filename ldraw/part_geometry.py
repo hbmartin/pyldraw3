@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
 from ldraw.connection_inference import (
+    derive_stud_sockets,
     infer_part_connections,
     mark_internal_fit_occupied,
     normalize_connections,
@@ -524,6 +525,13 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
 ]:
     connections = list(normalize_connections(connections))
     catalog_part = _is_catalog_part(parts, code)
+    connections = list(
+        derive_stud_sockets(
+            connections,
+            bounds=box.box(),
+            bounds_fallback=catalog_part,
+        ),
+    )
     connections = _infer_catalog_connections(
         parts,
         code=code,

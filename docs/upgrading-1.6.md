@@ -375,3 +375,33 @@ not yet recognize.
   accept `connection_shadows=` and `studio_metadata=` keywords; defaults are
   empty, so existing calls behave identically, but the `Parts.get`
   memoization key now includes those sources.
+
+## 1.6.1: stud receptacles move to the mating grid
+
+1.6.0 placed inferred `stud_receptacle` features on the tube centreline — a
+cell centre. Studs mate at the surrounding grid corners, so strict stud
+matching (a centreline-residual test) could not confirm an ordinary stacked
+brick. 1.6.1 derives **mating sockets** from tube primitives during part
+resolution:
+
+- an open tube (`stud4` family) contributes its four diagonal grid corners
+  plus a socket on its own centreline (half-offset "jumper" mounts);
+- a solid tube (`stud3` family) contributes its axial neighbours and loses
+  its centreline feature — nothing can enter a solid tube;
+- candidate sockets are validated against the part's own top-stud grid
+  phases; a studless underside (tiles) falls back to the part bounds, and a
+  stud-group primitive or subpart with no stud evidence defers derivation to
+  the enclosing part;
+- sockets sit on the underside opening plane, so `snap_transform()` mates a
+  stud flush with the part.
+
+Derived sockets are named `Stud Socket`, keep the tube's kind, role, axis,
+profile, and source, and append `derived:stud-socket` to `provenance`.
+Authoritative metadata (inline LDCad, shadows, Studio, overrides) still
+supersedes them as inferred interfaces.
+
+Observable changes: `stud_receptacle` counts and positions change for any
+part with tubes; `connection_contacts()` and `stud_contacts()` now confirm
+plain stacks (two stacked 2 x 4 bricks report exactly eight confirmed stud
+contacts with zero residual), while half-offset or wall-touching studs remain
+rejected.
