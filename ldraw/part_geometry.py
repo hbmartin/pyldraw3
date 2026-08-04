@@ -203,7 +203,7 @@ def _combined_connection_metadata(
     cache = _metadata_cache_for(parts)
     key = _local_key(code)
     if (cached := cache.get(key)) is not None:
-        return cached
+        return _metadata_as_requested(combined=cached, code=code)
 
     metadata_result = local.metadata_result
     document_diagnostics: list[Diagnostic] = []
@@ -242,7 +242,24 @@ def _combined_connection_metadata(
         report=connection_metadata,
     )
     cache[key] = combined
-    return combined
+    return _metadata_as_requested(combined=combined, code=code)
+
+
+def _metadata_as_requested(
+    *,
+    combined: _CombinedConnectionMetadata,
+    code: str,
+) -> _CombinedConnectionMetadata:
+    """Restate a cached report under the caller's part-code spelling.
+
+    The caches merge case and slash variants of one part code, so a stored
+    report carries whichever spelling populated it first; the report handed
+    back must instead match the ``PartGeometry.code`` of the current call.
+    """
+    report = combined.report
+    if report is None or report.part_code == code:
+        return combined
+    return replace(combined, report=replace(report, part_code=code))
 
 
 def part_studs(parts: _PartGeometryLibrary, code: str) -> tuple[StudReference, ...]:

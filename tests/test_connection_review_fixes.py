@@ -627,7 +627,14 @@ def test_document_metadata_aggregation_is_cached_and_invalidated(
         first = parts.geometry("oneplate")
         second = parts.geometry("ONEPLATE")
 
-        assert first.connection_metadata == second.connection_metadata
+        assert first.connection_metadata is not None
+        assert second.connection_metadata is not None
+        assert first.connection_metadata.part_code == "oneplate"
+        assert second.connection_metadata.part_code == "ONEPLATE"
+        assert first.connection_metadata == replace(
+            second.connection_metadata,
+            part_code="oneplate",
+        )
         assert first.diagnostics == second.diagnostics
         assert aggregate_mock.call_count == 1
 

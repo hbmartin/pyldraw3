@@ -416,6 +416,21 @@ def test_inline_ldcad_metadata_is_consumed_without_a_shadow_library(
     assert cleared.features == ()
 
 
+def test_metadata_part_code_follows_each_requested_spelling(tmp_path: Path) -> None:
+    parts = _connection_parts(tmp_path)
+    # Prime the shared local-geometry cache under a different spelling.
+    parts.bounding_box("INLINE")
+
+    first = parts.connection_metadata("inline")
+    second = parts.connection_metadata("INLINE")
+    geometry = parts.geometry("Inline")
+
+    assert first.part_code == "inline"
+    assert second.part_code == "INLINE"
+    assert geometry.connection_metadata is not None
+    assert geometry.connection_metadata.part_code == geometry.code
+
+
 def test_inline_metadata_supersedes_colocated_primitive_without_snap_clear(
     tmp_path: Path,
 ) -> None:
