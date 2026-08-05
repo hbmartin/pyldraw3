@@ -37,6 +37,16 @@ _AXLE_RE = re.compile(r"(?:axle\w*|axl\w*|daxle\w*)$")
 _AXLE_EXCLUDED_RE = re.compile(r".*(?:end|cap|edge)\w*$")
 _AXIS_VECTORS = (Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1))
 
+_SOCKET_PROVENANCE = "derived:stud-socket"
+_SOCKET_NAME = "Stud Socket"
+_SOCKET_GRID_PITCH = 20
+_SOCKET_HALF_PITCH = 10.0
+_SOCKET_LATERAL_MARGIN = 4.0
+_SOCKET_MERGE_TOLERANCE = 0.5
+_SOCKET_AXIS_ALIGNMENT = 0.999
+_OPEN_SOCKET_OFFSETS = ((-1, -1), (-1, 1), (1, -1), (1, 1))
+_SOLID_SOCKET_OFFSETS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
 
 def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
     *,
@@ -180,6 +190,211 @@ def mark_internal_fit_occupied(
         else feature
         for feature in values
     )
+
+
+def derive_stud_sockets(
+    features: Iterable[ConnectionFeature],
+    *,
+    bounds: BoundingBox | None,
+    bounds_fallback: bool,
+) -> tuple[ConnectionFeature, ...]:
+    """Project tube receptacles onto the stud-mating grid.
+
+    Tube primitives carry their receptacle evidence on the tube centreline,
+    which is a cell centre — no stud mates there except through an open
+    tube's own socket. Strict stud matching keys on centreline residuals, so
+    each tube is expanded into sockets on the adjacent mating centrelines:
+    diagonal grid corners for open tubes, axial neighbours for solid tubes,
+    validated against the part's own stud grid, and placed on the underside
+    opening plane so snap placement mates flush. An open tube keeps a socket
+    on its own centreline; a solid tube's centreline accepts nothing and is
+    dropped once sockets exist.
+
+    Stud-group primitives and subparts see only a slice of the part, so a
+    tube whose grid cannot be validated in the current feature set is kept
+    untouched for an enclosing resolution level to expand. Only a catalog
+    part (``bounds_fallback``) may fall back to bounds filtering — studless
+    undersides such as tiles have no grid to validate against.
+    """
+    values = tuple(features)
+    if not any(_is_tube_receptacle(feature) for feature in values):
+        return values
+    seen: list[tuple[Vector, Vector]] = [
+        (feature.position, feature.axis)
+        for feature in values
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+        and not _is_tube_receptacle(feature)
+    ]
+    result: list[ConnectionFeature] = []
+    for feature in values:
+        if not _is_tube_receptacle(feature):
+            result.append(feature)
+            continue
+        sockets = _tube_sockets(
+            feature,
+            values,
+            bounds=bounds,
+            bounds_fallback=bounds_fallback,
+        )
+        emitted = False
+        for socket in sockets:
+            if any(
+                abs(socket.position - position) <= _SOCKET_MERGE_TOLERANCE
+                and socket.axis.dot(axis) >= _SOCKET_AXIS_ALIGNMENT
+                for position, axis in seen
+            ):
+                continue
+            seen.append((socket.position, socket.axis))
+            result.append(socket)
+            emitted = True
+        if not emitted:
+            # Deferred to an enclosing level, or nothing survived filtering:
+            # keep the tube so the receptacle evidence is retained.
+            result.append(feature)
+    return tuple(result)
+
+
+def _is_tube_receptacle(feature: ConnectionFeature) -> bool:
+    return (
+        feature.kind is ConnectionKind.STUD_RECEPTACLE
+        and isinstance(feature.profile, CylindricalProfile)
+        and "tube" in feature.name.casefold()
+        and _SOCKET_PROVENANCE not in feature.provenance
+    )
+
+
+def _tube_sockets(
+    tube: ConnectionFeature,
+    features: tuple[ConnectionFeature, ...],
+    *,
+    bounds: BoundingBox | None,
+    bounds_fallback: bool,
+) -> tuple[ConnectionFeature, ...]:
+    axis = tube.axis
+    x_direction = tube.frame * Vector(1, 0, 0)
+    z_direction = tube.frame * Vector(0, 0, 1)
+    center = _opening_position(tube.position, axis=axis, bounds=bounds)
+    open_tube = "open" in tube.name.casefold()
+    offsets = _OPEN_SOCKET_OFFSETS if open_tube else _SOLID_SOCKET_OFFSETS
+    candidates = tuple(
+        (
+            offset_x,
+            offset_z,
+            center
+            + x_direction * (offset_x * _SOCKET_HALF_PITCH)
+            + z_direction * (offset_z * _SOCKET_HALF_PITCH),
+        )
+        for offset_x, offset_z in offsets
+    )
+    phases = _stud_grid_phases(
+        features,
+        axis=axis,
+        x_direction=x_direction,
+        z_direction=z_direction,
+    )
+    matched = [
+        candidate
+        for candidate in candidates
+        if _grid_phase(candidate[2], x_direction, z_direction) in phases
+    ]
+    if not matched:
+        if not bounds_fallback:
+            # Defer: the enclosing resolution level sees the full grid.
+            return ()
+        matched = [
+            candidate
+            for candidate in candidates
+            if _within_lateral_bounds(candidate[2], axis=axis, bounds=bounds)
+        ]
+    sockets: list[ConnectionFeature] = []
+    if open_tube:
+        sockets.append(
+            replace(
+                tube,
+                position=center,
+                provenance=(*tube.provenance, _SOCKET_PROVENANCE),
+            ),
+        )
+    for offset_x, offset_z, position in matched:
+        suffix = f"socket:{offset_x:+d}{offset_z:+d}"
+        sockets.append(
+            replace(
+                tube,
+                position=position,
+                name=_SOCKET_NAME,
+                feature_id=(
+                    f"{tube.feature_id}:{suffix}" if tube.feature_id else suffix
+                ),
+                provenance=(*tube.provenance, _SOCKET_PROVENANCE),
+            ),
+        )
+    return tuple(sockets)
+
+
+def _stud_grid_phases(
+    features: tuple[ConnectionFeature, ...],
+    *,
+    axis: Vector,
+    x_direction: Vector,
+    z_direction: Vector,
+) -> frozenset[tuple[int, int]]:
+    return frozenset(
+        _grid_phase(feature.position, x_direction, z_direction)
+        for feature in features
+        if feature.kind is ConnectionKind.STUD
+        and feature.axis.dot(axis) <= -_SOCKET_AXIS_ALIGNMENT
+    )
+
+
+def _grid_phase(
+    position: Vector,
+    x_direction: Vector,
+    z_direction: Vector,
+) -> tuple[int, int]:
+    return (
+        round(position.dot(x_direction)) % _SOCKET_GRID_PITCH,
+        round(position.dot(z_direction)) % _SOCKET_GRID_PITCH,
+    )
+
+
+def _opening_position(
+    position: Vector,
+    *,
+    axis: Vector,
+    bounds: BoundingBox | None,
+) -> Vector:
+    if bounds is None:
+        return position
+    dominant = max(range(3), key=lambda index: abs(_component(axis, index)))
+    component = _component(axis, dominant)
+    if abs(component) < 1e-9:
+        return position
+    face = _component(bounds.max if component > 0 else bounds.min, dominant)
+    shift = (face - _component(position, dominant)) / component
+    return position + axis * shift
+
+
+def _within_lateral_bounds(
+    position: Vector,
+    *,
+    axis: Vector,
+    bounds: BoundingBox | None,
+) -> bool:
+    if bounds is None:
+        return False
+    dominant = max(range(3), key=lambda index: abs(_component(axis, index)))
+    for index in range(3):
+        if index == dominant:
+            continue
+        low = _component(bounds.min, index) + _SOCKET_LATERAL_MARGIN
+        high = _component(bounds.max, index) - _SOCKET_LATERAL_MARGIN
+        if not low <= _component(position, index) <= high:
+            return False
+    return True
+
+
+def _component(value: Vector, index: int) -> float:
+    return float((value.x, value.y, value.z)[index])
 
 
 def _stud_feature(

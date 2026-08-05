@@ -85,6 +85,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "0 Click Lock Hinge Single Finger for Bricks\n2 24 -6 -8 -6 6 8 6\n"
         ),
         "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
+        "p/stud3.dat": "0 Stud Tube Solid\n2 24 -4 0 -4 4 4 4\n",
         "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
         "parts/bar1.dat": ("0 Bar 3L\n0 Name: bar1.dat\n2 24 -4 0 -4 4 60 4\n"),
         "parts/blank.dat": ("0 Blank Tile\n2 24 -10 0 -10 10 4 10\n"),
@@ -189,6 +190,24 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -10 0 -10 10 4 10\n"
             f"1 16 0 0 0 {_IDENTITY} stud.dat\n"
         ),
+        "parts/gridbrick.dat": (
+            "0 Synthetic Brick 2 x 4\n"
+            "2 24 -40 0 -20 40 24 20\n"
+            + "".join(
+                f"1 16 {x} 0 {z} {_IDENTITY} stud.dat\n"
+                for x in (-30, -10, 10, 30)
+                for z in (-10, 10)
+            )
+            + "".join(f"1 16 {x} 4 0 {_FLIP_Y} stud4.dat\n" for x in (-20, 0, 20))
+        ),
+        "parts/gridstrip.dat": (
+            "0 Synthetic Plate 1 x 4\n"
+            "2 24 -40 0 -10 40 8 10\n"
+            + "".join(
+                f"1 16 {x} 0 0 {_IDENTITY} stud.dat\n" for x in (-30, -10, 10, 30)
+            )
+            + "".join(f"1 16 {x} 4 0 {_FLIP_Y} stud3.dat\n" for x in (-20, 0, 20))
+        ),
     }
     for name, text in files.items():
         target = root / name
@@ -220,7 +239,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "deckplate.dat Studio Precedence Plate\n"
         "dualrecept.dat Dual Receptacle Strip\n"
         "rankedrecept.dat Coincident Receptacle Ranking Fixture\n"
-        "onestud.dat Single Stud Plate\n",
+        "onestud.dat Single Stud Plate\n"
+        "gridbrick.dat Synthetic Brick 2 x 4\n"
+        "gridstrip.dat Synthetic Plate 1 x 4\n",
         encoding="utf-8",
     )
     (root / "p.lst").write_text(
@@ -232,6 +253,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "clh4.dat Click Lock Hinge Half Dual Finger\n"
         "clh1.dat Click Lock Hinge Single Finger for Bricks\n"
         "stud.dat Stud\n"
+        "stud3.dat Stud Tube Solid\n"
         "stud4.dat Stud Tube Open\n",
         encoding="utf-8",
     )
@@ -986,7 +1008,8 @@ def test_strict_stud_contacts_require_entry_orientation_and_penetration(
     plate, receptacle = inspection.occurrences
     assert len(plate.connections) == 16
     assert {feature.kind for feature in plate.connections} == {ConnectionKind.STUD}
-    assert len(receptacle.connections) == 8
+    # 8 open-tube centre sockets plus the 6 in-bounds derived corner sockets.
+    assert len(receptacle.connections) == 14
     assert {feature.kind for feature in receptacle.connections} == {
         ConnectionKind.STUD_RECEPTACLE,
     }
@@ -1016,17 +1039,76 @@ def test_stud_contacts_choose_lowest_ranked_valid_receptacle(
         "stud4@R0/stud4",
         "stud4@R1/stud4",
     }
-    assert all(feature.position == Vector(0, -4, 20) for feature in receptacles)
+    # The first tube becomes the opening-plane socket; the coincident second
+    # tube deduplicates against it and is retained as raw tube evidence.
+    assert {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in receptacles
+    } == {(0, 0, 20), (0, -4, 20)}
 
     contacts = inspection.connection_contacts()
     assert len(contacts) == 1
     assert contacts[0].first.feature_id == "stud@R0/stud"
     assert contacts[0].second.feature_id == "stud4@R0/stud4"
-    assert contacts[0].second.position == Vector(0, -4, 20)
+    assert contacts[0].second.position == Vector(0, 0, 20)
     stud_contacts = inspection.stud_contacts()
     assert len(stud_contacts) == 1
     assert stud_contacts[0].receptacle_feature is not None
     assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R0/stud4"
+
+
+def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    brick = tuple(
+        feature
+        for feature in parts.connections("gridbrick")
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+    corners = {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in brick
+        if feature.name == "Stud Socket"
+    }
+    centres = {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in brick
+        if feature.name == "Stud Tube Open"
+    }
+    assert corners == {
+        (float(x), 24.0, float(z)) for x in (-30, -10, 10, 30) for z in (-10, 10)
+    }
+    assert centres == {(-20.0, 24.0, 0.0), (0.0, 24.0, 0.0), (20.0, 24.0, 0.0)}
+
+    strip = tuple(
+        feature
+        for feature in parts.connections("gridstrip")
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+    assert all(feature.name == "Stud Socket" for feature in strip)
+    assert {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in strip
+    } == {(-30.0, 8.0, 0.0), (-10.0, 8.0, 0.0), (10.0, 8.0, 0.0), (30.0, 8.0, 0.0)}
+
+
+def test_strict_stud_contacts_confirm_a_plain_stack(tmp_path: Path) -> None:
+    parts = _connection_parts(tmp_path)
+    model = parse_model(
+        f"1 16 0 0 0 {_IDENTITY} gridbrick.dat\n"
+        f"1 16 0 -24 0 {_IDENTITY} gridbrick.dat\n",
+    )
+
+    inspection = inspect_model(model, parts)
+
+    contacts = inspection.connection_contacts()
+    assert len(contacts) == 8
+    assert {contact.status for contact in contacts} == {ConnectionStatus.CONFIRMED}
+    assert all(contact.residual.distance == 0.0 for contact in contacts)
+    assert len({id(contact.first) for contact in contacts}) == 8
+    assert len(inspection.stud_contacts()) == 8
 
 
 def test_spatial_hash_matches_exhaustive_contact_oracle(tmp_path: Path) -> None:
