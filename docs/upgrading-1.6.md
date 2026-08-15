@@ -394,9 +394,8 @@ resolution:
   the enclosing part;
 - bounds filtering can reject every offset candidate: a solid tube then
   contributes no inferred receptacle, while an open tube keeps only its named
-  centre socket. When the rejected tube belongs to a catalog part referenced
-  by another catalog part, its raw evidence remains available internally so
-  the enclosing assembly can reconsider it against the larger grid and bounds;
+  centre socket. That result is final for a catalog part, so enclosing
+  shortcuts cannot create sockets that the resolved child does not expose;
 - sockets sit at the far end of the transformed tube primitive, not at the
   part's bounding-box face, so unrelated underside protrusions do not move
   them and `snap_transform()` mates a stud flush with the part.

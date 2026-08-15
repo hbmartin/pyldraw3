@@ -234,6 +234,18 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -20 0 -20 20 8 20\n"
             f"1 16 0 0 0 {_IDENTITY} narrowsolid.dat\n"
         ),
+        "parts/narrowsolidmeta.dat": (
+            "0 Bounds-Rejected Solid Tube with Metadata\n"
+            "2 24 -5 0 -5 5 8 5\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+            "0 !LDCAD SNAP_CYL [id=explicit-socket] [gender=F] "
+            "[secs=R 6 4] [pos=0 8 0]\n"
+        ),
+        "parts/nestedsolidmeta.dat": (
+            "0 Assembly Containing a Metadata-Resolved Solid Tube\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} narrowsolidmeta.dat\n"
+        ),
         "parts/openorderab.dat": (
             "0 Open Tubes Ordered Corner then Centre\n"
             "2 24 -30 0 -30 30 8 30\n"
@@ -280,6 +292,11 @@ def _connection_parts(tmp_path: Path) -> Parts:
             )
             + "".join(f"1 16 {x} 4 0 {_ROTATE_X_180} stud3.dat\n" for x in (-20, 0, 20))
         ),
+        "parts/twostrips.dat": (
+            "0 Two Coincident Synthetic Plates\n"
+            f"1 16 0 0 0 {_IDENTITY} gridstrip.dat\n"
+            f"1 16 0 0 0 {_IDENTITY} gridstrip.dat\n"
+        ),
     }
     for name, text in files.items():
         target = root / name
@@ -315,12 +332,15 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "longopen.dat Long Open Tube Name Fixture\n"
         "narrowsolid.dat Bounds-Rejected Solid Tube Fixture\n"
         "nestedsolid.dat Assembly Expanding a Narrow Solid Tube\n"
+        "narrowsolidmeta.dat Bounds-Rejected Solid Tube with Metadata\n"
+        "nestedsolidmeta.dat Assembly Containing a Metadata-Resolved Solid Tube\n"
         "openorderab.dat Open Tubes Ordered Corner then Centre\n"
         "openorderba.dat Open Tubes Ordered Centre then Corner\n"
         "protrudingplate.dat Plate with Unrelated Underside Protrusion\n"
         "onestud.dat Single Stud Plate\n"
         "gridbrick.dat Synthetic Brick 2 x 4\n"
-        "gridstrip.dat Synthetic Plate 1 x 4\n",
+        "gridstrip.dat Synthetic Plate 1 x 4\n"
+        "twostrips.dat Two Coincident Synthetic Plates\n",
         encoding="utf-8",
     )
     (root / "p.lst").write_text(
@@ -1233,6 +1253,29 @@ def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
     }
 
 
+def test_derived_stud_socket_snap_transform_preserves_facing_axes(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    stud = _one(parts, "onestud", ConnectionKind.STUD)
+    socket = next(
+        feature
+        for feature in _connections_with_kind(
+            parts=parts,
+            code="gridstrip",
+            kind=ConnectionKind.STUD_RECEPTACLE,
+        )
+        if feature.position == Vector(30, 8, 0)
+    )
+
+    transform = snap_transform(socket, stud)
+
+    assert socket.centered
+    assert transform.matrix.flatten() == pytest.approx(Identity().flatten())
+    assert transform.position == Vector(-30, -8, 0)
+    assert connection_residual(stud, socket).axial_gap == pytest.approx(4)
+
+
 def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
     tmp_path: Path,
 ) -> None:
@@ -1248,7 +1291,7 @@ def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
         (-10.0, 24.0, 0.0),
         (10.0, 24.0, 0.0),
     }
-    assert all(not feature.centered for feature in protruding)
+    assert all(feature.centered for feature in protruding)
 
     long_name = _connections_with_kind(
         parts=parts,
@@ -1258,7 +1301,7 @@ def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
     assert len(long_name) == 1
     assert long_name[0].name == "Stud Tube Open with 4 Fillets Standard"
     assert long_name[0].position == Vector(0.0, 8.0, 0.0)
-    assert not long_name[0].centered
+    assert long_name[0].centered
     assert "derived:stud-socket" in long_name[0].provenance
 
 
@@ -1274,36 +1317,53 @@ def test_derive_stud_sockets_drop_bounds_rejected_solid_tube_centre(
     )
 
 
-def test_derive_stud_sockets_defer_rejected_catalog_tubes_to_parent(
+def test_derive_stud_sockets_do_not_resurrect_rejected_catalog_tubes(
     tmp_path: Path,
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    nested = _connections_with_kind(
-        parts=parts,
-        code="nestedsolid",
-        kind=ConnectionKind.STUD_RECEPTACLE,
-    )
-
-    assert len(nested) == 4
-    assert all(feature.name == "Stud Socket" for feature in nested)
-    assert _connection_positions(nested) == {
-        (-10.0, 8.0, 0.0),
-        (0.0, 8.0, -10.0),
-        (0.0, 8.0, 10.0),
-        (10.0, 8.0, 0.0),
-    }
-
-    parts.set_connection_overrides(
-        code="narrowsolid",
-        features=(),
-        replace_existing=True,
-    )
     assert not _connections_with_kind(
         parts=parts,
         code="nestedsolid",
         kind=ConnectionKind.STUD_RECEPTACLE,
     )
+
+
+def test_derived_stud_sockets_preserve_child_metadata_when_nested(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    standalone = _connections_with_kind(
+        parts=parts,
+        code="narrowsolidmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedsolidmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(standalone) == len(nested) == 1
+    assert standalone[0].source is ConnectionSource.LDCAD_INLINE
+    assert nested[0].source is ConnectionSource.LDCAD_INLINE
+    assert standalone[0].position == nested[0].position == Vector(0, 8, 0)
+
+
+def test_derive_stud_sockets_deduplicate_nested_derived_sockets(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="twostrips",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(receptacles) == 4
+    assert len(_connection_positions(receptacles)) == 4
 
 
 def test_derive_stud_sockets_drop_deduplicated_solid_tube_centres(
