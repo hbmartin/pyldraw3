@@ -39,11 +39,15 @@ from ldraw.part_geometry import part_connections
 from ldraw.parts import Parts
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ldraw.part import Part
 
 _IDENTITY = "1 0 0 0 1 0 0 0 1"
-_FLIP_Y = "1 0 0 0 -1 0 0 0 -1"
-_FLIP_Y_5 = "1 0 0 0 -5 0 0 0 -1"
+_ROTATE_X_180 = "1 0 0 0 -1 0 0 0 -1"
+# The Y scale stretches a four-LDU tube through a twenty-LDU brick body; the
+# matching Z negation keeps the transform a rotation plus scale, not a mirror.
+_ROTATE_X_180_SCALE_Y_5 = "1 0 0 0 -5 0 0 0 -1"
 
 
 @dataclass(eq=False)
@@ -68,10 +72,28 @@ class _TyreOnlyCompatibilityLibrary(_PartLibraryAdapter):
         return ("rim",) if tyre_code == "tyre" else ()
 
 
+def _connections_with_kind(
+    *,
+    parts: Parts,
+    code: str,
+    kind: ConnectionKind,
+) -> tuple[ConnectionFeature, ...]:
+    return tuple(feature for feature in parts.connections(code) if feature.kind is kind)
+
+
+def _connection_positions(
+    features: Iterable[ConnectionFeature],
+) -> set[tuple[float, float, float]]:
+    return {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in features
+    }
+
+
 def _connection_parts(tmp_path: Path) -> Parts:
     root = tmp_path / "ldraw"
     scout_receptacles = "".join(
-        f"1 16 {x} 0 {z} {_FLIP_Y} stud4.dat\n"
+        f"1 16 {x} 0 {z} {_ROTATE_X_180} stud4.dat\n"
         for x in (-4, 4)
         for z in (-30, -10, 10, 30)
     )
@@ -118,19 +140,19 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "parts/beam.dat": (
             "0 Technic Brick with Pin Hole\n"
             f"1 16 0 0 0 {_IDENTITY} peghole.dat\n"
-            f"1 16 0 20 0 {_FLIP_Y} peghole.dat\n"
+            f"1 16 0 20 0 {_ROTATE_X_180} peghole.dat\n"
         ),
         "parts/nbeam.dat": (
             "0 Technic Brick with Negative Pin Hole\n"
             f"1 16 0 0 0 {_IDENTITY} npeghol.dat\n"
-            f"1 16 0 20 0 {_FLIP_Y} npeghol.dat\n"
+            f"1 16 0 20 0 {_ROTATE_X_180} npeghol.dat\n"
         ),
         "parts/pin.dat": (f"0 Technic Pin\n1 16 0 20 0 {_IDENTITY} connect2.dat\n"),
         "parts/axle.dat": (f"0 Technic Axle 2\n1 16 0 0 0 {_IDENTITY} axlehol8.dat\n"),
         "parts/axlehole.dat": (
             "0 Technic Brick with Axle Hole\n"
             f"1 16 0 0 0 {_IDENTITY} axlehol8.dat\n"
-            f"1 16 0 20 0 {_FLIP_Y} axlehol8.dat\n"
+            f"1 16 0 20 0 {_ROTATE_X_180} axlehol8.dat\n"
         ),
         "parts/hinge1.dat": (
             f"0 Hinge Click Finger\n1 16 0 0 0 {_IDENTITY} clh4.dat\n"
@@ -180,32 +202,49 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "parts/dualrecept.dat": (
             "0 Dual Receptacle Strip\n"
             "2 24 -6 0 -40 6 4 40\n"
-            f"1 16 0 0 -20 {_FLIP_Y} stud4.dat\n"
-            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
+            f"1 16 0 0 -20 {_ROTATE_X_180} stud4.dat\n"
+            f"1 16 0 0 20 {_ROTATE_X_180} stud4.dat\n"
         ),
         "parts/coincidentopen.dat": (
             "0 Coincident Open Tube Fixture\n"
             "2 24 -6 0 10 6 4 30\n"
-            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
-            f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
+            f"1 16 0 0 20 {_ROTATE_X_180} stud4.dat\n"
+            f"1 16 0 0 20 {_ROTATE_X_180} stud4.dat\n"
         ),
         "parts/coincidentsolid.dat": (
             "0 Coincident Solid Tube Fixture\n"
             "2 24 -20 0 -10 20 8 10\n"
             f"1 16 -10 0 0 {_IDENTITY} stud.dat\n"
             f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
-            f"1 16 0 4 0 {_FLIP_Y} stud3.dat\n"
-            f"1 16 0 4 0 {_FLIP_Y} stud3.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
         ),
         "parts/longopen.dat": (
             "0 Long Open Tube Name Fixture\n"
             "2 24 -10 0 -10 10 8 10\n"
-            f"1 16 0 4 0 {_FLIP_Y} stud4f4s.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud4f4s.dat\n"
         ),
         "parts/narrowsolid.dat": (
             "0 Bounds-Rejected Solid Tube Fixture\n"
             "2 24 -5 0 -5 5 8 5\n"
-            f"1 16 0 4 0 {_FLIP_Y} stud3.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+        ),
+        "parts/nestedsolid.dat": (
+            "0 Assembly Expanding a Narrow Solid Tube\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} narrowsolid.dat\n"
+        ),
+        "parts/openorderab.dat": (
+            "0 Open Tubes Ordered Corner then Centre\n"
+            "2 24 -30 0 -30 30 8 30\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud4.dat\n"
+            f"1 16 10 4 10 {_ROTATE_X_180} stud4.dat\n"
+        ),
+        "parts/openorderba.dat": (
+            "0 Open Tubes Ordered Centre then Corner\n"
+            "2 24 -30 0 -30 30 8 30\n"
+            f"1 16 10 4 10 {_ROTATE_X_180} stud4.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud4.dat\n"
         ),
         "parts/protrudingplate.dat": (
             "0 Plate with Unrelated Underside Protrusion\n"
@@ -213,7 +252,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 15 24 0 15 60 0\n"
             f"1 16 -10 0 0 {_IDENTITY} stud.dat\n"
             f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
-            f"1 16 0 4 0 {_FLIP_Y_5} stud3.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180_SCALE_Y_5} stud3.dat\n"
         ),
         "parts/onestud.dat": (
             "0 Single Stud Plate\n"
@@ -228,7 +267,10 @@ def _connection_parts(tmp_path: Path) -> Parts:
                 for x in (-30, -10, 10, 30)
                 for z in (-10, 10)
             )
-            + "".join(f"1 16 {x} 4 0 {_FLIP_Y_5} stud4.dat\n" for x in (-20, 0, 20))
+            + "".join(
+                f"1 16 {x} 4 0 {_ROTATE_X_180_SCALE_Y_5} stud4.dat\n"
+                for x in (-20, 0, 20)
+            )
         ),
         "parts/gridstrip.dat": (
             "0 Synthetic Plate 1 x 4\n"
@@ -236,7 +278,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
             + "".join(
                 f"1 16 {x} 0 0 {_IDENTITY} stud.dat\n" for x in (-30, -10, 10, 30)
             )
-            + "".join(f"1 16 {x} 4 0 {_FLIP_Y} stud3.dat\n" for x in (-20, 0, 20))
+            + "".join(f"1 16 {x} 4 0 {_ROTATE_X_180} stud3.dat\n" for x in (-20, 0, 20))
         ),
     }
     for name, text in files.items():
@@ -272,6 +314,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "coincidentsolid.dat Coincident Solid Tube Fixture\n"
         "longopen.dat Long Open Tube Name Fixture\n"
         "narrowsolid.dat Bounds-Rejected Solid Tube Fixture\n"
+        "nestedsolid.dat Assembly Expanding a Narrow Solid Tube\n"
+        "openorderab.dat Open Tubes Ordered Corner then Centre\n"
+        "openorderba.dat Open Tubes Ordered Centre then Corner\n"
         "protrudingplate.dat Plate with Unrelated Underside Protrusion\n"
         "onestud.dat Single Stud Plate\n"
         "gridbrick.dat Synthetic Brick 2 x 4\n"
@@ -1089,48 +1134,103 @@ def test_stud_contacts_deduplicate_coincident_open_tubes(
     assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R0/stud4"
 
 
+def test_stud_contacts_choose_lowest_ranked_valid_receptacle(
+    tmp_path: Path,
+) -> None:
+    from ldraw.inspection import _best_strict_candidate
+
+    parts = _connection_parts(tmp_path)
+    stud = _one(parts, "onestud", ConnectionKind.STUD)
+    socket = _one(parts, "longopen", ConnectionKind.STUD_RECEPTACLE)
+    farther = replace(
+        socket,
+        position=Vector(0.4, 0, 0),
+        feature_id="farther",
+    )
+    nearer = replace(
+        socket,
+        position=Vector(0.1, 0, 0),
+        feature_id="nearer",
+    )
+
+    best = _best_strict_candidate(
+        stud=stud,
+        receptacles=(farther, nearer),
+        tolerance=0.5,
+        angular_tolerance=1.0,
+    )
+
+    assert best is not None
+    receptacle, residual = best
+    assert receptacle is nearer
+    assert residual.distance == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("code", ["openorderab", "openorderba"])
+def test_derive_stud_sockets_prefer_named_open_tube_centres(
+    tmp_path: Path,
+    code: str,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    overlap = tuple(
+        feature
+        for feature in _connections_with_kind(
+            parts=parts,
+            code=code,
+            kind=ConnectionKind.STUD_RECEPTACLE,
+        )
+        if feature.position == Vector(10, 8, 10)
+    )
+
+    assert len(overlap) == 1
+    assert overlap[0].name == "Stud Tube Open"
+    assert overlap[0].feature_id is not None
+    assert ":socket:" not in overlap[0].feature_id
+
+
 def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
     tmp_path: Path,
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    brick = tuple(
-        feature
-        for feature in parts.connections("gridbrick")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    brick = _connections_with_kind(
+        parts=parts,
+        code="gridbrick",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
+    assert len(brick) == 11
+    assert all(feature.feature_id is not None for feature in brick)
     corners = tuple(
-        feature
-        for feature in brick
-        if feature.feature_id is not None and ":socket:" in feature.feature_id
+        feature for feature in brick if ":socket:" in (feature.feature_id or "")
     )
     centres = tuple(
-        feature
-        for feature in brick
-        if feature.feature_id is not None and ":socket:" not in feature.feature_id
+        feature for feature in brick if ":socket:" not in (feature.feature_id or "")
     )
     assert len(corners) == 8
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in corners
-    } == {(float(x), 24.0, float(z)) for x in (-30, -10, 10, 30) for z in (-10, 10)}
+    assert _connection_positions(corners) == {
+        (float(x), 24.0, float(z)) for x in (-30, -10, 10, 30) for z in (-10, 10)
+    }
     assert len(centres) == 3
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in centres
-    } == {(-20.0, 24.0, 0.0), (0.0, 24.0, 0.0), (20.0, 24.0, 0.0)}
+    assert _connection_positions(centres) == {
+        (-20.0, 24.0, 0.0),
+        (0.0, 24.0, 0.0),
+        (20.0, 24.0, 0.0),
+    }
 
-    strip = tuple(
-        feature
-        for feature in parts.connections("gridstrip")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    strip = _connections_with_kind(
+        parts=parts,
+        code="gridstrip",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
     assert len(strip) == 4
     assert all(feature.name == "Stud Socket" for feature in strip)
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in strip
-    } == {(-30.0, 8.0, 0.0), (-10.0, 8.0, 0.0), (10.0, 8.0, 0.0), (30.0, 8.0, 0.0)}
+    assert _connection_positions(strip) == {
+        (-30.0, 8.0, 0.0),
+        (-10.0, 8.0, 0.0),
+        (10.0, 8.0, 0.0),
+        (30.0, 8.0, 0.0),
+    }
 
 
 def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
@@ -1138,25 +1238,27 @@ def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    protruding = tuple(
-        feature
-        for feature in parts.connections("protrudingplate")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    protruding = _connections_with_kind(
+        parts=parts,
+        code="protrudingplate",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
     assert len(protruding) == 2
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in protruding
-    } == {(-10.0, 24.0, 0.0), (10.0, 24.0, 0.0)}
+    assert _connection_positions(protruding) == {
+        (-10.0, 24.0, 0.0),
+        (10.0, 24.0, 0.0),
+    }
+    assert all(not feature.centered for feature in protruding)
 
-    long_name = tuple(
-        feature
-        for feature in parts.connections("longopen")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    long_name = _connections_with_kind(
+        parts=parts,
+        code="longopen",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
     assert len(long_name) == 1
     assert long_name[0].name == "Stud Tube Open with 4 Fillets Standard"
     assert long_name[0].position == Vector(0.0, 8.0, 0.0)
+    assert not long_name[0].centered
     assert "derived:stud-socket" in long_name[0].provenance
 
 
@@ -1165,9 +1267,42 @@ def test_derive_stud_sockets_drop_bounds_rejected_solid_tube_centre(
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    assert not any(
-        feature.kind is ConnectionKind.STUD_RECEPTACLE
-        for feature in parts.connections("narrowsolid")
+    assert not _connections_with_kind(
+        parts=parts,
+        code="narrowsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+
+def test_derive_stud_sockets_defer_rejected_catalog_tubes_to_parent(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(nested) == 4
+    assert all(feature.name == "Stud Socket" for feature in nested)
+    assert _connection_positions(nested) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
+
+    parts.set_connection_overrides(
+        code="narrowsolid",
+        features=(),
+        replace_existing=True,
+    )
+    assert not _connections_with_kind(
+        parts=parts,
+        code="nestedsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
 
 
@@ -1176,18 +1311,18 @@ def test_derive_stud_sockets_drop_deduplicated_solid_tube_centres(
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    receptacles = tuple(
-        feature
-        for feature in parts.connections("coincidentsolid")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="coincidentsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
     )
 
     assert len(receptacles) == 2
     assert all(feature.name == "Stud Socket" for feature in receptacles)
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in receptacles
-    } == {(-10.0, 8.0, 0.0), (10.0, 8.0, 0.0)}
+    assert _connection_positions(receptacles) == {
+        (-10.0, 8.0, 0.0),
+        (10.0, 8.0, 0.0),
+    }
 
 
 def test_strict_stud_contacts_confirm_a_plain_stack(tmp_path: Path) -> None:

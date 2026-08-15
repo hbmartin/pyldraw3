@@ -392,6 +392,11 @@ resolution:
   phases; a studless underside (tiles) falls back to the part bounds, and a
   stud-group primitive or subpart with no stud evidence defers derivation to
   the enclosing part;
+- bounds filtering can reject every offset candidate: a solid tube then
+  contributes no inferred receptacle, while an open tube keeps only its named
+  centre socket. When the rejected tube belongs to a catalog part referenced
+  by another catalog part, its raw evidence remains available internally so
+  the enclosing assembly can reconsider it against the larger grid and bounds;
 - sockets sit at the far end of the transformed tube primitive, not at the
   part's bounding-box face, so unrelated underside protrusions do not move
   them and `snap_transform()` mates a stud flush with the part.
