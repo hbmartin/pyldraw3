@@ -39,6 +39,8 @@ from ldraw.part_geometry import part_connections
 from ldraw.parts import Parts
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ldraw.part import Part
 
 _IDENTITY = "1 0 0 0 1 0 0 0 1"
@@ -66,6 +68,23 @@ class _RimOnlyCompatibilityLibrary(_PartLibraryAdapter):
 class _TyreOnlyCompatibilityLibrary(_PartLibraryAdapter):
     def compatible_rims(self, tyre_code: str) -> tuple[str, ...]:
         return ("rim",) if tyre_code == "tyre" else ()
+
+
+def _connections_with_kind(
+    parts: Parts,
+    code: str,
+    kind: ConnectionKind,
+) -> tuple[ConnectionFeature, ...]:
+    return tuple(feature for feature in parts.connections(code) if feature.kind is kind)
+
+
+def _connection_positions(
+    features: Iterable[ConnectionFeature],
+) -> set[tuple[float, float, float]]:
+    return {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in features
+    }
 
 
 def _connection_parts(tmp_path: Path) -> Parts:
@@ -1094,10 +1113,10 @@ def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
 ) -> None:
     parts = _connection_parts(tmp_path)
 
-    brick = tuple(
-        feature
-        for feature in parts.connections("gridbrick")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    brick = _connections_with_kind(
+        parts,
+        "gridbrick",
+        ConnectionKind.STUD_RECEPTACLE,
     )
     corners = tuple(
         feature
@@ -1110,27 +1129,29 @@ def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
         if feature.feature_id is not None and ":socket:" not in feature.feature_id
     )
     assert len(corners) == 8
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in corners
-    } == {(float(x), 24.0, float(z)) for x in (-30, -10, 10, 30) for z in (-10, 10)}
+    assert _connection_positions(corners) == {
+        (float(x), 24.0, float(z)) for x in (-30, -10, 10, 30) for z in (-10, 10)
+    }
     assert len(centres) == 3
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in centres
-    } == {(-20.0, 24.0, 0.0), (0.0, 24.0, 0.0), (20.0, 24.0, 0.0)}
+    assert _connection_positions(centres) == {
+        (-20.0, 24.0, 0.0),
+        (0.0, 24.0, 0.0),
+        (20.0, 24.0, 0.0),
+    }
 
-    strip = tuple(
-        feature
-        for feature in parts.connections("gridstrip")
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    strip = _connections_with_kind(
+        parts,
+        "gridstrip",
+        ConnectionKind.STUD_RECEPTACLE,
     )
     assert len(strip) == 4
     assert all(feature.name == "Stud Socket" for feature in strip)
-    assert {
-        (feature.position.x, feature.position.y, feature.position.z)
-        for feature in strip
-    } == {(-30.0, 8.0, 0.0), (-10.0, 8.0, 0.0), (10.0, 8.0, 0.0), (30.0, 8.0, 0.0)}
+    assert _connection_positions(strip) == {
+        (-30.0, 8.0, 0.0),
+        (-10.0, 8.0, 0.0),
+        (10.0, 8.0, 0.0),
+        (30.0, 8.0, 0.0),
+    }
 
 
 def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
