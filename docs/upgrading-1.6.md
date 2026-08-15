@@ -392,15 +392,17 @@ resolution:
   phases; a studless underside (tiles) falls back to the part bounds, and a
   stud-group primitive or subpart with no stud evidence defers derivation to
   the enclosing part;
-- sockets sit on the underside opening plane, so `snap_transform()` mates a
-  stud flush with the part.
+- sockets sit at the far end of the transformed tube primitive, not at the
+  part's bounding-box face, so unrelated underside protrusions do not move
+  them and `snap_transform()` mates a stud flush with the part.
 
 Derived offset sockets are named `Stud Socket`, keep the tube's kind, role,
 axis, profile, and source, and append `derived:stud-socket` to `provenance`.
 The center socket retained for an open tube is the exception: it keeps the
-primitive name `Stud Tube Open` to distinguish the tube's own opening from
-the surrounding derived sockets. Authoritative metadata (inline LDCad,
-shadows, Studio, overrides) still supersedes them as inferred interfaces.
+primitive's complete header description (for example, `Stud Tube Open` for
+`stud4`) to distinguish the tube's own opening from the surrounding derived
+sockets. Authoritative metadata (inline LDCad, shadows, Studio, overrides)
+still supersedes them as inferred interfaces.
 
 Observable changes: `stud_receptacle` counts and positions change for any
 part with tubes; `connection_contacts()` and `stud_contacts()` now confirm
