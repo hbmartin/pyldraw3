@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from math import floor
 from typing import TYPE_CHECKING, Final, cast
 
 from ldraw.connection_types import (
@@ -40,10 +41,17 @@ _AXIS_VECTORS = (Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1))
 _SOCKET_PROVENANCE: Final[str] = "derived:stud-socket"
 _SOCKET_NAME: Final[str] = "Stud Socket"
 _SOCKET_GRID_PITCH: Final[int] = 20
-_SOCKET_HALF_PITCH: Final[float] = 10.0
+_SOCKET_HALF_PITCH: Final[float] = _SOCKET_GRID_PITCH / 2
 _SOCKET_LATERAL_MARGIN: Final[float] = 4.0
 _SOCKET_MERGE_TOLERANCE: Final[float] = 0.5
+_SOCKET_MERGE_TOLERANCE_SQUARED: Final[float] = _SOCKET_MERGE_TOLERANCE**2
 _SOCKET_AXIS_ALIGNMENT: Final[float] = 0.999
+_SOCKET_NEIGHBOR_OFFSETS: Final[tuple[tuple[int, int, int], ...]] = tuple(
+    (x_offset, y_offset, z_offset)
+    for x_offset in (-1, 0, 1)
+    for y_offset in (-1, 0, 1)
+    for z_offset in (-1, 0, 1)
+)
 _OPEN_SOCKET_OFFSETS: Final[tuple[tuple[int, int], ...]] = (
     (-1, -1),
     (-1, 1),
@@ -56,6 +64,10 @@ _SOLID_SOCKET_OFFSETS: Final[tuple[tuple[int, int], ...]] = (
     (0, -1),
     (0, 1),
 )
+
+type _GridOrientation = tuple[float, ...]
+type _SocketCell = tuple[int, int, int]
+type _SeenSockets = dict[_SocketCell, list[tuple[Vector, Vector]]]
 
 
 def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
@@ -215,52 +227,54 @@ def derive_stud_sockets(
     tube's own socket. Strict stud matching keys on centreline residuals, so
     each tube is expanded into sockets on the adjacent mating centrelines:
     diagonal grid corners for open tubes, axial neighbours for solid tubes,
-    validated against the part's own stud grid, and placed on the underside
-    opening plane so snap placement mates flush. An open tube keeps a socket
-    on its own centreline; a solid tube's centreline accepts nothing and is
-    dropped once sockets exist.
+    validated against the part's own stud grid, and placed at the far end of
+    the transformed tube primitive so snap placement mates flush. An open tube
+    keeps a socket on its own centreline; a solid tube's centreline accepts
+    nothing and is dropped during final catalog-part expansion.
 
     Stud-group primitives and subparts see only a slice of the part, so a
     tube whose grid cannot be validated in the current feature set is kept
     untouched for an enclosing resolution level to expand. Only a catalog
-    part (``bounds_fallback``) may fall back to bounds filtering — studless
-    undersides such as tiles have no grid to validate against.
+    part (``bounds_fallback``) may fall back to lateral bounds filtering —
+    studless undersides such as tiles have no grid to validate against. A
+    final bounds rejection yields no socket rather than restoring raw tube
+    evidence.
     """
     values = tuple(features)
-    if not any(_is_tube_receptacle(feature) for feature in values):
+    tube_flags = tuple(_is_tube_receptacle(feature) for feature in values)
+    if not any(tube_flags):
         return values
-    seen: list[tuple[Vector, Vector]] = [
-        (feature.position, feature.axis)
-        for feature in values
-        if feature.kind is ConnectionKind.STUD_RECEPTACLE
-        and not _is_tube_receptacle(feature)
-    ]
+    studs = tuple(feature for feature in values if feature.kind is ConnectionKind.STUD)
+    phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]] = {}
+    seen: _SeenSockets = {}
+    for feature, is_tube in zip(values, tube_flags, strict=True):
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE and not is_tube:
+            _remember_socket(seen, position=feature.position, axis=feature.axis)
     result: list[ConnectionFeature] = []
-    for feature in values:
-        if not _is_tube_receptacle(feature):
+    for feature, is_tube in zip(values, tube_flags, strict=True):
+        if not is_tube:
             result.append(feature)
             continue
         sockets = _tube_sockets(
             feature,
-            values,
+            studs,
             bounds=bounds,
             bounds_fallback=bounds_fallback,
+            phase_cache=phase_cache,
         )
-        emitted = False
+        if sockets is None:
+            # The enclosing resolution level sees the complete stud grid.
+            result.append(feature)
+            continue
         for socket in sockets:
-            if any(
-                abs(socket.position - position) <= _SOCKET_MERGE_TOLERANCE
-                and socket.axis.dot(axis) >= _SOCKET_AXIS_ALIGNMENT
-                for position, axis in seen
+            if _socket_was_seen(
+                seen,
+                position=socket.position,
+                axis=socket.axis,
             ):
                 continue
-            seen.append((socket.position, socket.axis))
+            _remember_socket(seen, position=socket.position, axis=socket.axis)
             result.append(socket)
-            emitted = True
-        if not emitted and (not sockets or "open" in feature.name.casefold()):
-            # Preserve raw evidence when expansion is deferred, and retain the
-            # intended centre socket for coincident open tubes.
-            result.append(feature)
     return tuple(result)
 
 
@@ -275,15 +289,16 @@ def _is_tube_receptacle(feature: ConnectionFeature) -> bool:
 
 def _tube_sockets(
     tube: ConnectionFeature,
-    features: tuple[ConnectionFeature, ...],
+    studs: tuple[ConnectionFeature, ...],
     *,
     bounds: BoundingBox | None,
     bounds_fallback: bool,
-) -> tuple[ConnectionFeature, ...]:
+    phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]],
+) -> tuple[ConnectionFeature, ...] | None:
     axis = tube.axis
     x_direction = tube.frame * Vector(1, 0, 0)
     z_direction = tube.frame * Vector(0, 0, 1)
-    center = _opening_position(tube.position, axis=axis, bounds=bounds)
+    center = _opening_position(tube)
     open_tube = "open" in tube.name.casefold()
     offsets = _OPEN_SOCKET_OFFSETS if open_tube else _SOLID_SOCKET_OFFSETS
     candidates = tuple(
@@ -296,12 +311,15 @@ def _tube_sockets(
         )
         for offset_x, offset_z in offsets
     )
-    phases = _stud_grid_phases(
-        features,
-        axis=axis,
-        x_direction=x_direction,
-        z_direction=z_direction,
-    )
+    orientation = _grid_orientation(axis, x_direction, z_direction)
+    if orientation not in phase_cache:
+        phase_cache[orientation] = _stud_grid_phases(
+            studs,
+            axis=axis,
+            x_direction=x_direction,
+            z_direction=z_direction,
+        )
+    phases = phase_cache[orientation]
     matched = [
         candidate
         for candidate in candidates
@@ -310,7 +328,7 @@ def _tube_sockets(
     if not matched:
         if not bounds_fallback:
             # Defer: the enclosing resolution level sees the full grid.
-            return ()
+            return None
         matched = [
             candidate
             for candidate in candidates
@@ -342,7 +360,7 @@ def _tube_sockets(
 
 
 def _stud_grid_phases(
-    features: tuple[ConnectionFeature, ...],
+    studs: tuple[ConnectionFeature, ...],
     *,
     axis: Vector,
     x_direction: Vector,
@@ -350,9 +368,20 @@ def _stud_grid_phases(
 ) -> frozenset[tuple[int, int]]:
     return frozenset(
         _grid_phase(feature.position, x_direction, z_direction)
-        for feature in features
-        if feature.kind is ConnectionKind.STUD
-        and feature.axis.dot(axis) <= -_SOCKET_AXIS_ALIGNMENT
+        for feature in studs
+        if feature.axis.dot(axis) <= -_SOCKET_AXIS_ALIGNMENT
+    )
+
+
+def _grid_orientation(
+    axis: Vector,
+    x_direction: Vector,
+    z_direction: Vector,
+) -> _GridOrientation:
+    return tuple(
+        round(_component(direction, index), 9)
+        for direction in (axis, x_direction, z_direction)
+        for index in range(3)
     )
 
 
@@ -367,21 +396,60 @@ def _grid_phase(
     )
 
 
-def _opening_position(
-    position: Vector,
+def _opening_position(tube: ConnectionFeature) -> Vector:
+    """Return the far end of the transformed, origin-anchored tube primitive."""
+    return tube.position + tube.axis * tube.length
+
+
+def _socket_was_seen(
+    seen: _SeenSockets,
     *,
+    position: Vector,
     axis: Vector,
-    bounds: BoundingBox | None,
-) -> Vector:
-    if bounds is None:
-        return position
-    dominant = max(range(3), key=lambda index: abs(_component(axis, index)))
-    component = _component(axis, dominant)
-    if abs(component) < 1e-9:
-        return position
-    face = _component(bounds.max if component > 0 else bounds.min, dominant)
-    shift = (face - _component(position, dominant)) / component
-    return position + axis * shift
+) -> bool:
+    cell_x, cell_y, cell_z = _socket_cell(position)
+    for x_offset, y_offset, z_offset in _SOCKET_NEIGHBOR_OFFSETS:
+        for seen_position, seen_axis in seen.get(
+            (cell_x + x_offset, cell_y + y_offset, cell_z + z_offset),
+            (),
+        ):
+            if (
+                _squared_distance(position, seen_position)
+                <= _SOCKET_MERGE_TOLERANCE_SQUARED
+                and _axis_alignment(axis, seen_axis) >= _SOCKET_AXIS_ALIGNMENT
+            ):
+                return True
+    return False
+
+
+def _remember_socket(
+    seen: _SeenSockets,
+    *,
+    position: Vector,
+    axis: Vector,
+) -> None:
+    seen.setdefault(_socket_cell(position), []).append((position, axis))
+
+
+def _socket_cell(position: Vector) -> _SocketCell:
+    return (
+        floor(_component(position, 0) / _SOCKET_MERGE_TOLERANCE),
+        floor(_component(position, 1) / _SOCKET_MERGE_TOLERANCE),
+        floor(_component(position, 2) / _SOCKET_MERGE_TOLERANCE),
+    )
+
+
+def _squared_distance(first: Vector, second: Vector) -> float:
+    return sum(
+        (_component(first, index) - _component(second, index)) ** 2
+        for index in range(3)
+    )
+
+
+def _axis_alignment(first: Vector, second: Vector) -> float:
+    return sum(
+        _component(first, index) * _component(second, index) for index in range(3)
+    )
 
 
 def _within_lateral_bounds(
