@@ -185,6 +185,14 @@ def _connection_parts(tmp_path: Path) -> Parts:
             f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
             f"1 16 0 0 20 {_FLIP_Y} stud4.dat\n"
         ),
+        "parts/coincidentsolid.dat": (
+            "0 Coincident Solid Tube Fixture\n"
+            "2 24 -20 0 -10 20 8 10\n"
+            f"1 16 -10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 0 4 0 {_FLIP_Y} stud3.dat\n"
+            f"1 16 0 4 0 {_FLIP_Y} stud3.dat\n"
+        ),
         "parts/onestud.dat": (
             "0 Single Stud Plate\n"
             "2 24 -10 0 -10 10 4 10\n"
@@ -239,6 +247,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "deckplate.dat Studio Precedence Plate\n"
         "dualrecept.dat Dual Receptacle Strip\n"
         "rankedrecept.dat Coincident Receptacle Ranking Fixture\n"
+        "coincidentsolid.dat Coincident Solid Tube Fixture\n"
         "onestud.dat Single Stud Plate\n"
         "gridbrick.dat Synthetic Brick 2 x 4\n"
         "gridstrip.dat Synthetic Plate 1 x 4\n",
@@ -1057,6 +1066,7 @@ def test_stud_contacts_choose_lowest_ranked_valid_receptacle(
     assert stud_contacts[0].receptacle_feature.feature_id == "stud4@R0/stud4"
 
 
+@pytest.mark.integration
 def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
     tmp_path: Path,
 ) -> None:
@@ -1094,6 +1104,26 @@ def test_derive_stud_sockets_expand_tubes_onto_the_mating_grid(
     } == {(-30.0, 8.0, 0.0), (-10.0, 8.0, 0.0), (10.0, 8.0, 0.0), (30.0, 8.0, 0.0)}
 
 
+@pytest.mark.integration
+def test_derive_stud_sockets_drop_deduplicated_solid_tube_centres(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = tuple(
+        feature
+        for feature in parts.connections("coincidentsolid")
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+
+    assert all(feature.name == "Stud Socket" for feature in receptacles)
+    assert {
+        (feature.position.x, feature.position.y, feature.position.z)
+        for feature in receptacles
+    } == {(-10.0, 8.0, 0.0), (10.0, 8.0, 0.0)}
+
+
+@pytest.mark.integration
 def test_strict_stud_contacts_confirm_a_plain_stack(tmp_path: Path) -> None:
     parts = _connection_parts(tmp_path)
     model = parse_model(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from ldraw.connection_types import (
     AnnularProfile,
@@ -37,15 +37,25 @@ _AXLE_RE = re.compile(r"(?:axle\w*|axl\w*|daxle\w*)$")
 _AXLE_EXCLUDED_RE = re.compile(r".*(?:end|cap|edge)\w*$")
 _AXIS_VECTORS = (Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1))
 
-_SOCKET_PROVENANCE = "derived:stud-socket"
-_SOCKET_NAME = "Stud Socket"
-_SOCKET_GRID_PITCH = 20
-_SOCKET_HALF_PITCH = 10.0
-_SOCKET_LATERAL_MARGIN = 4.0
-_SOCKET_MERGE_TOLERANCE = 0.5
-_SOCKET_AXIS_ALIGNMENT = 0.999
-_OPEN_SOCKET_OFFSETS = ((-1, -1), (-1, 1), (1, -1), (1, 1))
-_SOLID_SOCKET_OFFSETS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+_SOCKET_PROVENANCE: Final[str] = "derived:stud-socket"
+_SOCKET_NAME: Final[str] = "Stud Socket"
+_SOCKET_GRID_PITCH: Final[int] = 20
+_SOCKET_HALF_PITCH: Final[float] = 10.0
+_SOCKET_LATERAL_MARGIN: Final[float] = 4.0
+_SOCKET_MERGE_TOLERANCE: Final[float] = 0.5
+_SOCKET_AXIS_ALIGNMENT: Final[float] = 0.999
+_OPEN_SOCKET_OFFSETS: Final[tuple[tuple[int, int], ...]] = (
+    (-1, -1),
+    (-1, 1),
+    (1, -1),
+    (1, 1),
+)
+_SOLID_SOCKET_OFFSETS: Final[tuple[tuple[int, int], ...]] = (
+    (-1, 0),
+    (1, 0),
+    (0, -1),
+    (0, 1),
+)
 
 
 def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
@@ -247,9 +257,9 @@ def derive_stud_sockets(
             seen.append((socket.position, socket.axis))
             result.append(socket)
             emitted = True
-        if not emitted:
-            # Deferred to an enclosing level, or nothing survived filtering:
-            # keep the tube so the receptacle evidence is retained.
+        if not emitted and (not sockets or "open" in feature.name.casefold()):
+            # Preserve raw evidence when expansion is deferred, and retain the
+            # intended centre socket for coincident open tubes.
             result.append(feature)
     return tuple(result)
 
