@@ -1250,6 +1250,7 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
     )
 
 
+@pytest.mark.integration
 @patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
 def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     config_load_mock: MagicMock,

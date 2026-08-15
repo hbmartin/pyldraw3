@@ -395,10 +395,12 @@ resolution:
 - sockets sit on the underside opening plane, so `snap_transform()` mates a
   stud flush with the part.
 
-Derived sockets are named `Stud Socket`, keep the tube's kind, role, axis,
-profile, and source, and append `derived:stud-socket` to `provenance`.
-Authoritative metadata (inline LDCad, shadows, Studio, overrides) still
-supersedes them as inferred interfaces.
+Derived offset sockets are named `Stud Socket`, keep the tube's kind, role,
+axis, profile, and source, and append `derived:stud-socket` to `provenance`.
+The center socket retained for an open tube is the exception: it keeps the
+primitive name `Stud Tube Open` to distinguish the tube's own opening from
+the surrounding derived sockets. Authoritative metadata (inline LDCad,
+shadows, Studio, overrides) still supersedes them as inferred interfaces.
 
 Observable changes: `stud_receptacle` counts and positions change for any
 part with tubes; `connection_contacts()` and `stud_contacts()` now confirm
