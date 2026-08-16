@@ -1317,11 +1317,31 @@ def test_derive_stud_sockets_drop_bounds_rejected_solid_tube_centre(
     )
 
 
-def test_derive_stud_sockets_do_not_resurrect_rejected_catalog_tubes(
+def test_derive_stud_sockets_defer_rejected_catalog_tubes_through_metadata(
     tmp_path: Path,
 ) -> None:
     parts = _connection_parts(tmp_path)
 
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(nested) == 4
+    assert all(feature.name == "Stud Socket" for feature in nested)
+    assert _connection_positions(nested) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
+
+    parts.set_connection_overrides(
+        code="narrowsolid",
+        features=(),
+        replace_existing=True,
+    )
     assert not _connections_with_kind(
         parts=parts,
         code="nestedsolid",

@@ -394,8 +394,9 @@ resolution:
   the enclosing part;
 - bounds filtering can reject every offset candidate: a solid tube then
   contributes no inferred receptacle, while an open tube keeps only its named
-  centre socket. That result is final for a catalog part, so enclosing
-  shortcuts cannot create sockets that the resolved child does not expose;
+  centre socket. Rejected raw tube evidence remains private, passes through
+  the child's metadata precedence and clearing pipeline, and only then may an
+  enclosing catalog assembly reconsider it against its larger grid and bounds;
 - sockets sit at the far end of the transformed tube primitive, not at the
   part's bounding-box face, so unrelated underside protrusions do not move
   them and `snap_transform()` mates a stud flush with the part.
@@ -412,4 +413,6 @@ Observable changes: `stud_receptacle` counts and positions change for any
 part with tubes; `connection_contacts()` and `stud_contacts()` now confirm
 plain stacks (two stacked 2 x 4 bricks report exactly eight confirmed stud
 contacts with zero residual), while half-offset or wall-touching studs remain
-rejected.
+rejected. Inferred primitive receptacles and their derived sockets now expose
+`CylindricalProfile.centered == True` (including the `centered` field in CLI
+JSON), so `snap_transform()` treats their axes as direction-symmetric.
