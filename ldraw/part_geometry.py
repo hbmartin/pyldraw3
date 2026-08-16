@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
 from ldraw.connection_inference import (
-    derive_stud_sockets,
+    derive_stud_socket_evidence,
     infer_part_connections,
     mark_internal_fit_occupied,
     normalize_connections,
@@ -63,6 +63,7 @@ _METADATA_SOURCES: frozenset[ConnectionSource] = frozenset(
         ConnectionSource.OVERRIDE,
     },
 )
+_DEFERRED_SOCKET_EVIDENCE = "internal:deferred-stud-socket"
 
 __all__ = [
     "BoundingBox",
@@ -134,6 +135,7 @@ class _LocalGeometry:
     points: tuple[Vector, ...]
     studs: tuple[StudReference, ...]
     connections: tuple[ConnectionFeature, ...]
+    deferred_connections: tuple[ConnectionFeature, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
     connection_metadata: ConnectionMetadataReport | None = None
     metadata_result: ShadowConnectionResult = field(
@@ -350,7 +352,12 @@ def _local_geometry(
         objects=objects,
         visiting=visiting | {key},
     )
-    connections, connection_report, metadata_result = _resolve_connections(
+    (
+        connections,
+        deferred_connections,
+        connection_report,
+        metadata_result,
+    ) = _resolve_connections(
         parts,
         code=code,
         description=part.description,
@@ -366,6 +373,7 @@ def _local_geometry(
         points=tuple(points),
         studs=tuple(studs),
         connections=tuple(connections),
+        deferred_connections=deferred_connections,
         diagnostics=tuple(diagnostics),
         connection_metadata=connection_report,
         metadata_result=metadata_result,
@@ -520,18 +528,18 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     inherited_metadata: ShadowConnectionResult,
 ) -> tuple[
     list[ConnectionFeature],
+    tuple[ConnectionFeature, ...],
     ConnectionMetadataReport,
     ShadowConnectionResult,
 ]:
     connections = list(normalize_connections(connections))
     catalog_part = _is_catalog_part(parts, code)
-    connections = list(
-        derive_stud_sockets(
-            connections,
-            bounds=box.box(),
-            bounds_fallback=catalog_part,
-        ),
+    socket_derivation = derive_stud_socket_evidence(
+        features=connections,
+        bounds=box.box(),
+        bounds_fallback=catalog_part,
     )
+    connections = list(socket_derivation.features)
     connections = _infer_catalog_connections(
         parts,
         code=code,
@@ -539,6 +547,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
         bounds=box.box(),
         connections=connections,
     )
+    connections.extend(_mark_deferred_connections(socket_derivation.deferred))
     inline_result = parse_ldcad_text(
         code,
         path.read_text(encoding="utf-8-sig"),
@@ -575,6 +584,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     metadata_diagnostics.extend(override_diagnostics)
     report_extra_diagnostics.extend(override_diagnostics)
     connections = _supersede_inferred_interfaces(connections)
+    connections, deferred_connections = _split_deferred_connections(connections)
     if catalog_part and " with tyre " in description.casefold():
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
@@ -588,6 +598,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     )
     return (
         connections,
+        deferred_connections,
         metadata_report(
             code,
             features=connections,
@@ -642,7 +653,7 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         for feature in inferred
     )
     invalid_records: dict[tuple[str, int | None], Diagnostic] = {}
-    for feature in local.connections:
+    for feature in (*local.connections, *local.deferred_connections):
         diagnostic_count = len(diagnostics)
         transformed = _transformed_child_connection(
             parts,
@@ -844,8 +855,60 @@ def _supersede_inferred_interfaces(
         feature
         for feature in connections
         if feature.source not in _INFERRED_SOURCES
-        or not any(same_interface(feature, other) for other in authoritative)
+        or not any(
+            _metadata_covers_inferred_interface(feature, other)
+            for other in authoritative
+        )
     ]
+
+
+def _metadata_covers_inferred_interface(
+    inferred: ConnectionFeature,
+    authoritative: ConnectionFeature,
+) -> bool:
+    if same_interface(inferred, authoritative):
+        return True
+    if _DEFERRED_SOCKET_EVIDENCE not in inferred.provenance:
+        return False
+    opening = replace(
+        inferred,
+        position=inferred.position + inferred.axis * inferred.length,
+    )
+    return same_interface(opening, authoritative)
+
+
+def _mark_deferred_connections(
+    features: tuple[ConnectionFeature, ...],
+) -> tuple[ConnectionFeature, ...]:
+    return tuple(
+        replace(
+            feature,
+            provenance=(*feature.provenance, _DEFERRED_SOCKET_EVIDENCE),
+        )
+        for feature in features
+    )
+
+
+def _split_deferred_connections(
+    connections: list[ConnectionFeature],
+) -> tuple[list[ConnectionFeature], tuple[ConnectionFeature, ...]]:
+    visible: list[ConnectionFeature] = []
+    deferred: list[ConnectionFeature] = []
+    for feature in connections:
+        if _DEFERRED_SOCKET_EVIDENCE not in feature.provenance:
+            visible.append(feature)
+            continue
+        deferred.append(
+            replace(
+                feature,
+                provenance=tuple(
+                    value
+                    for value in feature.provenance
+                    if value != _DEFERRED_SOCKET_EVIDENCE
+                ),
+            ),
+        )
+    return visible, tuple(deferred)
 
 
 def _metadata_statistics(
