@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
 from ldraw.connection_inference import (
+    StudSocketEvidence,
     derive_stud_socket_evidence,
     infer_part_connections,
     mark_internal_fit_occupied,
@@ -63,7 +64,6 @@ _METADATA_SOURCES: frozenset[ConnectionSource] = frozenset(
         ConnectionSource.OVERRIDE,
     },
 )
-_DEFERRED_SOCKET_EVIDENCE = "internal:deferred-stud-socket"
 
 __all__ = [
     "BoundingBox",
@@ -135,7 +135,7 @@ class _LocalGeometry:
     points: tuple[Vector, ...]
     studs: tuple[StudReference, ...]
     connections: tuple[ConnectionFeature, ...]
-    deferred_connections: tuple[ConnectionFeature, ...] = ()
+    deferred_socket_evidence: tuple[StudSocketEvidence, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
     connection_metadata: ConnectionMetadataReport | None = None
     metadata_result: ShadowConnectionResult = field(
@@ -342,6 +342,7 @@ def _local_geometry(
         points,
         studs,
         connections,
+        inherited_socket_evidence,
         diagnostics,
         inherited_metadata,
         resolved_codes,
@@ -354,7 +355,7 @@ def _local_geometry(
     )
     (
         connections,
-        deferred_connections,
+        deferred_socket_evidence,
         connection_report,
         metadata_result,
     ) = _resolve_connections(
@@ -364,6 +365,7 @@ def _local_geometry(
         path=part.path,
         box=box,
         connections=connections,
+        inherited_socket_evidence=inherited_socket_evidence,
         diagnostics=diagnostics,
         inherited_metadata=inherited_metadata,
     )
@@ -373,7 +375,7 @@ def _local_geometry(
         points=tuple(points),
         studs=tuple(studs),
         connections=tuple(connections),
-        deferred_connections=deferred_connections,
+        deferred_socket_evidence=deferred_socket_evidence,
         diagnostics=tuple(diagnostics),
         connection_metadata=connection_report,
         metadata_result=metadata_result,
@@ -464,6 +466,7 @@ def _fold_objects(
     list[Vector],
     list[StudReference],
     list[ConnectionFeature],
+    list[StudSocketEvidence],
     list[Diagnostic],
     ShadowConnectionResult,
     set[str],
@@ -472,6 +475,7 @@ def _fold_objects(
     points: list[Vector] = []
     studs: list[StudReference] = []
     connections: list[ConnectionFeature] = []
+    socket_evidence: list[StudSocketEvidence] = []
     diagnostics: list[Diagnostic] = []
     metadata_results: list[ShadowConnectionResult] = []
     resolved_codes: set[str] = set()
@@ -496,6 +500,7 @@ def _fold_objects(
                     points=points,
                     studs=studs,
                     connections=connections,
+                    socket_evidence=socket_evidence,
                     diagnostics=diagnostics,
                     visiting=visiting,
                     parent_code=code,
@@ -510,6 +515,7 @@ def _fold_objects(
         points,
         studs,
         connections,
+        socket_evidence,
         diagnostics,
         _metadata_statistics(metadata_results),
         resolved_codes,
@@ -524,11 +530,12 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     path: Path,
     box: _BoxAccumulator,
     connections: list[ConnectionFeature],
+    inherited_socket_evidence: list[StudSocketEvidence],
     diagnostics: list[Diagnostic],
     inherited_metadata: ShadowConnectionResult,
 ) -> tuple[
     list[ConnectionFeature],
-    tuple[ConnectionFeature, ...],
+    tuple[StudSocketEvidence, ...],
     ConnectionMetadataReport,
     ShadowConnectionResult,
 ]:
@@ -536,6 +543,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     catalog_part = _is_catalog_part(parts, code)
     socket_derivation = derive_stud_socket_evidence(
         features=connections,
+        inherited=inherited_socket_evidence,
         bounds=box.box(),
         bounds_fallback=catalog_part,
     )
@@ -547,7 +555,6 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
         bounds=box.box(),
         connections=connections,
     )
-    connections.extend(_mark_deferred_connections(socket_derivation.deferred))
     inline_result = parse_ldcad_text(
         code,
         path.read_text(encoding="utf-8-sig"),
@@ -558,6 +565,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
             else ()
         ),
     )
+    clear_socket_evidence = inline_result.clear_all
     metadata_results = [inherited_metadata, inline_result]
     connections, conflict_diagnostics = _apply_connection_metadata_result(
         connections=connections,
@@ -567,6 +575,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     report_extra_diagnostics = [*conflict_diagnostics]
     if isinstance(parts, _ConnectionMetadataSource):
         for contribution in parts._connection_metadata_for(code):  # noqa: SLF001
+            clear_socket_evidence = clear_socket_evidence or contribution.clear_all
             connections, conflicts = _apply_connection_metadata_result(
                 connections=connections,
                 result=contribution,
@@ -574,17 +583,25 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
             metadata_results.append(contribution)
             metadata_diagnostics.extend((*contribution.diagnostics, *conflicts))
             report_extra_diagnostics.extend(conflicts)
-    connections, override_diagnostics, has_authoritative_override = (
-        _apply_connection_overrides(
-            parts=parts,
-            code=code,
-            connections=connections,
-        )
+    (
+        connections,
+        override_diagnostics,
+        has_authoritative_override,
+        override_replaced_existing,
+    ) = _apply_connection_overrides(
+        parts=parts,
+        code=code,
+        connections=connections,
     )
+    clear_socket_evidence = clear_socket_evidence or override_replaced_existing
     metadata_diagnostics.extend(override_diagnostics)
     report_extra_diagnostics.extend(override_diagnostics)
     connections = _supersede_inferred_interfaces(connections)
-    connections, deferred_connections = _split_deferred_connections(connections)
+    connections, deferred_socket_evidence = _resolve_socket_evidence(
+        connections=connections,
+        evidence=socket_derivation.evidence,
+        cleared=clear_socket_evidence,
+    )
     if catalog_part and " with tyre " in description.casefold():
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
@@ -598,7 +615,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     )
     return (
         connections,
-        deferred_connections,
+        deferred_socket_evidence,
         metadata_report(
             code,
             features=connections,
@@ -617,6 +634,7 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     points: list[Vector],
     studs: list[StudReference],
     connections: list[ConnectionFeature],
+    socket_evidence: list[StudSocketEvidence],
     diagnostics: list[Diagnostic],
     visiting: frozenset[str],
     parent_code: str,
@@ -653,10 +671,10 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
         for feature in inferred
     )
     invalid_records: dict[tuple[str, int | None], Diagnostic] = {}
-    for feature in (*local.connections, *local.deferred_connections):
+    for feature in local.connections:
         diagnostic_count = len(diagnostics)
         transformed = _transformed_child_connection(
-            parts,
+            parts=parts,
             feature=feature,
             piece=piece,
             parent_code=parent_code,
@@ -680,6 +698,17 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
                 diagnostics=tuple(invalid_records.values()),
             ),
         )
+    socket_evidence.extend(
+        _transformed_socket_evidence(
+            parts=parts,
+            evidence=evidence,
+            piece=piece,
+            parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
+        )
+        for evidence in local.deferred_socket_evidence
+    )
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -702,8 +731,8 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
 
 
 def _transformed_child_connection(  # noqa: PLR0913 - transform context is explicit
-    parts: _PartGeometryLibrary,
     *,
+    parts: _PartGeometryLibrary,
     feature: ConnectionFeature,
     piece: Piece,
     parent_code: str,
@@ -751,6 +780,60 @@ def _transformed_child_connection(  # noqa: PLR0913 - transform context is expli
         if _is_catalog_part(parts, piece.part)
         else replace(transformed, owner_code=parent_code)
     )
+
+
+def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explicit
+    *,
+    parts: _PartGeometryLibrary,
+    evidence: StudSocketEvidence,
+    piece: Piece,
+    parent_code: str,
+    traversal_marker: str,
+    diagnostics: list[Diagnostic],
+) -> StudSocketEvidence:
+    return StudSocketEvidence(
+        visible=(),
+        deferred=_transformed_socket_features(
+            parts=parts,
+            features=evidence.deferred,
+            piece=piece,
+            parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
+        ),
+        interfaces=_transformed_socket_features(
+            parts=parts,
+            features=evidence.interfaces,
+            piece=piece,
+            parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
+        ),
+    )
+
+
+def _transformed_socket_features(  # noqa: PLR0913 - transform context is explicit
+    *,
+    parts: _PartGeometryLibrary,
+    features: tuple[ConnectionFeature, ...],
+    piece: Piece,
+    parent_code: str,
+    traversal_marker: str,
+    diagnostics: list[Diagnostic],
+) -> tuple[ConnectionFeature, ...]:
+    transformed: list[ConnectionFeature] = []
+    for feature in features:
+        result = _transformed_child_connection(
+            parts=parts,
+            feature=feature,
+            piece=piece,
+            parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
+        )
+        if result is not None:
+            transformed.append(result)
+    return tuple(transformed)
 
 
 def _compatible_parts(
@@ -855,60 +938,74 @@ def _supersede_inferred_interfaces(
         feature
         for feature in connections
         if feature.source not in _INFERRED_SOURCES
-        or not any(
-            _metadata_covers_inferred_interface(feature, other)
-            for other in authoritative
-        )
+        or not any(same_interface(feature, other) for other in authoritative)
     ]
 
 
-def _metadata_covers_inferred_interface(
+def _resolve_socket_evidence(
+    *,
+    connections: list[ConnectionFeature],
+    evidence: tuple[StudSocketEvidence, ...],
+    cleared: bool,
+) -> tuple[list[ConnectionFeature], tuple[StudSocketEvidence, ...]]:
+    authoritative = tuple(
+        feature
+        for feature in connections
+        if feature.source in _METADATA_SOURCES and feature.confidence > 0
+    )
+    rejected_visible: list[ConnectionFeature] = []
+    deferred: list[StudSocketEvidence] = []
+    for item in evidence:
+        covered = cleared or any(
+            _metadata_covers_socket_evidence(
+                evidence=item,
+                authoritative=feature,
+            )
+            for feature in authoritative
+        )
+        if covered:
+            rejected_visible.extend(item.visible)
+        elif item.deferred:
+            deferred.append(
+                StudSocketEvidence(
+                    visible=(),
+                    deferred=item.deferred,
+                    interfaces=item.interfaces,
+                ),
+            )
+    if rejected_visible:
+        connections = [
+            feature
+            for feature in connections
+            if feature.source not in _INFERRED_SOURCES
+            or not any(feature == rejected for rejected in rejected_visible)
+        ]
+    return connections, tuple(deferred)
+
+
+def _metadata_covers_socket_evidence(
+    *,
+    evidence: StudSocketEvidence,
+    authoritative: ConnectionFeature,
+) -> bool:
+    return any(
+        _same_owned_interface(inferred=interface, authoritative=authoritative)
+        for interface in evidence.interfaces
+    )
+
+
+def _same_owned_interface(
+    *,
     inferred: ConnectionFeature,
     authoritative: ConnectionFeature,
 ) -> bool:
-    if same_interface(inferred, authoritative):
-        return True
-    if _DEFERRED_SOCKET_EVIDENCE not in inferred.provenance:
+    if (
+        inferred.owner_code is not None
+        and authoritative.owner_code is not None
+        and inferred.owner_code.casefold() != authoritative.owner_code.casefold()
+    ):
         return False
-    opening = replace(
-        inferred,
-        position=inferred.position + inferred.axis * inferred.length,
-    )
-    return same_interface(opening, authoritative)
-
-
-def _mark_deferred_connections(
-    features: tuple[ConnectionFeature, ...],
-) -> tuple[ConnectionFeature, ...]:
-    return tuple(
-        replace(
-            feature,
-            provenance=(*feature.provenance, _DEFERRED_SOCKET_EVIDENCE),
-        )
-        for feature in features
-    )
-
-
-def _split_deferred_connections(
-    connections: list[ConnectionFeature],
-) -> tuple[list[ConnectionFeature], tuple[ConnectionFeature, ...]]:
-    visible: list[ConnectionFeature] = []
-    deferred: list[ConnectionFeature] = []
-    for feature in connections:
-        if _DEFERRED_SOCKET_EVIDENCE not in feature.provenance:
-            visible.append(feature)
-            continue
-        deferred.append(
-            replace(
-                feature,
-                provenance=tuple(
-                    value
-                    for value in feature.provenance
-                    if value != _DEFERRED_SOCKET_EVIDENCE
-                ),
-            ),
-        )
-    return visible, tuple(deferred)
+    return same_interface(inferred, authoritative)
 
 
 def _metadata_statistics(
@@ -952,9 +1049,9 @@ def _apply_connection_overrides(
     *,
     code: str,
     connections: list[ConnectionFeature],
-) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...], bool]:
+) -> tuple[list[ConnectionFeature], tuple[Diagnostic, ...], bool, bool]:
     if not isinstance(parts, _ConnectionOverrideSource):
-        return connections, (), False
+        return connections, (), False, False
     features, replace_existing = parts._connection_overrides_for(code)  # noqa: SLF001
     if replace_existing:
         connections = []
@@ -962,7 +1059,7 @@ def _apply_connection_overrides(
         connections=connections,
         result=ShadowConnectionResult(features=features),
     )
-    return resolved, diagnostics, bool(features or replace_existing)
+    return resolved, diagnostics, bool(features or replace_existing), replace_existing
 
 
 def _stable_feature_ids(
