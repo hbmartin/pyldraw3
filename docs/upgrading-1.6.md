@@ -389,14 +389,17 @@ resolution:
 - a solid tube (`stud3` family) contributes its axial neighbours and loses
   its centreline feature — nothing can enter a solid tube;
 - candidate sockets are validated against the part's own top-stud grid
-  phases; a studless underside (tiles) falls back to the part bounds, and a
-  stud-group primitive or subpart with no stud evidence defers derivation to
-  the enclosing part;
+  phases; candidates rejected by an incomplete grid remain deferred for an
+  enclosing part to reconsider. A studless underside (tiles) falls back to
+  the part bounds;
 - bounds filtering can reject every offset candidate: a solid tube then
   contributes no inferred receptacle, while an open tube keeps only its named
-  centre socket. Rejected raw tube evidence remains private, passes through
-  the child's metadata precedence and clearing pipeline, and only then may an
-  enclosing catalog assembly reconsider it against its larger grid and bounds;
+  centre socket. Unresolved candidate sets remain private through catalog and
+  non-catalog intermediates, pass through the child's metadata precedence and
+  clearing pipeline, and transform with the child's complete placement,
+  including scale, before an enclosing assembly reconsiders them. Authoritative
+  child metadata at any interface in a tube's set resolves the entire set, so
+  excluded inferred sockets cannot reappear at a parent;
 - sockets sit at the far end of the transformed tube primitive, not at the
   part's bounding-box face, so unrelated underside protrusions do not move
   them and `snap_transform()` mates a stud flush with the part.

@@ -48,6 +48,7 @@ _ROTATE_X_180 = "1 0 0 0 -1 0 0 0 -1"
 # The Y scale stretches a four-LDU tube through a twenty-LDU brick body; the
 # matching Z negation keeps the transform a rotation plus scale, not a mirror.
 _ROTATE_X_180_SCALE_Y_5 = "1 0 0 0 -5 0 0 0 -1"
+_SCALE_XZ_2 = "2 0 0 0 1 0 0 0 2"
 
 
 @dataclass(eq=False)
@@ -246,6 +247,51 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -20 0 -20 20 8 20\n"
             f"1 16 0 0 0 {_IDENTITY} narrowsolidmeta.dat\n"
         ),
+        "parts/narrowsolidlateralmeta.dat": (
+            "0 Bounds-Rejected Solid Tube with Lateral Metadata\n"
+            "2 24 -5 0 -5 5 8 5\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+            "0 !LDCAD SNAP_CYL [id=explicit-lateral] [gender=F] "
+            "[secs=R 6 4] [pos=10 8 0]\n"
+        ),
+        "parts/nestedsolidlateralmeta.dat": (
+            "0 Assembly Containing a Laterally Resolved Solid Tube\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} narrowsolidlateralmeta.dat\n"
+        ),
+        "parts/partialsolid.dat": (
+            "0 Partially Bounds-Matched Solid Tube\n"
+            "2 24 -15 0 -5 15 8 5\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+        ),
+        "parts/scaledpartialsolid.dat": (
+            "0 Scaled Assembly Containing Partial Solid Tube Evidence\n"
+            "2 24 -40 0 -40 40 8 40\n"
+            f"1 16 0 0 0 {_SCALE_XZ_2} partialsolid.dat\n"
+        ),
+        "parts/s/middlesolid.dat": (
+            "0 Non-Catalog Intermediate with Deferred Solid Tube\n"
+            f"1 16 0 0 0 {_IDENTITY} narrowsolid.dat\n"
+        ),
+        "parts/nestedmiddlesolid.dat": (
+            "0 Assembly Containing a Non-Catalog Tube Intermediate\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} s/middlesolid.dat\n"
+        ),
+        "parts/partialphase.dat": (
+            "0 Partially Grid-Matched Solid Tube\n"
+            "2 24 -15 0 -15 15 8 15\n"
+            f"1 16 -10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+        ),
+        "parts/parentphase.dat": (
+            "0 Assembly Completing a Child Stud Grid\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} partialphase.dat\n"
+            f"1 16 0 0 -10 {_IDENTITY} stud.dat\n"
+            f"1 16 0 0 10 {_IDENTITY} stud.dat\n"
+        ),
         "parts/openorderab.dat": (
             "0 Open Tubes Ordered Corner then Centre\n"
             "2 24 -30 0 -30 30 8 30\n"
@@ -334,6 +380,15 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "nestedsolid.dat Assembly Expanding a Narrow Solid Tube\n"
         "narrowsolidmeta.dat Bounds-Rejected Solid Tube with Metadata\n"
         "nestedsolidmeta.dat Assembly Containing a Metadata-Resolved Solid Tube\n"
+        "narrowsolidlateralmeta.dat Bounds-Rejected Solid Tube with Lateral Metadata\n"
+        "nestedsolidlateralmeta.dat "
+        "Assembly Containing a Laterally Resolved Solid Tube\n"
+        "partialsolid.dat Partially Bounds-Matched Solid Tube\n"
+        "scaledpartialsolid.dat "
+        "Scaled Assembly Containing Partial Solid Tube Evidence\n"
+        "nestedmiddlesolid.dat Assembly Containing a Non-Catalog Tube Intermediate\n"
+        "partialphase.dat Partially Grid-Matched Solid Tube\n"
+        "parentphase.dat Assembly Completing a Child Stud Grid\n"
         "openorderab.dat Open Tubes Ordered Corner then Centre\n"
         "openorderba.dat Open Tubes Ordered Centre then Corner\n"
         "protrudingplate.dat Plate with Unrelated Underside Protrusion\n"
@@ -1369,6 +1424,100 @@ def test_derived_stud_sockets_preserve_child_metadata_when_nested(
     assert standalone[0].source is ConnectionSource.LDCAD_INLINE
     assert nested[0].source is ConnectionSource.LDCAD_INLINE
     assert standalone[0].position == nested[0].position == Vector(0, 8, 0)
+
+
+def test_lateral_child_metadata_suppresses_all_deferred_tube_candidates(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    standalone = _connections_with_kind(
+        parts=parts,
+        code="narrowsolidlateralmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedsolidlateralmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(standalone) == len(nested) == 1
+    assert standalone[0].source is ConnectionSource.LDCAD_INLINE
+    assert nested[0].source is ConnectionSource.LDCAD_INLINE
+    assert standalone[0].position == nested[0].position == Vector(10, 8, 0)
+
+
+def test_deferred_socket_candidates_preserve_child_placement_scale(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="scaledpartialsolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(receptacles) == 4
+    assert _connection_positions(receptacles) == {
+        (-20.0, 8.0, 0.0),
+        (0.0, 8.0, -20.0),
+        (0.0, 8.0, 20.0),
+        (20.0, 8.0, 0.0),
+    }
+
+
+def test_non_catalog_intermediate_keeps_solid_tube_candidates_private(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    intermediate = _connections_with_kind(
+        parts=parts,
+        code="s/middlesolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedmiddlesolid",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert intermediate == ()
+    assert len(nested) == 4
+    assert _connection_positions(nested) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
+
+
+def test_parent_grid_reconsiders_child_phase_rejections(tmp_path: Path) -> None:
+    parts = _connection_parts(tmp_path)
+
+    child = _connections_with_kind(
+        parts=parts,
+        code="partialphase",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+    parent = _connections_with_kind(
+        parts=parts,
+        code="parentphase",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert _connection_positions(child) == {
+        (-10.0, 8.0, 0.0),
+        (10.0, 8.0, 0.0),
+    }
+    assert _connection_positions(parent) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
 
 
 def test_derive_stud_sockets_deduplicate_nested_derived_sockets(

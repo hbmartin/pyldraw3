@@ -71,17 +71,20 @@ type _SeenSockets = dict[_SocketCell, list[tuple[Vector, Vector]]]
 
 
 @dataclass(frozen=True, slots=True)
-class StudSocketDerivation:
-    """Resolved sockets plus tube evidence retained for an enclosing part."""
+class StudSocketEvidence:
+    """One tube's visible, unresolved, and metadata-comparison sockets."""
 
-    features: tuple[ConnectionFeature, ...]
+    visible: tuple[ConnectionFeature, ...]
     deferred: tuple[ConnectionFeature, ...]
+    interfaces: tuple[ConnectionFeature, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class _TubeSocketExpansion:
-    sockets: tuple[ConnectionFeature, ...]
-    defer_to_parent: bool
+class StudSocketDerivation:
+    """Resolved sockets plus structured evidence for enclosing parts."""
+
+    features: tuple[ConnectionFeature, ...]
+    evidence: tuple[StudSocketEvidence, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,23 +238,10 @@ def mark_internal_fit_occupied(
     )
 
 
-def derive_stud_sockets(
-    features: Iterable[ConnectionFeature],
-    *,
-    bounds: BoundingBox | None,
-    bounds_fallback: bool,
-) -> tuple[ConnectionFeature, ...]:
-    """Return tube receptacles projected onto the stud-mating grid."""
-    return derive_stud_socket_evidence(
-        features=features,
-        bounds=bounds,
-        bounds_fallback=bounds_fallback,
-    ).features
-
-
 def derive_stud_socket_evidence(
     features: Iterable[ConnectionFeature],
     *,
+    inherited: Iterable[StudSocketEvidence] = (),
     bounds: BoundingBox | None,
     bounds_fallback: bool,
 ) -> StudSocketDerivation:
@@ -273,17 +263,19 @@ def derive_stud_socket_evidence(
     part (``bounds_fallback``) may fall back to lateral bounds filtering —
     studless undersides such as tiles have no grid to validate against. A final
     bounds rejection yields no offset socket; an open tube still keeps its
-    centre socket. Catalog parts retain rejected raw tube evidence privately so
-    an enclosing assembly can reconsider it after child metadata resolution.
+    centre socket. Unmatched candidate sockets remain private so an enclosing
+    assembly can reconsider their already-transformed positions after child
+    metadata resolution.
     """
     values = tuple(features)
     tube_flags = tuple(_is_tube_receptacle(feature) for feature in values)
     studs = tuple(feature for feature in values if feature.kind is ConnectionKind.STUD)
     seen = _fixed_socket_index(values=values, tube_flags=tube_flags)
-    emissions, candidates, deferred = _socket_emissions(
+    emissions, candidates, evidence = _socket_emissions(
         values=values,
         tube_flags=tube_flags,
         studs=studs,
+        inherited=tuple(inherited),
         bounds=bounds,
         bounds_fallback=bounds_fallback,
     )
@@ -293,7 +285,7 @@ def derive_stud_socket_evidence(
             candidates=candidates,
             seen=seen,
         ),
-        deferred=deferred,
+        evidence=evidence,
     )
 
 
@@ -313,21 +305,22 @@ def _fixed_socket_index(
     return seen
 
 
-def _socket_emissions(
+def _socket_emissions(  # noqa: PLR0913 - resolution inputs are explicit
     *,
     values: tuple[ConnectionFeature, ...],
     tube_flags: tuple[bool, ...],
     studs: tuple[ConnectionFeature, ...],
+    inherited: tuple[StudSocketEvidence, ...],
     bounds: BoundingBox | None,
     bounds_fallback: bool,
 ) -> tuple[
     list[ConnectionFeature | _SocketCandidate],
     list[_SocketCandidate],
-    tuple[ConnectionFeature, ...],
+    tuple[StudSocketEvidence, ...],
 ]:
     emissions: list[ConnectionFeature | _SocketCandidate] = []
     candidates: list[_SocketCandidate] = []
-    deferred: list[ConnectionFeature] = []
+    evidence: list[StudSocketEvidence] = []
     phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]] = {}
     for feature, is_tube in zip(values, tube_flags, strict=True):
         if not is_tube:
@@ -340,26 +333,36 @@ def _socket_emissions(
             else:
                 emissions.append(feature)
             continue
-        expansion = _tube_sockets(
+        tube_evidence = _tube_socket_evidence(
             tube=feature,
             studs=studs,
             bounds=bounds,
             bounds_fallback=bounds_fallback,
             phase_cache=phase_cache,
         )
-        if expansion is None:
-            # The enclosing resolution level sees the complete stud grid.
-            emissions.append(feature)
-            continue
-        if expansion.defer_to_parent:
-            deferred.append(feature)
-        for socket in expansion.sockets:
+        evidence.append(tube_evidence)
+        for socket in tube_evidence.visible:
             _append_socket_candidate(
                 emissions=emissions,
                 candidates=candidates,
                 feature=socket,
             )
-    return emissions, candidates, tuple(deferred)
+    for previous in inherited:
+        reconsidered = _reconsider_socket_evidence(
+            evidence=previous,
+            studs=studs,
+            bounds=bounds,
+            bounds_fallback=bounds_fallback,
+            phase_cache=phase_cache,
+        )
+        evidence.append(reconsidered)
+        for socket in reconsidered.visible:
+            _append_socket_candidate(
+                emissions=emissions,
+                candidates=candidates,
+                feature=socket,
+            )
+    return emissions, candidates, tuple(evidence)
 
 
 def _append_socket_candidate(
@@ -424,30 +427,94 @@ def _is_tube_receptacle(feature: ConnectionFeature) -> bool:
     )
 
 
-def _tube_sockets(
+def _tube_socket_evidence(
     *,
     tube: ConnectionFeature,
     studs: tuple[ConnectionFeature, ...],
     bounds: BoundingBox | None,
     bounds_fallback: bool,
     phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]],
-) -> _TubeSocketExpansion | None:
-    axis = tube.axis
+) -> StudSocketEvidence:
     x_direction = tube.frame * Vector(1, 0, 0)
     z_direction = tube.frame * Vector(0, 0, 1)
     center = _opening_position(tube)
     open_tube = "open" in tube.name.casefold()
     offsets = _OPEN_SOCKET_OFFSETS if open_tube else _SOLID_SOCKET_OFFSETS
     candidates = tuple(
-        (
-            offset_x,
-            offset_z,
-            center
-            + x_direction * (offset_x * _SOCKET_HALF_PITCH)
-            + z_direction * (offset_z * _SOCKET_HALF_PITCH),
+        _offset_socket(
+            tube=tube,
+            offset_x=offset_x,
+            offset_z=offset_z,
+            position=(
+                center
+                + x_direction * (offset_x * _SOCKET_HALF_PITCH)
+                + z_direction * (offset_z * _SOCKET_HALF_PITCH)
+            ),
         )
         for offset_x, offset_z in offsets
     )
+    visible, deferred = _partition_socket_candidates(
+        candidates=candidates,
+        studs=studs,
+        bounds=bounds,
+        bounds_fallback=bounds_fallback,
+        phase_cache=phase_cache,
+    )
+    opening = replace(
+        tube,
+        position=center,
+        feature_id=(
+            tube.feature_id
+            if open_tube
+            else f"{tube.feature_id}:opening"
+            if tube.feature_id
+            else "socket:opening"
+        ),
+        provenance=(*tube.provenance, _SOCKET_PROVENANCE),
+    )
+    return StudSocketEvidence(
+        visible=(opening, *visible) if open_tube else visible,
+        deferred=deferred,
+        interfaces=(opening, *candidates),
+    )
+
+
+def _reconsider_socket_evidence(
+    *,
+    evidence: StudSocketEvidence,
+    studs: tuple[ConnectionFeature, ...],
+    bounds: BoundingBox | None,
+    bounds_fallback: bool,
+    phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]],
+) -> StudSocketEvidence:
+    visible, deferred = _partition_socket_candidates(
+        candidates=evidence.deferred,
+        studs=studs,
+        bounds=bounds,
+        bounds_fallback=bounds_fallback,
+        phase_cache=phase_cache,
+    )
+    return StudSocketEvidence(
+        visible=visible,
+        deferred=deferred,
+        interfaces=evidence.interfaces,
+    )
+
+
+def _partition_socket_candidates(
+    *,
+    candidates: tuple[ConnectionFeature, ...],
+    studs: tuple[ConnectionFeature, ...],
+    bounds: BoundingBox | None,
+    bounds_fallback: bool,
+    phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]],
+) -> tuple[tuple[ConnectionFeature, ...], tuple[ConnectionFeature, ...]]:
+    if not candidates:
+        return (), ()
+    representative = candidates[0]
+    axis = representative.axis
+    x_direction = representative.frame * Vector(1, 0, 0)
+    z_direction = representative.frame * Vector(0, 0, 1)
     orientation = _grid_orientation(
         axis=axis,
         x_direction=x_direction,
@@ -461,52 +528,50 @@ def _tube_sockets(
             z_direction=z_direction,
         )
         phase_cache[orientation] = phases
-    matched = [
-        candidate
-        for candidate in candidates
-        if _grid_phase(
-            position=candidate[2],
-            x_direction=x_direction,
-            z_direction=z_direction,
-        )
-        in phases
-    ]
-    defer_to_parent = False
-    if not matched:
-        if not bounds_fallback:
-            # Defer: the enclosing resolution level sees the full grid.
-            return None
-        matched = [
+    if phases:
+        visible = tuple(
             candidate
             for candidate in candidates
-            if _within_lateral_bounds(candidate[2], axis=axis, bounds=bounds)
-        ]
-        defer_to_parent = len(matched) < len(candidates)
-    sockets: list[ConnectionFeature] = []
-    if open_tube:
-        sockets.append(
-            replace(
-                tube,
-                position=center,
-                provenance=(*tube.provenance, _SOCKET_PROVENANCE),
-            ),
+            if _grid_phase(
+                position=candidate.position,
+                x_direction=x_direction,
+                z_direction=z_direction,
+            )
+            in phases
         )
-    for offset_x, offset_z, position in matched:
-        suffix = f"socket:{offset_x:+d}{offset_z:+d}"
-        sockets.append(
-            replace(
-                tube,
-                position=position,
-                name=_SOCKET_NAME,
-                feature_id=(
-                    f"{tube.feature_id}:{suffix}" if tube.feature_id else suffix
-                ),
-                provenance=(*tube.provenance, _SOCKET_PROVENANCE),
-            ),
+    elif bounds_fallback:
+        visible = tuple(
+            candidate
+            for candidate in candidates
+            if _within_lateral_bounds(
+                candidate.position,
+                axis=axis,
+                bounds=bounds,
+            )
         )
-    return _TubeSocketExpansion(
-        sockets=tuple(sockets),
-        defer_to_parent=defer_to_parent,
+    else:
+        visible = ()
+    visible_ids = {id(candidate) for candidate in visible}
+    deferred = tuple(
+        candidate for candidate in candidates if id(candidate) not in visible_ids
+    )
+    return visible, deferred
+
+
+def _offset_socket(
+    *,
+    tube: ConnectionFeature,
+    offset_x: int,
+    offset_z: int,
+    position: Vector,
+) -> ConnectionFeature:
+    suffix = f"socket:{offset_x:+d}{offset_z:+d}"
+    return replace(
+        tube,
+        position=position,
+        name=_SOCKET_NAME,
+        feature_id=f"{tube.feature_id}:{suffix}" if tube.feature_id else suffix,
+        provenance=(*tube.provenance, _SOCKET_PROVENANCE),
     )
 
 
