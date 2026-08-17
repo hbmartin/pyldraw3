@@ -127,6 +127,20 @@ class _ConnectionOverrideSource(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class _FoldResult:
+    """Mutable accumulators produced while folding one part file."""
+
+    box: _BoxAccumulator
+    points: list[Vector]
+    studs: list[StudReference]
+    connections: list[ConnectionFeature]
+    socket_evidence: list[StudSocketEvidence]
+    diagnostics: list[Diagnostic]
+    metadata_result: ShadowConnectionResult
+    resolved_codes: set[str]
+
+
+@dataclass(frozen=True, slots=True)
 class _LocalGeometry:
     """Memoized per-file geometry, in the file's own coordinates."""
 
@@ -337,16 +351,7 @@ def _local_geometry(
         cache[key] = source
         return source
     part, objects = source
-    (
-        box,
-        points,
-        studs,
-        connections,
-        inherited_socket_evidence,
-        diagnostics,
-        inherited_metadata,
-        resolved_codes,
-    ) = _fold_objects(
+    folded = _fold_objects(
         parts,
         code=code,
         description=part.description,
@@ -363,23 +368,23 @@ def _local_geometry(
         code=code,
         description=part.description,
         path=part.path,
-        box=box,
-        connections=connections,
-        inherited_socket_evidence=inherited_socket_evidence,
-        diagnostics=diagnostics,
-        inherited_metadata=inherited_metadata,
+        box=folded.box,
+        connections=folded.connections,
+        inherited_socket_evidence=folded.socket_evidence,
+        diagnostics=folded.diagnostics,
+        inherited_metadata=folded.metadata_result,
     )
     local = _LocalGeometry(
         description=part.description,
-        box=box.box(),
-        points=tuple(points),
-        studs=tuple(studs),
+        box=folded.box.box(),
+        points=tuple(folded.points),
+        studs=tuple(folded.studs),
         connections=tuple(connections),
         deferred_socket_evidence=deferred_socket_evidence,
-        diagnostics=tuple(diagnostics),
+        diagnostics=tuple(folded.diagnostics),
         connection_metadata=connection_report,
         metadata_result=metadata_result,
-        resolved_codes=frozenset((*resolved_codes, key)),
+        resolved_codes=frozenset((*folded.resolved_codes, key)),
     )
     cache[key] = local
     return local
@@ -461,16 +466,7 @@ def _fold_objects(
     description: str,
     objects: list[object],
     visiting: frozenset[str],
-) -> tuple[
-    _BoxAccumulator,
-    list[Vector],
-    list[StudReference],
-    list[ConnectionFeature],
-    list[StudSocketEvidence],
-    list[Diagnostic],
-    ShadowConnectionResult,
-    set[str],
-]:
+) -> _FoldResult:
     box = _BoxAccumulator()
     points: list[Vector] = []
     studs: list[StudReference] = []
@@ -510,15 +506,15 @@ def _fold_objects(
                     resolved_codes=resolved_codes,
                 )
                 piece_instance += 1
-    return (
-        box,
-        points,
-        studs,
-        connections,
-        socket_evidence,
-        diagnostics,
-        _metadata_statistics(metadata_results),
-        resolved_codes,
+    return _FoldResult(
+        box=box,
+        points=points,
+        studs=studs,
+        connections=connections,
+        socket_evidence=socket_evidence,
+        diagnostics=diagnostics,
+        metadata_result=_metadata_statistics(metadata_results),
+        resolved_codes=resolved_codes,
     )
 
 
@@ -831,7 +827,7 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
         )
-        if result is not None:
+        if result is not None and result.confidence > 0:
             transformed.append(result)
     return tuple(transformed)
 

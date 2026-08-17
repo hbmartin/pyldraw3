@@ -528,34 +528,26 @@ def _partition_socket_candidates(
             z_direction=z_direction,
         )
         phase_cache[orientation] = phases
-    if phases:
-        visible = tuple(
-            candidate
-            for candidate in candidates
-            if _grid_phase(
+    visible: list[ConnectionFeature] = []
+    deferred: list[ConnectionFeature] = []
+    for candidate in candidates:
+        accepted = (
+            _grid_phase(
                 position=candidate.position,
                 x_direction=x_direction,
                 z_direction=z_direction,
             )
             in phases
-        )
-    elif bounds_fallback:
-        visible = tuple(
-            candidate
-            for candidate in candidates
-            if _within_lateral_bounds(
+            if phases
+            else bounds_fallback
+            and _within_lateral_bounds(
                 candidate.position,
                 axis=axis,
                 bounds=bounds,
             )
         )
-    else:
-        visible = ()
-    visible_ids = {id(candidate) for candidate in visible}
-    deferred = tuple(
-        candidate for candidate in candidates if id(candidate) not in visible_ids
-    )
-    return visible, deferred
+        (visible if accepted else deferred).append(candidate)
+    return tuple(visible), tuple(deferred)
 
 
 def _offset_socket(

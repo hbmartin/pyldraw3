@@ -49,6 +49,7 @@ _ROTATE_X_180 = "1 0 0 0 -1 0 0 0 -1"
 # matching Z negation keeps the transform a rotation plus scale, not a mirror.
 _ROTATE_X_180_SCALE_Y_5 = "1 0 0 0 -5 0 0 0 -1"
 _SCALE_XZ_2 = "2 0 0 0 1 0 0 0 2"
+_SINGULAR_XZ = "0 0 0 0 1 0 0 0 0"
 
 
 @dataclass(eq=False)
@@ -269,6 +270,31 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -40 0 -40 40 8 40\n"
             f"1 16 0 0 0 {_SCALE_XZ_2} partialsolid.dat\n"
         ),
+        "parts/partialsolidlateralmeta.dat": (
+            "0 Partially Bounds-Matched Solid Tube with Lateral Metadata\n"
+            "2 24 -15 0 -5 15 8 5\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+            "0 !LDCAD SNAP_CYL [id=explicit-partial-lateral] [gender=F] "
+            "[secs=R 6 4] [pos=10 8 0]\n"
+        ),
+        "parts/nestedpartialsolidlateralmeta.dat": (
+            "0 Assembly Containing a Partially Resolved Solid Tube\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} partialsolidlateralmeta.dat\n"
+        ),
+        "parts/parentlateralmeta.dat": (
+            "0 Parent Metadata Isolated from Child Tube Evidence\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} partialsolid.dat\n"
+            "0 !LDCAD SNAP_CYL [id=parent-lateral] [gender=F] "
+            "[secs=R 6 4] [pos=0 8 10]\n"
+        ),
+        "parts/singularevidence.dat": (
+            "0 Assembly with Singular and Valid Deferred Tube Evidence\n"
+            "2 24 -20 0 -20 40 8 20\n"
+            f"1 16 0 0 0 {_SINGULAR_XZ} narrowsolid.dat\n"
+            f"1 16 10 0 0 {_IDENTITY} narrowsolid.dat\n"
+        ),
         "parts/s/middlesolid.dat": (
             "0 Non-Catalog Intermediate with Deferred Solid Tube\n"
             f"1 16 0 0 0 {_IDENTITY} narrowsolid.dat\n"
@@ -386,6 +412,12 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "partialsolid.dat Partially Bounds-Matched Solid Tube\n"
         "scaledpartialsolid.dat "
         "Scaled Assembly Containing Partial Solid Tube Evidence\n"
+        "partialsolidlateralmeta.dat "
+        "Partially Bounds-Matched Solid Tube with Lateral Metadata\n"
+        "nestedpartialsolidlateralmeta.dat "
+        "Assembly Containing a Partially Resolved Solid Tube\n"
+        "parentlateralmeta.dat Parent Metadata Isolated from Child Tube Evidence\n"
+        "singularevidence.dat Assembly with Singular and Valid Tube Evidence\n"
         "nestedmiddlesolid.dat Assembly Containing a Non-Catalog Tube Intermediate\n"
         "partialphase.dat Partially Grid-Matched Solid Tube\n"
         "parentphase.dat Assembly Completing a Child Stud Grid\n"
@@ -1448,6 +1480,73 @@ def test_lateral_child_metadata_suppresses_all_deferred_tube_candidates(
     assert standalone[0].position == nested[0].position == Vector(10, 8, 0)
 
 
+def test_lateral_child_metadata_suppresses_visible_and_deferred_candidates(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    standalone = _connections_with_kind(
+        parts=parts,
+        code="partialsolidlateralmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+    nested = _connections_with_kind(
+        parts=parts,
+        code="nestedpartialsolidlateralmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(standalone) == len(nested) == 1
+    assert standalone[0].source is ConnectionSource.LDCAD_INLINE
+    assert nested[0].source is ConnectionSource.LDCAD_INLINE
+    assert standalone[0].position == nested[0].position == Vector(10, 8, 0)
+
+
+def test_parent_metadata_does_not_resolve_child_owned_socket_evidence(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="parentlateralmeta",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(receptacles) == 4
+    assert _connection_positions(receptacles) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
+    assert (
+        sum(feature.source is ConnectionSource.LDCAD_INLINE for feature in receptacles)
+        == 1
+    )
+
+
+def test_degenerate_transform_cannot_poison_deferred_socket_evidence(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="singularevidence",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(receptacles) == 4
+    assert all(feature.confidence > 0 for feature in receptacles)
+    assert _connection_positions(receptacles) == {
+        (0.0, 8.0, 0.0),
+        (10.0, 8.0, -10.0),
+        (10.0, 8.0, 10.0),
+        (20.0, 8.0, 0.0),
+    }
+
+
 def test_deferred_socket_candidates_preserve_child_placement_scale(
     tmp_path: Path,
 ) -> None:
@@ -1508,10 +1607,12 @@ def test_parent_grid_reconsiders_child_phase_rejections(tmp_path: Path) -> None:
         kind=ConnectionKind.STUD_RECEPTACLE,
     )
 
+    assert len(child) == 2
     assert _connection_positions(child) == {
         (-10.0, 8.0, 0.0),
         (10.0, 8.0, 0.0),
     }
+    assert len(parent) == 4
     assert _connection_positions(parent) == {
         (-10.0, 8.0, 0.0),
         (0.0, 8.0, -10.0),
