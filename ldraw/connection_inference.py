@@ -25,7 +25,7 @@ from ldraw.connection_types import (
 from ldraw.geometry import Matrix, Vector
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from ldraw.part_geometry_types import BoundingBox
 
@@ -46,6 +46,7 @@ _SOCKET_LATERAL_MARGIN: Final[float] = 4.0
 _SOCKET_MERGE_TOLERANCE: Final[float] = 0.5
 _SOCKET_MERGE_TOLERANCE_SQUARED: Final[float] = _SOCKET_MERGE_TOLERANCE**2
 _SOCKET_AXIS_ALIGNMENT: Final[float] = 0.999
+_GRID_DIRECTION_EPSILON: Final[float] = 1e-9
 _SOCKET_NEIGHBOR_OFFSETS: Final[tuple[tuple[int, int, int], ...]] = tuple(
     (x_offset, y_offset, z_offset)
     for x_offset in (-1, 0, 1)
@@ -89,6 +90,13 @@ class StudSocketDerivation:
 
 @dataclass(frozen=True, slots=True)
 class _SocketCandidate:
+    """One socket competing for a grid cell during final deduplication.
+
+    Candidates are ranked by confidence first, then ``priority`` (a tube's own
+    opening outranks a socket derived onto a neighbouring centreline), then
+    ``index`` to keep emission order stable among equals.
+    """
+
     index: int
     feature: ConnectionFeature
     priority: int
@@ -266,6 +274,11 @@ def derive_stud_socket_evidence(
     centre socket. Unmatched candidate sockets remain private so an enclosing
     assembly can reconsider their already-transformed positions after child
     metadata resolution.
+
+    Where two sockets contest one cell, the higher-confidence one wins — a
+    socket whose tube kept a valid placement outranks one a non-uniform scale
+    degraded. Equal confidence falls back to the tube's own opening over a
+    derived neighbour, then to emission order.
     """
     values = tuple(features)
     tube_flags = tuple(_is_tube_receptacle(feature) for feature in values)
@@ -299,6 +312,10 @@ def _fixed_socket_index(
         if (
             feature.kind is ConnectionKind.STUD_RECEPTACLE
             and not is_tube
+            # A zero-confidence receptacle cannot mate, so letting it claim a
+            # cell would only suppress a derived socket that can. The same
+            # confidence-first rule orders the candidates below.
+            and feature.confidence > 0
             and not _is_derived_socket(feature)
         ):
             _remember_socket(seen, position=feature.position, axis=feature.axis)
@@ -519,6 +536,11 @@ def _partition_socket_candidates(
     axis = representative.axis
     x_direction = representative.frame * Vector(1, 0, 0)
     z_direction = representative.frame * Vector(0, 0, 1)
+    if _is_degenerate_grid(x_direction=x_direction, z_direction=z_direction):
+        # A collapsed or linearly dependent X/Z basis cannot represent a 2-D
+        # grid, so phase and bounds validation are not meaningful. Defer rather
+        # than inventing sockets at aliased positions.
+        return (), candidates
     orientation = _grid_orientation(
         axis=axis,
         x_direction=x_direction,
@@ -533,31 +555,42 @@ def _partition_socket_candidates(
         )
         phase_cache[orientation] = phases
     if phases:
-        visible = []
-        deferred = []
-        for candidate in candidates:
-            accepted = (
+        return _split_socket_candidates(
+            candidates,
+            accepts=lambda candidate: (
                 _grid_phase(
                     position=candidate.position,
                     x_direction=x_direction,
                     z_direction=z_direction,
                 )
                 in phases
-            )
-            (visible if accepted else deferred).append(candidate)
-        return tuple(visible), tuple(deferred)
+            ),
+        )
     if bounds_fallback:
-        visible = []
-        deferred = []
-        for candidate in candidates:
-            accepted = _within_lateral_bounds(
+        return _split_socket_candidates(
+            candidates,
+            accepts=lambda candidate: _within_lateral_bounds(
                 candidate.position,
                 axis=axis,
                 bounds=bounds,
-            )
-            (visible if accepted else deferred).append(candidate)
-        return tuple(visible), tuple(deferred)
+            ),
+        )
     return (), candidates
+
+
+def _split_socket_candidates(
+    candidates: tuple[ConnectionFeature, ...],
+    *,
+    accepts: Callable[[ConnectionFeature], bool],
+) -> tuple[tuple[ConnectionFeature, ...], tuple[ConnectionFeature, ...]]:
+    visible: list[ConnectionFeature] = []
+    deferred: list[ConnectionFeature] = []
+    for candidate in candidates:
+        if accepts(candidate):
+            visible.append(candidate)
+        else:
+            deferred.append(candidate)
+    return tuple(visible), tuple(deferred)
 
 
 def _offset_socket(
@@ -593,6 +626,15 @@ def _stud_grid_phases(
         for feature in studs
         if feature.axis.dot(axis) <= -_SOCKET_AXIS_ALIGNMENT
     )
+
+
+def _is_degenerate_grid(*, x_direction: Vector, z_direction: Vector) -> bool:
+    x_length = abs(x_direction)
+    z_length = abs(z_direction)
+    if min(x_length, z_length) <= _GRID_DIRECTION_EPSILON:
+        return True
+    grid_area = abs(x_direction.cross(z_direction))
+    return grid_area <= _GRID_DIRECTION_EPSILON * x_length * z_length
 
 
 def _grid_orientation(

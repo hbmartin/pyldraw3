@@ -24,6 +24,7 @@ from ldraw.connection_types import (
     ConnectionSource,
     ConnectionStatus,
     CylindricalProfile,
+    CylindricalSection,
     FingerProfile,
     GenericProfile,
     SectionShape,
@@ -50,6 +51,7 @@ _ROTATE_X_180 = "1 0 0 0 -1 0 0 0 -1"
 _ROTATE_X_180_SCALE_Y_5 = "1 0 0 0 -5 0 0 0 -1"
 _SCALE_XZ_2 = "2 0 0 0 1 0 0 0 2"
 _SINGULAR_XZ = "0 0 0 0 1 0 0 0 0"
+_SINGULAR_COLLINEAR_XZ = "1 0 1 0 1 0 0 0 0"
 
 
 @dataclass(eq=False)
@@ -114,6 +116,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
         "p/studplaceholder.dat": (
             "0 Stud Tube Solid Placeholder\n2 24 -4 0 -4 4 4 4\n"
+        ),
+        "p/studundersideplaceholder.dat": (
+            "0 Stud Underside Placeholder\n2 24 -4 0 -4 4 4 4\n"
         ),
         "p/stud4f4s.dat": (
             "0 Stud Tube Open with 4 Fillets Standard\n2 24 -6 0 -6 6 4 6\n"
@@ -292,11 +297,35 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "0 !LDCAD SNAP_CYL [id=parent-lateral] [gender=F] "
             "[secs=R 6 4] [pos=0 8 10]\n"
         ),
+        # The valid child sits far enough away that none of its sockets land
+        # on the singular child's collapse point, so a phantom socket there
+        # cannot hide behind a real one during deduplication.
         "parts/singularevidence.dat": (
             "0 Assembly with Singular and Valid Deferred Tube Evidence\n"
-            "2 24 -20 0 -20 40 8 20\n"
+            "2 24 -20 0 -20 60 8 20\n"
             f"1 16 0 0 0 {_SINGULAR_XZ} narrowsolid.dat\n"
-            f"1 16 10 0 0 {_IDENTITY} narrowsolid.dat\n"
+            f"1 16 40 0 0 {_IDENTITY} narrowsolid.dat\n"
+        ),
+        "parts/singulargridevidence.dat": (
+            "0 Assembly with a Stud Grid and a Singular Child\n"
+            "2 24 -20 0 -20 40 8 20\n"
+            f"1 16 3 0 3 {_IDENTITY} stud.dat\n"
+            f"1 16 25 0 0 {_IDENTITY} narrowsolid.dat\n"
+            f"1 16 0 0 0 {_SINGULAR_XZ} narrowplaceholder.dat\n"
+        ),
+        "parts/collineargridevidence.dat": (
+            "0 Assembly with a Stud Grid and Collinear Child Axes\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 0 0 0 {_SINGULAR_COLLINEAR_XZ} narrowplaceholder.dat\n"
+        ),
+        "parts/placeholderseed.dat": (
+            "0 Solid Tube Sharing a Cell with a Placeholder Receptacle\n"
+            "2 24 -15 0 -15 15 8 15\n"
+            # Matching axes are required to exercise socket suppression;
+            # opposing socket axes are intentionally treated as distinct.
+            f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
+            f"1 16 10 8 0 {_ROTATE_X_180} studundersideplaceholder.dat\n"
         ),
         "parts/narrowplaceholder.dat": (
             "0 Bounds-Rejected Placeholder Solid Tube Fixture\n"
@@ -431,6 +460,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "Assembly Containing a Partially Resolved Solid Tube\n"
         "parentlateralmeta.dat Parent Metadata Isolated from Child Tube Evidence\n"
         "singularevidence.dat Assembly with Singular and Valid Deferred Tube Evidence\n"
+        "singulargridevidence.dat Assembly with a Stud Grid and a Singular Child\n"
+        "collineargridevidence.dat Assembly with a Stud Grid and Collinear Child Axes\n"
+        "placeholderseed.dat Solid Tube Sharing a Cell with a Placeholder Receptacle\n"
         "narrowplaceholder.dat Bounds-Rejected Placeholder Solid Tube Fixture\n"
         "nestedplaceholder.dat Assembly Expanding Placeholder Tube Evidence\n"
         "nestedmiddlesolid.dat Assembly Containing a Non-Catalog Tube Intermediate\n"
@@ -457,6 +489,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "stud3.dat Stud Tube Solid\n"
         "stud4.dat Stud Tube Open\n"
         "studplaceholder.dat Stud Tube Solid Placeholder\n"
+        "studundersideplaceholder.dat Stud Underside Placeholder\n"
         "stud4f4s.dat Stud Tube Open with 4 Fillets Standard\n",
         encoding="utf-8",
     )
@@ -1555,12 +1588,110 @@ def test_degenerate_transform_cannot_poison_deferred_socket_evidence(
 
     assert len(receptacles) == 4
     assert all(feature.confidence > 0 for feature in receptacles)
+    # The singular child collapses its four candidates onto (0, 8, 0); no
+    # socket may be emitted there, and every surviving one must trace back to
+    # the validly placed sibling.
     assert _connection_positions(receptacles) == {
-        (0.0, 8.0, 0.0),
-        (10.0, 8.0, -10.0),
-        (10.0, 8.0, 10.0),
-        (20.0, 8.0, 0.0),
+        (30.0, 8.0, 0.0),
+        (40.0, 8.0, -10.0),
+        (40.0, 8.0, 10.0),
+        (50.0, 8.0, 0.0),
     }
+    assert all(
+        feature.feature_id is not None
+        and feature.feature_id.startswith("narrowsolid@R1/")
+        for feature in receptacles
+    )
+
+
+def test_override_features_are_rejected_under_a_degenerate_placement(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+    parts.set_connection_overrides(
+        code="narrowsolid",
+        features=(
+            ConnectionFeature(
+                kind=ConnectionKind.STUD_RECEPTACLE,
+                role=ConnectionRole.FEMALE,
+                position=Vector(0, 8, 0),
+                frame=Identity(),
+                profile=CylindricalProfile(
+                    sections=(CylindricalSection(SectionShape.ROUND, 6.0, 4.0),),
+                ),
+            ),
+        ),
+        replace_existing=True,
+    )
+
+    report = parts.connection_metadata("singularevidence")
+    receptacles = tuple(
+        feature
+        for feature in report.features
+        if feature.kind is ConnectionKind.STUD_RECEPTACLE
+    )
+
+    # Only the validly placed sibling keeps its override; the collapsed one is
+    # reported rather than kept at a fabricated position.
+    assert _connection_positions(receptacles) == {(40.0, 8.0, 0.0)}
+    assert all(feature.source is ConnectionSource.OVERRIDE for feature in receptacles)
+    assert any(
+        diagnostic.code is DiagnosticCode.CONNECTION_INVALID_TRANSFORM
+        for diagnostic in report.diagnostics
+    )
+
+
+def test_singular_child_cannot_pass_a_collapsed_stud_grid_phase(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="singulargridevidence",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    # A collapsed placement leaves every grid phase at the origin, which would
+    # match the equally collapsed stud phase and promote all four candidates.
+    assert receptacles == ()
+
+
+def test_singular_child_cannot_pass_a_collinear_stud_grid_phase(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="collineargridevidence",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    # Nonzero but collinear X/Z directions alias the two-dimensional grid onto
+    # one line; matching phases on that line must not promote the candidates.
+    assert receptacles == ()
+
+
+def test_zero_confidence_receptacle_does_not_suppress_a_derived_socket(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="placeholderseed",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    derived = tuple(feature for feature in receptacles if feature.name == "Stud Socket")
+    assert _connection_positions(derived) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
+    }
+    assert all(feature.confidence > 0 for feature in derived)
 
 
 def test_deferred_socket_evidence_preserves_born_zero_confidence(
