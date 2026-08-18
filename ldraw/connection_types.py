@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from ldraw.geometry import Identity, Matrix, Vector
 
@@ -48,6 +48,21 @@ class ConnectionSource(StrEnum):
     LDCAD_SHADOW = "ldcad_shadow"
     STUDIO = "studio"
     OVERRIDE = "override"
+
+
+METADATA_SOURCES: Final[frozenset[ConnectionSource]] = frozenset(
+    {
+        ConnectionSource.LDCAD_INLINE,
+        ConnectionSource.LDCAD_SHADOW,
+        ConnectionSource.STUDIO,
+        ConnectionSource.OVERRIDE,
+    },
+)
+"""Sources whose features are authored rather than inferred.
+
+Authored geometry is authoritative, so a placement that distorts it is
+rejected outright instead of merely downgraded.
+"""
 
 
 class ConnectionStatus(StrEnum):
@@ -475,11 +490,7 @@ class ConnectionFeature:
             "ronly": not has_axial_scale,
             "yandr": True,
         }.get(self.scale_inheritance.casefold(), False)
-        return self.source in {
-            ConnectionSource.LDCAD_INLINE,
-            ConnectionSource.LDCAD_SHADOW,
-            ConnectionSource.STUDIO,
-        } and (
+        return self.source in METADATA_SOURCES and (
             (inherit and not scale_allowed)
             or scales.mismatch > 1e-6
             or scales.shear > 1e-6
@@ -953,6 +964,7 @@ def default_frame() -> Matrix:
 
 
 __all__ = [
+    "METADATA_SOURCES",
     "AnnularProfile",
     "ConnectionFeature",
     "ConnectionFreedom",

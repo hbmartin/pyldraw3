@@ -46,7 +46,6 @@ _SOCKET_LATERAL_MARGIN: Final[float] = 4.0
 _SOCKET_MERGE_TOLERANCE: Final[float] = 0.5
 _SOCKET_MERGE_TOLERANCE_SQUARED: Final[float] = _SOCKET_MERGE_TOLERANCE**2
 _SOCKET_AXIS_ALIGNMENT: Final[float] = 0.999
-_GRID_DIRECTION_EPSILON: Final[float] = 1e-9
 _SOCKET_NEIGHBOR_OFFSETS: Final[tuple[tuple[int, int, int], ...]] = tuple(
     (x_offset, y_offset, z_offset)
     for x_offset in (-1, 0, 1)
@@ -313,8 +312,9 @@ def _fixed_socket_index(
             feature.kind is ConnectionKind.STUD_RECEPTACLE
             and not is_tube
             # A zero-confidence receptacle cannot mate, so letting it claim a
-            # cell would only suppress a derived socket that can. The same
-            # confidence-first rule orders the candidates below.
+            # cell would only suppress a derived socket that can. It competes
+            # as a candidate instead, where the same confidence-first rule
+            # drops it rather than leaving two receptacles in one cell.
             and feature.confidence > 0
             and not _is_derived_socket(feature)
         ):
@@ -341,7 +341,7 @@ def _socket_emissions(  # noqa: PLR0913 - resolution inputs are explicit
     phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]] = {}
     for feature, is_tube in zip(values, tube_flags, strict=True):
         if not is_tube:
-            if _is_derived_socket(feature):
+            if _is_derived_socket(feature) or _is_supersedable_receptacle(feature):
                 _append_socket_candidate(
                     emissions=emissions,
                     candidates=candidates,
@@ -439,6 +439,18 @@ def _is_derived_socket(feature: ConnectionFeature) -> bool:
     )
 
 
+def _is_supersedable_receptacle(feature: ConnectionFeature) -> bool:
+    """Whether a derived socket may take this receptacle's cell outright.
+
+    ``_fixed_socket_index`` deliberately lets a zero-confidence receptacle lose
+    its cell to a socket that can actually mate. Ranking it as a candidate
+    rather than emitting it unconditionally leaves the winner alone in that
+    cell; emitting both would report two colocated receptacles, which no
+    later stage deduplicates.
+    """
+    return feature.kind is ConnectionKind.STUD_RECEPTACLE and feature.confidence <= 0
+
+
 def _is_tube_receptacle(feature: ConnectionFeature) -> bool:
     return (
         feature.kind is ConnectionKind.STUD_RECEPTACLE
@@ -456,6 +468,11 @@ def _tube_socket_evidence(
     bounds_fallback: bool,
     phase_cache: dict[_GridOrientation, frozenset[tuple[int, int]]],
 ) -> StudSocketEvidence:
+    if _is_unusable_grid_frame(tube.frame):
+        # An invalidated frame carries no trustworthy position, roll, or axis,
+        # so this tube yields nothing at all — not even the centre socket an
+        # open tube would otherwise keep through a bounds rejection.
+        return StudSocketEvidence(visible=(), deferred=(), interfaces=())
     x_direction = tube.frame * Vector(1, 0, 0)
     z_direction = tube.frame * Vector(0, 0, 1)
     center = _opening_position(tube)
@@ -533,14 +550,14 @@ def _partition_socket_candidates(
     if not candidates:
         return (), ()
     representative = candidates[0]
+    if _is_unusable_grid_frame(representative.frame):
+        # Deferring these would re-transform and re-reject them at every level
+        # above, because no enclosing placement restores a basis that a
+        # singular one already destroyed.
+        return (), ()
     axis = representative.axis
     x_direction = representative.frame * Vector(1, 0, 0)
     z_direction = representative.frame * Vector(0, 0, 1)
-    if _is_degenerate_grid(x_direction=x_direction, z_direction=z_direction):
-        # A collapsed or linearly dependent X/Z basis cannot represent a 2-D
-        # grid, so phase and bounds validation are not meaningful. Defer rather
-        # than inventing sockets at aliased positions.
-        return (), candidates
     orientation = _grid_orientation(
         axis=axis,
         x_direction=x_direction,
@@ -556,7 +573,7 @@ def _partition_socket_candidates(
         phase_cache[orientation] = phases
     if phases:
         return _split_socket_candidates(
-            candidates,
+            candidates=candidates,
             accepts=lambda candidate: (
                 _grid_phase(
                     position=candidate.position,
@@ -568,7 +585,7 @@ def _partition_socket_candidates(
         )
     if bounds_fallback:
         return _split_socket_candidates(
-            candidates,
+            candidates=candidates,
             accepts=lambda candidate: _within_lateral_bounds(
                 candidate.position,
                 axis=axis,
@@ -579,8 +596,8 @@ def _partition_socket_candidates(
 
 
 def _split_socket_candidates(
-    candidates: tuple[ConnectionFeature, ...],
     *,
+    candidates: tuple[ConnectionFeature, ...],
     accepts: Callable[[ConnectionFeature], bool],
 ) -> tuple[tuple[ConnectionFeature, ...], tuple[ConnectionFeature, ...]]:
     visible: list[ConnectionFeature] = []
@@ -628,13 +645,24 @@ def _stud_grid_phases(
     )
 
 
-def _is_degenerate_grid(*, x_direction: Vector, z_direction: Vector) -> bool:
-    x_length = abs(x_direction)
-    z_length = abs(z_direction)
-    if min(x_length, z_length) <= _GRID_DIRECTION_EPSILON:
-        return True
-    grid_area = abs(x_direction.cross(z_direction))
-    return grid_area <= _GRID_DIRECTION_EPSILON * x_length * z_length
+def _is_unusable_grid_frame(frame: Matrix) -> bool:
+    """Whether a placement left this frame too distorted to carry the grid.
+
+    ``_grid_phase`` reduces raw ``position`` dot products modulo the pitch and
+    ``_offset_socket`` steps half a pitch along each direction, so both are
+    only meaningful for a unit-length, mutually orthogonal basis. A shrunken
+    one measures the grid in the wrong unit — small enough and every phase
+    rounds to zero, aliasing each candidate onto every stud — and a collapsed
+    one folds the grid onto a line or a point.
+
+    ``ConnectionFeature.transformed`` orthonormalizes every frame it accepts
+    and passes the raw product through only where the placement was singular,
+    so this rejects exactly the frames a placement already invalidated. That
+    includes one that zeroes the axis alone, leaving an X/Z pair that looks
+    usable but no direction for ``_within_lateral_bounds`` to hold fixed and
+    none for ``_socket_was_seen`` to align against.
+    """
+    return not frame.is_orthonormal()
 
 
 def _grid_orientation(
