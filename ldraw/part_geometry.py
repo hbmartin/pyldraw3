@@ -30,6 +30,9 @@ from ldraw.connection_metadata import (
     metadata_report,
     parse_ldcad_text,
 )
+from ldraw.connection_types import (
+    METADATA_SOURCES as _METADATA_SOURCES,
+)
 from ldraw.connection_types import ConnectionSource
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
@@ -54,14 +57,6 @@ _INFERRED_SOURCES: frozenset[ConnectionSource] = frozenset(
         ConnectionSource.HEURISTIC,
         ConnectionSource.PRIMITIVE,
         ConnectionSource.SHORTCUT,
-    },
-)
-_METADATA_SOURCES: frozenset[ConnectionSource] = frozenset(
-    {
-        ConnectionSource.LDCAD_INLINE,
-        ConnectionSource.LDCAD_SHADOW,
-        ConnectionSource.STUDIO,
-        ConnectionSource.OVERRIDE,
     },
 )
 
@@ -128,12 +123,14 @@ class _ConnectionOverrideSource(Protocol):
     ) -> tuple[tuple[ConnectionFeature, ...], bool]: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, eq=False, slots=True)
 class _FoldResult:
     """Accumulators produced while folding one part file.
 
-    The container is frozen so the accumulators stay the same objects the
-    fold mutated in place; only their contents change.
+    The container is frozen so a caller cannot swap one accumulator for
+    another; the mutable contents are the fold's output and still change.
+    Equality is suppressed because a frozen dataclass would otherwise
+    synthesize a ``__hash__`` over those lists that raises when called.
     """
 
     box: _BoxAccumulator
@@ -732,6 +729,23 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     )
 
 
+def _invalid_transform_diagnostic(
+    feature: ConnectionFeature,
+    *,
+    message: str,
+) -> Diagnostic:
+    """Build the report entry for a feature a placement invalidated."""
+    provenance = feature.connection_provenance
+    return Diagnostic(
+        message=message,
+        severity=Severity.WARNING,
+        code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
+        path=provenance.path if provenance is not None else None,
+        line_number=provenance.line_number if provenance is not None else None,
+        offending_value=feature.feature_id,
+    )
+
+
 def _transformed_child_connection(  # noqa: PLR0913 - transform context is explicit
     *,
     parts: _PartGeometryLibrary,
@@ -747,21 +761,14 @@ def _transformed_child_connection(  # noqa: PLR0913 - transform context is expli
         and transformed.confidence <= 0
         and feature.source in _METADATA_SOURCES
     ):
-        provenance = feature.connection_provenance
         diagnostics.append(
-            Diagnostic(
+            _invalid_transform_diagnostic(
+                feature,
                 message=(
                     f"connection feature {feature.feature_id!r} from "
                     f"{_connection_origin(feature)} rejected under invalid "
                     "scale or reflection"
                 ),
-                severity=Severity.WARNING,
-                code=DiagnosticCode.CONNECTION_INVALID_TRANSFORM,
-                path=provenance.path if provenance is not None else None,
-                line_number=(
-                    provenance.line_number if provenance is not None else None
-                ),
-                offending_value=feature.feature_id,
             ),
         )
         return None
@@ -837,26 +844,65 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
     """
     transformed: list[ConnectionFeature] = []
     for feature in features:
-        identity = id(feature)
-        if identity not in memo:
-            # Retaining the source feature makes this identity memo robust even
-            # if surrounding ownership changes during a future refactor.
-            memo[identity] = (
-                feature,
-                _transformed_child_connection(
-                    parts=parts,
-                    feature=feature,
-                    piece=piece,
-                    parent_code=parent_code,
-                    traversal_marker=traversal_marker,
-                    diagnostics=diagnostics,
-                ),
-            )
-        result = memo[identity][1]
-        if result is None or (feature.confidence > 0 and result.confidence <= 0):
-            continue
-        transformed.append(result)
+        result = _memoized_socket_transform(
+            parts=parts,
+            feature=feature,
+            piece=piece,
+            parent_code=parent_code,
+            traversal_marker=traversal_marker,
+            diagnostics=diagnostics,
+            memo=memo,
+        )
+        if result is not None:
+            transformed.append(result)
     return tuple(transformed)
+
+
+def _memoized_socket_transform(  # noqa: PLR0913 - transform context is explicit
+    *,
+    parts: _PartGeometryLibrary,
+    feature: ConnectionFeature,
+    piece: Piece,
+    parent_code: str,
+    traversal_marker: str,
+    diagnostics: list[Diagnostic],
+    memo: _TransformMemo,
+) -> ConnectionFeature | None:
+    """Transform one socket feature, reusing an earlier result for it.
+
+    Evidence shares features between its deferred and interface tuples, so the
+    memo also keeps the rejection diagnostic below to a single report per
+    source feature. Comparing the retained source feature makes the identity
+    key correct even if a future refactor lets one ``id()`` be reused.
+    """
+    identity = id(feature)
+    if (cached := memo.get(identity)) is not None and cached[0] is feature:
+        return cached[1]
+    result = _transformed_child_connection(
+        parts=parts,
+        feature=feature,
+        piece=piece,
+        parent_code=parent_code,
+        traversal_marker=traversal_marker,
+        diagnostics=diagnostics,
+    )
+    if result is not None and feature.confidence > 0 and result.confidence <= 0:
+        # _transformed_child_connection reports only authored metadata, so
+        # without this an inferred socket would vanish from the part with
+        # nothing in the report to explain where it went.
+        diagnostics.append(
+            _invalid_transform_diagnostic(
+                feature,
+                message=(
+                    f"socket evidence {feature.feature_id!r} from "
+                    f"{_connection_origin(feature)} dropped under invalid "
+                    "scale or reflection"
+                ),
+            ),
+        )
+        result = None
+    memo[identity] = (feature, result)
+    return result
 
 
 def _compatible_parts(
