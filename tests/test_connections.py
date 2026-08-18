@@ -51,6 +51,7 @@ _ROTATE_X_180 = "1 0 0 0 -1 0 0 0 -1"
 _ROTATE_X_180_SCALE_Y_5 = "1 0 0 0 -5 0 0 0 -1"
 _SCALE_XZ_2 = "2 0 0 0 1 0 0 0 2"
 _SINGULAR_XZ = "0 0 0 0 1 0 0 0 0"
+_SINGULAR_COLLINEAR_XZ = "1 0 1 0 1 0 0 0 0"
 
 
 @dataclass(eq=False)
@@ -310,11 +311,19 @@ def _connection_parts(tmp_path: Path) -> Parts:
             "2 24 -20 0 -20 40 8 20\n"
             f"1 16 3 0 3 {_IDENTITY} stud.dat\n"
             f"1 16 25 0 0 {_IDENTITY} narrowsolid.dat\n"
-            f"1 16 0 0 0 {_SINGULAR_XZ} narrowsolid.dat\n"
+            f"1 16 0 0 0 {_SINGULAR_XZ} narrowplaceholder.dat\n"
+        ),
+        "parts/collineargridevidence.dat": (
+            "0 Assembly with a Stud Grid and Collinear Child Axes\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 10 0 0 {_IDENTITY} stud.dat\n"
+            f"1 16 0 0 0 {_SINGULAR_COLLINEAR_XZ} narrowplaceholder.dat\n"
         ),
         "parts/placeholderseed.dat": (
             "0 Solid Tube Sharing a Cell with a Placeholder Receptacle\n"
             "2 24 -15 0 -15 15 8 15\n"
+            # Matching axes are required to exercise socket suppression;
+            # opposing socket axes are intentionally treated as distinct.
             f"1 16 0 4 0 {_ROTATE_X_180} stud3.dat\n"
             f"1 16 10 8 0 {_ROTATE_X_180} studundersideplaceholder.dat\n"
         ),
@@ -452,6 +461,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "parentlateralmeta.dat Parent Metadata Isolated from Child Tube Evidence\n"
         "singularevidence.dat Assembly with Singular and Valid Deferred Tube Evidence\n"
         "singulargridevidence.dat Assembly with a Stud Grid and a Singular Child\n"
+        "collineargridevidence.dat Assembly with a Stud Grid and Collinear Child Axes\n"
         "placeholderseed.dat Solid Tube Sharing a Cell with a Placeholder Receptacle\n"
         "narrowplaceholder.dat Bounds-Rejected Placeholder Solid Tube Fixture\n"
         "nestedplaceholder.dat Assembly Expanding Placeholder Tube Evidence\n"
@@ -1644,6 +1654,22 @@ def test_singular_child_cannot_pass_a_collapsed_stud_grid_phase(
 
     # A collapsed placement leaves every grid phase at the origin, which would
     # match the equally collapsed stud phase and promote all four candidates.
+    assert receptacles == ()
+
+
+def test_singular_child_cannot_pass_a_collinear_stud_grid_phase(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="collineargridevidence",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    # Nonzero but collinear X/Z directions alias the two-dimensional grid onto
+    # one line; matching phases on that line must not promote the candidates.
     assert receptacles == ()
 
 

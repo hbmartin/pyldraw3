@@ -537,9 +537,9 @@ def _partition_socket_candidates(
     x_direction = representative.frame * Vector(1, 0, 0)
     z_direction = representative.frame * Vector(0, 0, 1)
     if _is_degenerate_grid(x_direction=x_direction, z_direction=z_direction):
-        # A collapsed placement leaves every phase at the origin, so grid and
-        # bounds validation would accept anything. Defer instead of inventing
-        # sockets an enclosing part cannot distinguish from real ones.
+        # A collapsed or linearly dependent X/Z basis cannot represent a 2-D
+        # grid, so phase and bounds validation are not meaningful. Defer rather
+        # than inventing sockets at aliased positions.
         return (), candidates
     orientation = _grid_orientation(
         axis=axis,
@@ -586,7 +586,10 @@ def _split_socket_candidates(
     visible: list[ConnectionFeature] = []
     deferred: list[ConnectionFeature] = []
     for candidate in candidates:
-        (visible if accepts(candidate) else deferred).append(candidate)
+        if accepts(candidate):
+            visible.append(candidate)
+        else:
+            deferred.append(candidate)
     return tuple(visible), tuple(deferred)
 
 
@@ -626,7 +629,12 @@ def _stud_grid_phases(
 
 
 def _is_degenerate_grid(*, x_direction: Vector, z_direction: Vector) -> bool:
-    return min(abs(x_direction), abs(z_direction)) <= _GRID_DIRECTION_EPSILON
+    x_length = abs(x_direction)
+    z_length = abs(z_direction)
+    if min(x_length, z_length) <= _GRID_DIRECTION_EPSILON:
+        return True
+    grid_area = abs(x_direction.cross(z_direction))
+    return grid_area <= _GRID_DIRECTION_EPSILON * x_length * z_length
 
 
 def _grid_orientation(

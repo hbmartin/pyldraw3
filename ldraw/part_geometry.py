@@ -799,9 +799,9 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
         memo=memo,
     )
     if not deferred:
-        # Nothing survives for an enclosing part to resolve, so the interfaces
-        # are never read; transforming them would only emit diagnostics about
-        # features this evidence is about to discard.
+        # This function returns no evidence when no deferred candidate survives,
+        # so transforming its interfaces could only emit discarded diagnostics.
+        # _resolve_socket_evidence enforces the same invariant upstream.
         return None
     return StudSocketEvidence(
         visible=(),
@@ -830,17 +830,17 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
 ) -> tuple[ConnectionFeature, ...]:
     """Transform shared socket evidence once per distinct source feature.
 
-    A feature the placement degrades to zero confidence is dropped: its
-    position and frame collapsed with it, so keeping it would emit a socket at
-    a fabricated location. Evidence born at zero confidence — a placeholder
-    primitive — carries an intact frame and is preserved.
+    Positive-confidence evidence that the placement degrades to zero is
+    dropped because its position or frame is no longer trustworthy. Evidence
+    already at zero confidence — such as a placeholder primitive — is preserved
+    here; grid validation decides whether its transformed basis remains usable.
     """
     transformed: list[ConnectionFeature] = []
     for feature in features:
         identity = id(feature)
         if identity not in memo:
-            # The source feature is memoized alongside its result so the key
-            # cannot be recycled for a different object mid-traversal.
+            # Retaining the source feature makes this identity memo robust even
+            # if surrounding ownership changes during a future refactor.
             memo[identity] = (
                 feature,
                 _transformed_child_connection(
