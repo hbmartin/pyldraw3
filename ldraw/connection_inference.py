@@ -389,7 +389,11 @@ def _deduplicate_socket_emissions(
     selected: set[int] = set()
     for candidate in sorted(
         candidates,
-        key=lambda value: (-value.priority, value.index),
+        key=lambda value: (
+            -value.feature.confidence,
+            -value.priority,
+            value.index,
+        ),
     ):
         socket = candidate.feature
         if _socket_was_seen(
@@ -528,26 +532,32 @@ def _partition_socket_candidates(
             z_direction=z_direction,
         )
         phase_cache[orientation] = phases
-    visible: list[ConnectionFeature] = []
-    deferred: list[ConnectionFeature] = []
-    for candidate in candidates:
-        accepted = (
-            _grid_phase(
-                position=candidate.position,
-                x_direction=x_direction,
-                z_direction=z_direction,
+    if phases:
+        visible = []
+        deferred = []
+        for candidate in candidates:
+            accepted = (
+                _grid_phase(
+                    position=candidate.position,
+                    x_direction=x_direction,
+                    z_direction=z_direction,
+                )
+                in phases
             )
-            in phases
-            if phases
-            else bounds_fallback
-            and _within_lateral_bounds(
+            (visible if accepted else deferred).append(candidate)
+        return tuple(visible), tuple(deferred)
+    if bounds_fallback:
+        visible = []
+        deferred = []
+        for candidate in candidates:
+            accepted = _within_lateral_bounds(
                 candidate.position,
                 axis=axis,
                 bounds=bounds,
             )
-        )
-        (visible if accepted else deferred).append(candidate)
-    return tuple(visible), tuple(deferred)
+            (visible if accepted else deferred).append(candidate)
+        return tuple(visible), tuple(deferred)
+    return (), candidates
 
 
 def _offset_socket(

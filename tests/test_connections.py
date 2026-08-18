@@ -112,6 +112,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "p/stud.dat": "0 Stud\n2 24 -6 -4 -6 6 0 6\n",
         "p/stud3.dat": "0 Stud Tube Solid\n2 24 -4 0 -4 4 4 4\n",
         "p/stud4.dat": "0 Stud Tube Open\n2 24 -6 0 -6 6 4 6\n",
+        "p/studplaceholder.dat": (
+            "0 Stud Tube Solid Placeholder\n2 24 -4 0 -4 4 4 4\n"
+        ),
         "p/stud4f4s.dat": (
             "0 Stud Tube Open with 4 Fillets Standard\n2 24 -6 0 -6 6 4 6\n"
         ),
@@ -295,6 +298,16 @@ def _connection_parts(tmp_path: Path) -> Parts:
             f"1 16 0 0 0 {_SINGULAR_XZ} narrowsolid.dat\n"
             f"1 16 10 0 0 {_IDENTITY} narrowsolid.dat\n"
         ),
+        "parts/narrowplaceholder.dat": (
+            "0 Bounds-Rejected Placeholder Solid Tube Fixture\n"
+            "2 24 -5 0 -5 5 8 5\n"
+            f"1 16 0 4 0 {_ROTATE_X_180} studplaceholder.dat\n"
+        ),
+        "parts/nestedplaceholder.dat": (
+            "0 Assembly Expanding Placeholder Tube Evidence\n"
+            "2 24 -20 0 -20 20 8 20\n"
+            f"1 16 0 0 0 {_IDENTITY} narrowplaceholder.dat\n"
+        ),
         "parts/s/middlesolid.dat": (
             "0 Non-Catalog Intermediate with Deferred Solid Tube\n"
             f"1 16 0 0 0 {_IDENTITY} narrowsolid.dat\n"
@@ -417,7 +430,9 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "nestedpartialsolidlateralmeta.dat "
         "Assembly Containing a Partially Resolved Solid Tube\n"
         "parentlateralmeta.dat Parent Metadata Isolated from Child Tube Evidence\n"
-        "singularevidence.dat Assembly with Singular and Valid Tube Evidence\n"
+        "singularevidence.dat Assembly with Singular and Valid Deferred Tube Evidence\n"
+        "narrowplaceholder.dat Bounds-Rejected Placeholder Solid Tube Fixture\n"
+        "nestedplaceholder.dat Assembly Expanding Placeholder Tube Evidence\n"
         "nestedmiddlesolid.dat Assembly Containing a Non-Catalog Tube Intermediate\n"
         "partialphase.dat Partially Grid-Matched Solid Tube\n"
         "parentphase.dat Assembly Completing a Child Stud Grid\n"
@@ -441,6 +456,7 @@ def _connection_parts(tmp_path: Path) -> Parts:
         "stud.dat Stud\n"
         "stud3.dat Stud Tube Solid\n"
         "stud4.dat Stud Tube Open\n"
+        "studplaceholder.dat Stud Tube Solid Placeholder\n"
         "stud4f4s.dat Stud Tube Open with 4 Fillets Standard\n",
         encoding="utf-8",
     )
@@ -1544,6 +1560,27 @@ def test_degenerate_transform_cannot_poison_deferred_socket_evidence(
         (10.0, 8.0, -10.0),
         (10.0, 8.0, 10.0),
         (20.0, 8.0, 0.0),
+    }
+
+
+def test_deferred_socket_evidence_preserves_born_zero_confidence(
+    tmp_path: Path,
+) -> None:
+    parts = _connection_parts(tmp_path)
+
+    receptacles = _connections_with_kind(
+        parts=parts,
+        code="nestedplaceholder",
+        kind=ConnectionKind.STUD_RECEPTACLE,
+    )
+
+    assert len(receptacles) == 4
+    assert all(feature.confidence == 0 for feature in receptacles)
+    assert _connection_positions(receptacles) == {
+        (-10.0, 8.0, 0.0),
+        (0.0, 8.0, -10.0),
+        (0.0, 8.0, 10.0),
+        (10.0, 8.0, 0.0),
     }
 
 

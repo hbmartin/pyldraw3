@@ -126,7 +126,7 @@ class _ConnectionOverrideSource(Protocol):
     ) -> tuple[tuple[ConnectionFeature, ...], bool]: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _FoldResult:
     """Mutable accumulators produced while folding one part file."""
 
@@ -359,7 +359,7 @@ def _local_geometry(
         visiting=visiting | {key},
     )
     (
-        connections,
+        resolved_connections,
         deferred_socket_evidence,
         connection_report,
         metadata_result,
@@ -379,7 +379,7 @@ def _local_geometry(
         box=folded.box.box(),
         points=tuple(folded.points),
         studs=tuple(folded.studs),
-        connections=tuple(connections),
+        connections=tuple(resolved_connections),
         deferred_socket_evidence=deferred_socket_evidence,
         diagnostics=tuple(folded.diagnostics),
         connection_metadata=connection_report,
@@ -694,8 +694,8 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
                 diagnostics=tuple(invalid_records.values()),
             ),
         )
-    socket_evidence.extend(
-        _transformed_socket_evidence(
+    for evidence in local.deferred_socket_evidence:
+        transformed_evidence = _transformed_socket_evidence(
             parts=parts,
             evidence=evidence,
             piece=piece,
@@ -703,8 +703,8 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
         )
-        for evidence in local.deferred_socket_evidence
-    )
+        if transformed_evidence is not None:
+            socket_evidence.append(transformed_evidence)
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -786,8 +786,9 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
     parent_code: str,
     traversal_marker: str,
     diagnostics: list[Diagnostic],
-) -> StudSocketEvidence:
-    return StudSocketEvidence(
+) -> StudSocketEvidence | None:
+    transformed_by_identity: dict[int, ConnectionFeature | None] = {}
+    transformed = StudSocketEvidence(
         visible=(),
         deferred=_transformed_socket_features(
             parts=parts,
@@ -796,6 +797,7 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
             parent_code=parent_code,
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
+            transformed_by_identity=transformed_by_identity,
         ),
         interfaces=_transformed_socket_features(
             parts=parts,
@@ -804,8 +806,10 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
             parent_code=parent_code,
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
+            transformed_by_identity=transformed_by_identity,
         ),
     )
+    return transformed if transformed.deferred else None
 
 
 def _transformed_socket_features(  # noqa: PLR0913 - transform context is explicit
@@ -816,18 +820,21 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
     parent_code: str,
     traversal_marker: str,
     diagnostics: list[Diagnostic],
+    transformed_by_identity: dict[int, ConnectionFeature | None],
 ) -> tuple[ConnectionFeature, ...]:
     transformed: list[ConnectionFeature] = []
     for feature in features:
-        result = _transformed_child_connection(
-            parts=parts,
-            feature=feature,
-            piece=piece,
-            parent_code=parent_code,
-            traversal_marker=traversal_marker,
-            diagnostics=diagnostics,
-        )
-        if result is not None and result.confidence > 0:
+        identity = id(feature)
+        if identity not in transformed_by_identity:
+            transformed_by_identity[identity] = _transformed_child_connection(
+                parts=parts,
+                feature=feature,
+                piece=piece,
+                parent_code=parent_code,
+                traversal_marker=traversal_marker,
+                diagnostics=diagnostics,
+            )
+        if (result := transformed_by_identity[identity]) is not None:
             transformed.append(result)
     return tuple(transformed)
 
