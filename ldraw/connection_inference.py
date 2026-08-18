@@ -389,7 +389,11 @@ def _deduplicate_socket_emissions(
     selected: set[int] = set()
     for candidate in sorted(
         candidates,
-        key=lambda value: (-value.priority, value.index),
+        key=lambda value: (
+            -value.feature.confidence,
+            -value.priority,
+            value.index,
+        ),
     ):
         socket = candidate.feature
         if _socket_was_seen(
@@ -529,33 +533,31 @@ def _partition_socket_candidates(
         )
         phase_cache[orientation] = phases
     if phases:
-        visible = tuple(
-            candidate
-            for candidate in candidates
-            if _grid_phase(
-                position=candidate.position,
-                x_direction=x_direction,
-                z_direction=z_direction,
+        visible = []
+        deferred = []
+        for candidate in candidates:
+            accepted = (
+                _grid_phase(
+                    position=candidate.position,
+                    x_direction=x_direction,
+                    z_direction=z_direction,
+                )
+                in phases
             )
-            in phases
-        )
-    elif bounds_fallback:
-        visible = tuple(
-            candidate
-            for candidate in candidates
-            if _within_lateral_bounds(
+            (visible if accepted else deferred).append(candidate)
+        return tuple(visible), tuple(deferred)
+    if bounds_fallback:
+        visible = []
+        deferred = []
+        for candidate in candidates:
+            accepted = _within_lateral_bounds(
                 candidate.position,
                 axis=axis,
                 bounds=bounds,
             )
-        )
-    else:
-        visible = ()
-    visible_ids = {id(candidate) for candidate in visible}
-    deferred = tuple(
-        candidate for candidate in candidates if id(candidate) not in visible_ids
-    )
-    return visible, deferred
+            (visible if accepted else deferred).append(candidate)
+        return tuple(visible), tuple(deferred)
+    return (), candidates
 
 
 def _offset_socket(

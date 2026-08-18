@@ -126,6 +126,20 @@ class _ConnectionOverrideSource(Protocol):
     ) -> tuple[tuple[ConnectionFeature, ...], bool]: ...
 
 
+@dataclass(slots=True)
+class _FoldResult:
+    """Mutable accumulators produced while folding one part file."""
+
+    box: _BoxAccumulator
+    points: list[Vector]
+    studs: list[StudReference]
+    connections: list[ConnectionFeature]
+    socket_evidence: list[StudSocketEvidence]
+    diagnostics: list[Diagnostic]
+    metadata_result: ShadowConnectionResult
+    resolved_codes: set[str]
+
+
 @dataclass(frozen=True, slots=True)
 class _LocalGeometry:
     """Memoized per-file geometry, in the file's own coordinates."""
@@ -337,16 +351,7 @@ def _local_geometry(
         cache[key] = source
         return source
     part, objects = source
-    (
-        box,
-        points,
-        studs,
-        connections,
-        inherited_socket_evidence,
-        diagnostics,
-        inherited_metadata,
-        resolved_codes,
-    ) = _fold_objects(
+    folded = _fold_objects(
         parts,
         code=code,
         description=part.description,
@@ -354,7 +359,7 @@ def _local_geometry(
         visiting=visiting | {key},
     )
     (
-        connections,
+        resolved_connections,
         deferred_socket_evidence,
         connection_report,
         metadata_result,
@@ -363,23 +368,23 @@ def _local_geometry(
         code=code,
         description=part.description,
         path=part.path,
-        box=box,
-        connections=connections,
-        inherited_socket_evidence=inherited_socket_evidence,
-        diagnostics=diagnostics,
-        inherited_metadata=inherited_metadata,
+        box=folded.box,
+        connections=folded.connections,
+        inherited_socket_evidence=folded.socket_evidence,
+        diagnostics=folded.diagnostics,
+        inherited_metadata=folded.metadata_result,
     )
     local = _LocalGeometry(
         description=part.description,
-        box=box.box(),
-        points=tuple(points),
-        studs=tuple(studs),
-        connections=tuple(connections),
+        box=folded.box.box(),
+        points=tuple(folded.points),
+        studs=tuple(folded.studs),
+        connections=tuple(resolved_connections),
         deferred_socket_evidence=deferred_socket_evidence,
-        diagnostics=tuple(diagnostics),
+        diagnostics=tuple(folded.diagnostics),
         connection_metadata=connection_report,
         metadata_result=metadata_result,
-        resolved_codes=frozenset((*resolved_codes, key)),
+        resolved_codes=frozenset((*folded.resolved_codes, key)),
     )
     cache[key] = local
     return local
@@ -461,16 +466,7 @@ def _fold_objects(
     description: str,
     objects: list[object],
     visiting: frozenset[str],
-) -> tuple[
-    _BoxAccumulator,
-    list[Vector],
-    list[StudReference],
-    list[ConnectionFeature],
-    list[StudSocketEvidence],
-    list[Diagnostic],
-    ShadowConnectionResult,
-    set[str],
-]:
+) -> _FoldResult:
     box = _BoxAccumulator()
     points: list[Vector] = []
     studs: list[StudReference] = []
@@ -510,15 +506,15 @@ def _fold_objects(
                     resolved_codes=resolved_codes,
                 )
                 piece_instance += 1
-    return (
-        box,
-        points,
-        studs,
-        connections,
-        socket_evidence,
-        diagnostics,
-        _metadata_statistics(metadata_results),
-        resolved_codes,
+    return _FoldResult(
+        box=box,
+        points=points,
+        studs=studs,
+        connections=connections,
+        socket_evidence=socket_evidence,
+        diagnostics=diagnostics,
+        metadata_result=_metadata_statistics(metadata_results),
+        resolved_codes=resolved_codes,
     )
 
 
@@ -698,8 +694,8 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
                 diagnostics=tuple(invalid_records.values()),
             ),
         )
-    socket_evidence.extend(
-        _transformed_socket_evidence(
+    for evidence in local.deferred_socket_evidence:
+        transformed_evidence = _transformed_socket_evidence(
             parts=parts,
             evidence=evidence,
             piece=piece,
@@ -707,8 +703,8 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
         )
-        for evidence in local.deferred_socket_evidence
-    )
+        if transformed_evidence is not None:
+            socket_evidence.append(transformed_evidence)
     if stem.startswith(_STUD_PREFIX):
         studs.append(
             StudReference(
@@ -790,8 +786,9 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
     parent_code: str,
     traversal_marker: str,
     diagnostics: list[Diagnostic],
-) -> StudSocketEvidence:
-    return StudSocketEvidence(
+) -> StudSocketEvidence | None:
+    transformed_by_identity: dict[int, ConnectionFeature | None] = {}
+    transformed = StudSocketEvidence(
         visible=(),
         deferred=_transformed_socket_features(
             parts=parts,
@@ -800,6 +797,7 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
             parent_code=parent_code,
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
+            transformed_by_identity=transformed_by_identity,
         ),
         interfaces=_transformed_socket_features(
             parts=parts,
@@ -808,8 +806,10 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
             parent_code=parent_code,
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
+            transformed_by_identity=transformed_by_identity,
         ),
     )
+    return transformed if transformed.deferred else None
 
 
 def _transformed_socket_features(  # noqa: PLR0913 - transform context is explicit
@@ -820,18 +820,21 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
     parent_code: str,
     traversal_marker: str,
     diagnostics: list[Diagnostic],
+    transformed_by_identity: dict[int, ConnectionFeature | None],
 ) -> tuple[ConnectionFeature, ...]:
     transformed: list[ConnectionFeature] = []
     for feature in features:
-        result = _transformed_child_connection(
-            parts=parts,
-            feature=feature,
-            piece=piece,
-            parent_code=parent_code,
-            traversal_marker=traversal_marker,
-            diagnostics=diagnostics,
-        )
-        if result is not None:
+        identity = id(feature)
+        if identity not in transformed_by_identity:
+            transformed_by_identity[identity] = _transformed_child_connection(
+                parts=parts,
+                feature=feature,
+                piece=piece,
+                parent_code=parent_code,
+                traversal_marker=traversal_marker,
+                diagnostics=diagnostics,
+            )
+        if (result := transformed_by_identity[identity]) is not None:
             transformed.append(result)
     return tuple(transformed)
 
