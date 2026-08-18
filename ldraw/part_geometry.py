@@ -65,6 +65,8 @@ _METADATA_SOURCES: frozenset[ConnectionSource] = frozenset(
     },
 )
 
+type _TransformMemo = dict[int, tuple[ConnectionFeature, ConnectionFeature | None]]
+
 __all__ = [
     "BoundingBox",
     "PartGeometry",
@@ -126,9 +128,13 @@ class _ConnectionOverrideSource(Protocol):
     ) -> tuple[tuple[ConnectionFeature, ...], bool]: ...
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _FoldResult:
-    """Mutable accumulators produced while folding one part file."""
+    """Accumulators produced while folding one part file.
+
+    The container is frozen so the accumulators stay the same objects the
+    fold mutated in place; only their contents change.
+    """
 
     box: _BoxAccumulator
     points: list[Vector]
@@ -739,12 +745,7 @@ def _transformed_child_connection(  # noqa: PLR0913 - transform context is expli
     if (
         feature.confidence > 0
         and transformed.confidence <= 0
-        and feature.source
-        in {
-            ConnectionSource.LDCAD_INLINE,
-            ConnectionSource.LDCAD_SHADOW,
-            ConnectionSource.STUDIO,
-        }
+        and feature.source in _METADATA_SOURCES
     ):
         provenance = feature.connection_provenance
         diagnostics.append(
@@ -787,18 +788,24 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
     traversal_marker: str,
     diagnostics: list[Diagnostic],
 ) -> StudSocketEvidence | None:
-    transformed_by_identity: dict[int, ConnectionFeature | None] = {}
-    transformed = StudSocketEvidence(
+    memo: _TransformMemo = {}
+    deferred = _transformed_socket_features(
+        parts=parts,
+        features=evidence.deferred,
+        piece=piece,
+        parent_code=parent_code,
+        traversal_marker=traversal_marker,
+        diagnostics=diagnostics,
+        memo=memo,
+    )
+    if not deferred:
+        # Nothing survives for an enclosing part to resolve, so the interfaces
+        # are never read; transforming them would only emit diagnostics about
+        # features this evidence is about to discard.
+        return None
+    return StudSocketEvidence(
         visible=(),
-        deferred=_transformed_socket_features(
-            parts=parts,
-            features=evidence.deferred,
-            piece=piece,
-            parent_code=parent_code,
-            traversal_marker=traversal_marker,
-            diagnostics=diagnostics,
-            transformed_by_identity=transformed_by_identity,
-        ),
+        deferred=deferred,
         interfaces=_transformed_socket_features(
             parts=parts,
             features=evidence.interfaces,
@@ -806,10 +813,9 @@ def _transformed_socket_evidence(  # noqa: PLR0913 - transform context is explic
             parent_code=parent_code,
             traversal_marker=traversal_marker,
             diagnostics=diagnostics,
-            transformed_by_identity=transformed_by_identity,
+            memo=memo,
         ),
     )
-    return transformed if transformed.deferred else None
 
 
 def _transformed_socket_features(  # noqa: PLR0913 - transform context is explicit
@@ -820,22 +826,36 @@ def _transformed_socket_features(  # noqa: PLR0913 - transform context is explic
     parent_code: str,
     traversal_marker: str,
     diagnostics: list[Diagnostic],
-    transformed_by_identity: dict[int, ConnectionFeature | None],
+    memo: _TransformMemo,
 ) -> tuple[ConnectionFeature, ...]:
+    """Transform shared socket evidence once per distinct source feature.
+
+    A feature the placement degrades to zero confidence is dropped: its
+    position and frame collapsed with it, so keeping it would emit a socket at
+    a fabricated location. Evidence born at zero confidence — a placeholder
+    primitive — carries an intact frame and is preserved.
+    """
     transformed: list[ConnectionFeature] = []
     for feature in features:
         identity = id(feature)
-        if identity not in transformed_by_identity:
-            transformed_by_identity[identity] = _transformed_child_connection(
-                parts=parts,
-                feature=feature,
-                piece=piece,
-                parent_code=parent_code,
-                traversal_marker=traversal_marker,
-                diagnostics=diagnostics,
+        if identity not in memo:
+            # The source feature is memoized alongside its result so the key
+            # cannot be recycled for a different object mid-traversal.
+            memo[identity] = (
+                feature,
+                _transformed_child_connection(
+                    parts=parts,
+                    feature=feature,
+                    piece=piece,
+                    parent_code=parent_code,
+                    traversal_marker=traversal_marker,
+                    diagnostics=diagnostics,
+                ),
             )
-        if (result := transformed_by_identity[identity]) is not None:
-            transformed.append(result)
+        result = memo[identity][1]
+        if result is None or (feature.confidence > 0 and result.confidence <= 0):
+            continue
+        transformed.append(result)
     return tuple(transformed)
 
 
