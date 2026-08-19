@@ -25,10 +25,10 @@ most basic assembly in the format could not be confirmed:
 from ldraw import inspect_model, load_model, prepare_catalog
 
 parts = prepare_catalog().parts
-model = load_model("stack.ldr").model   # two Brick 2 x 4 stacked squarely
+model = load_model("stack.ldr").model  # two Brick 2 x 4 stacked squarely
 report = inspect_model(model, parts=parts)
 
-len(report.stud_contacts())                  # 1.6.0: 0    1.7.0: 8
+len(report.stud_contacts())  # 1.6.0: 0    1.7.0: 8
 len(report.connection_graphs().confirmed.edges)  # 1.6.0: 0    1.7.0: 8
 ```
 
