@@ -24,6 +24,7 @@ nav = [
     { "Upgrading to 1.4" = "upgrading-1.4.md" },
     { "Upgrading to 1.5" = "upgrading-1.5.md" },
     { "Upgrading to 1.6" = "upgrading-1.6.md" },
+    { "Upgrading to 1.7" = "upgrading-1.7.md" },
     { "GitHub" = "https://github.com/hbmartin/pyldraw3" },
     { "Contributing" = "https://github.com/hbmartin/pyldraw3/blob/main/CONTRIBUTING.md" },
 ]
