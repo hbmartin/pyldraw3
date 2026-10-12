@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ldraw.analysis import ModelAnalysis
     from ldraw.bom import BomRow
     from ldraw.colour import Colour
+    from ldraw.document_io import ExtractionResult
     from ldraw.geometry import Matrix
     from ldraw.instructions import InstructionDocument, InstructionStep, RotationMode
     from ldraw.parts import Parts
@@ -68,6 +69,7 @@ class OccurrencePathItem:
     source_line: int | None
     local_step: int | None
     effective_step: int | None
+    piece_index: int = 0
 
     @property
     def step(self) -> int | None:
@@ -123,7 +125,13 @@ class ModelLoadResult:
             diagnostic.severity is Severity.ERROR for diagnostic in self.diagnostics
         )
 
-    def analyze(self, parts: Parts | None = None) -> ModelAnalysis | None:
+    def analyze(
+        self,
+        parts: Parts | None = None,
+        *,
+        occurrence_budget: int | None = None,
+        feature_pair_budget: int | None = None,
+    ) -> ModelAnalysis | None:
         """Analyze the loaded model without discarding its diagnostics."""
         if self.model is None:
             return None
@@ -133,6 +141,8 @@ class ModelLoadResult:
             self.model,
             parts=parts,
             diagnostics=self.diagnostics,
+            occurrence_budget=occurrence_budget,
+            feature_pair_budget=feature_pair_budget,
         )
 
 
@@ -551,8 +561,7 @@ class Model:
         """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
-        occurrences = _iter_occurrences_skip_cycles(self, include_steps=False)
-        return bill_of_materials(parts=parts, occurrences=occurrences)
+        return bill_of_materials(self, parts=parts)
 
     def find_pieces(
         self,
@@ -574,9 +583,12 @@ class Model:
             and (colour is None or piece.colour == colour)
         ]
 
-    def to_ldraw(self) -> str:
+    def to_ldraw(self, *, mpd: bool | None = None) -> str:
         """Serialize the model (and any submodels) to LDraw text."""
-        if not self.submodels:
+        if mpd is False and self.submodels:
+            message = "Plain LDR output cannot contain multiple sections"
+            raise ValueError(message)
+        if mpd is False or (mpd is None and not self.submodels):
             return "\n".join(_serialized(obj) for obj in self.objects)
         sections: list[str] = []
         for model in (self, *self.submodels.values()):
@@ -596,14 +608,24 @@ class Model:
     def __str__(self) -> str:
         return self.to_ldraw()
 
-    def save(self, path: Path | str) -> None:
-        """Write the model to a file, with a trailing newline."""
-        text = self.to_ldraw()
-        Path(path).write_text(
-            f"{text}\n" if text else "",
-            encoding="utf-8",
-            newline="\n",
-        )
+    def save(
+        self,
+        path: Path | str,
+        *,
+        newline: str = "\n",
+        mpd: bool | None = None,
+        atomic: bool = True,
+    ) -> None:
+        """Save semantic records, defaulting to LF and atomic replacement."""
+        from ldraw.document_io import save_document  # noqa: PLC0415
+
+        save_document(self, path=Path(path), newline=newline, mpd=mpd, atomic=atomic)
+
+    def extract(self, section: str, *, namespace: str = "") -> ExtractionResult:
+        """Return a dependency-closed independent model and attribution manifest."""
+        from ldraw.document_io import extract_document  # noqa: PLC0415
+
+        return extract_document(self, section=section, namespace=namespace)
 
 
 def _serialized(obj: ParsedObject) -> str:
@@ -699,7 +721,9 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     reference is reported to the callback and skipped instead.
     """
     visiting = visiting | {normalize_ref(model.name)}
-    for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
+    for piece_index, (piece, source_step) in enumerate(
+        _iter_piece_steps(model, include_steps=include_steps)
+    ):
         piece_position, piece_matrix = piece._transformed()  # noqa: SLF001
         world_position = position + matrix * piece_position
         world_matrix = matrix * piece_matrix
@@ -710,6 +734,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
             OccurrencePathItem(
                 model=model,
                 piece=piece,
+                piece_index=piece_index,
                 source_line=model.source_line_for(piece),
                 local_step=source_step,
                 effective_step=occurrence_step,

@@ -21,6 +21,11 @@ def register(subparsers: _SubParsersAction) -> None:
         help="Path to the file to validate.",
     )
     validate_parser.add_argument(
+        "--profile", choices=("format", "assembly"), default="format"
+    )
+    validate_parser.add_argument("--matrix-tolerance", type=float, default=1e-6)
+    validate_parser.add_argument("--connectivity", action="store_true")
+    validate_parser.add_argument(
         "--strict",
         action="store_true",
         help="Treat warnings as errors.",
@@ -33,4 +38,10 @@ def run(args: Namespace) -> int:
         validate_command,
     )
 
-    return validate_command(file=args.file, strict=args.strict)
+    return validate_command(
+        file=args.file,
+        strict=args.strict,
+        profile=args.profile,
+        matrix_tolerance=args.matrix_tolerance,
+        connectivity=args.connectivity,
+    )

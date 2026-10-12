@@ -1455,10 +1455,11 @@ def test_derived_stud_socket_snap_transform_preserves_facing_axes(
 
     transform = snap_transform(socket, stud)
 
-    assert socket.centered
+    assert not socket.centered
     assert transform.matrix.flatten() == pytest.approx(Identity().flatten())
     assert transform.position == Vector(-30, -8, 0)
     assert connection_residual(stud, socket).axial_gap == pytest.approx(4)
+    assert connection_residual(stud, socket).engagement == pytest.approx(0)
 
 
 def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
@@ -1476,7 +1477,7 @@ def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
         (-10.0, 24.0, 0.0),
         (10.0, 24.0, 0.0),
     }
-    assert all(feature.centered for feature in protruding)
+    assert all(not feature.centered for feature in protruding)
 
     long_name = _connections_with_kind(
         parts=parts,
@@ -1486,7 +1487,7 @@ def test_derive_stud_sockets_use_tube_span_and_preserve_header_name(
     assert len(long_name) == 1
     assert long_name[0].name == "Stud Tube Open with 4 Fillets Standard"
     assert long_name[0].position == Vector(0.0, 8.0, 0.0)
-    assert long_name[0].centered
+    assert not long_name[0].centered
     assert "derived:stud-socket" in long_name[0].provenance
 
 

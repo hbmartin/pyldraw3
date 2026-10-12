@@ -35,6 +35,11 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_SEARCH_LIMIT,
         help=f"Maximum matches to print (default: {DEFAULT_SEARCH_LIMIT}).",
     )
+    search_parser.add_argument("--offset", type=int, default=0)
+    search_parser.add_argument("--format", choices=("table", "json"), default="table")
+    search_parser.add_argument("--output", type=Path)
+    search_parser.add_argument("--category")
+    search_parser.add_argument("--physical-only", action="store_true")
     info_parser = parts_subparsers.add_parser(
         "info",
         help="Show details for one part code.",
@@ -67,6 +72,13 @@ def register(subparsers: _SubParsersAction) -> None:
         metavar="PATH",
         help="Add a Studio connectivity JSON source; repeat as needed.",
     )
+
+    measurements = parts_subparsers.add_parser(
+        "measurements", help="Show supported physical measurements."
+    )
+    measurements.add_argument("code")
+    measurements.add_argument("--format", choices=("table", "json"), default="table")
+    measurements.add_argument("--output", type=Path)
 
 
 def run(args: Namespace) -> int:

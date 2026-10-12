@@ -1,5 +1,37 @@
 # Performance measurements
 
+The adoption roadmap was measured against commit `08a5cc9`, using the same
+verified 2018-02 library and synthetic workload described below. Three paired
+baseline/current runs each timed seven rounds; this table reports the median
+of the three per-run means. Library loading and document construction remained
+outside the timed operations.
+
+| Operation | Baseline | Adoption implementation | Change |
+| --- | ---: | ---: | ---: |
+| Geometry, cold | 32.49 ms | 33.49 ms | +3.1% |
+| Geometry, warm | 13.21 µs | 13.82 µs | +4.6% |
+| Inspection, cold | 219.67 ms | 131.69 ms | −40.1% |
+| Inspection, warm | 187.45 ms | 94.59 ms | −49.5% |
+| Analysis, cold | 221.30 ms | 135.39 ms | −38.8% |
+| Analysis, warm | 187.47 ms | 97.41 ms | −48.0% |
+
+The main additional gain comes from reusing validated part-local connection
+frames during rigid occurrence placement. Reflections, scale, shear, and invalid
+frames continue through the general transform path. Document overlays reuse
+library geometry caches when they cannot shadow part definitions. The full
+18-operation benchmark suite also checks matrix operations, catalog loading,
+search, and visual registration.
+
+Single-part loading improved 21.1%, and multiple-part loading improved 6.9%.
+All measured operations met the 5% regression limit. The roughly 120 ns catalog
+access benchmark required longer timing blocks: single-operation rounds showed
+a noisy 10.1% mean difference while their medians differed by less than 1%.
+Three paired runs with 100,000 operations per round measured a 0.4% improvement.
+Reproduce that resolution check with
+`uv run pytest benchmarks/test_parts_loading.py::test_parts_catalog_access --benchmark-only --benchmark-min-time=0.01 --benchmark-max-time=1 --benchmark-min-rounds=7`.
+
+The earlier geometry and startup optimization measurements follow for context.
+
 Measured locally on macOS ARM64, CPython 3.12, using the pinned 2018-02
 library and seven rounds per operation. The deterministic synthetic model
 contains 360 leaf pieces, repeated submodels, twelve common part types, and

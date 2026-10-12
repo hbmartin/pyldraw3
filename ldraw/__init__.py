@@ -28,6 +28,7 @@ from ldraw.imports import LibraryImporter
 
 if TYPE_CHECKING:
     from ldraw.analysis import ModelAnalysis, analyze_model
+    from ldraw.api import ApiEntry, ApiInventory, api_inventory
     from ldraw.bom import (
         BomRow,
         InventoryComparison,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
         compare_inventory,
         read_inventory,
     )
+    from ldraw.catalog_search import CatalogSearchResult
     from ldraw.colour import Colour
     from ldraw.connection_metadata import (
         ConnectionMetadataCoverage,
@@ -70,7 +72,10 @@ if TYPE_CHECKING:
         connections_compatible,
         snap_transform,
     )
+    from ldraw.coverage import Coverage
+    from ldraw.diagnosis import DoctorReport, doctor
     from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
+    from ldraw.document_io import ExtractionAttribution, ExtractionResult
     from ldraw.downloads import download
     from ldraw.figure import Person
     from ldraw.generation import generate
@@ -91,6 +96,7 @@ if TYPE_CHECKING:
         bounds_gap,
         inspect_model,
     )
+    from ldraw.inspection_limits import ContactReport, SnapReport
     from ldraw.instructions import (
         CameraState,
         InstructionBuilder,
@@ -110,6 +116,7 @@ if TYPE_CHECKING:
         inspect_library,
         plan_download,
     )
+    from ldraw.measurements import PartMeasurements, part_measurements
     from ldraw.model import (
         Model,
         ModelLoadResult,
@@ -144,6 +151,7 @@ if TYPE_CHECKING:
         Parts,
         PartsCatalog,
     )
+    from ldraw.physical_bom import BomReport, bom_report
     from ldraw.pieces import Group, Piece
     from ldraw.progress import ProgressEvent, ProgressStage, ProgressUnit
     from ldraw.rendering import (
@@ -154,6 +162,7 @@ if TYPE_CHECKING:
         render_capabilities,
         render_preview,
     )
+    from ldraw.resolution import RawGeometry
     from ldraw.session import (
         CatalogBuildOutcome,
         CatalogBuildReport,
@@ -171,7 +180,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ALL_CATALOG_SEARCH_FIELDS",
     "AnnularProfile",
+    "ApiEntry",
+    "ApiInventory",
     "BfcCertification",
+    "BomReport",
     "BomRow",
     "BoundingBox",
     "BoundsGap",
@@ -182,6 +194,7 @@ __all__ = [
     "CatalogEntry",
     "CatalogPreparationResult",
     "CatalogSearchField",
+    "CatalogSearchResult",
     "Colour",
     "ConnectionContact",
     "ConnectionFeature",
@@ -197,12 +210,17 @@ __all__ = [
     "ConnectionRole",
     "ConnectionSource",
     "ConnectionStatus",
+    "ContactReport",
+    "Coverage",
     "CylindricalCaps",
     "CylindricalProfile",
     "CylindricalSection",
     "Diagnostic",
     "DiagnosticCode",
+    "DoctorReport",
     "DownloadPlan",
+    "ExtractionAttribution",
+    "ExtractionResult",
     "FingerProfile",
     "GenericBounds",
     "GenericBoundsKind",
@@ -246,6 +264,7 @@ __all__ = [
     "PartGeometry",
     "PartHistoryEntry",
     "PartInspection",
+    "PartMeasurements",
     "PartMetadata",
     "PartReference",
     "PartReferenceKind",
@@ -258,6 +277,7 @@ __all__ = [
     "ProgressEvent",
     "ProgressStage",
     "ProgressUnit",
+    "RawGeometry",
     "RenderBackend",
     "RenderCapability",
     "RenderResult",
@@ -269,6 +289,7 @@ __all__ = [
     "SkippedGeometry",
     "SkippedOccurrenceGeometry",
     "SnapCandidate",
+    "SnapReport",
     "SnapTransform",
     "StudContact",
     "StudReference",
@@ -280,12 +301,15 @@ __all__ = [
     "ZAxis",
     "analyze_model",
     "angular_alignment_within",
+    "api_inventory",
     "bill_of_materials",
+    "bom_report",
     "bounds_gap",
     "compare_inventory",
     "connection_residual",
     "connections_compatible",
     "discover_libraries",
+    "doctor",
     "download",
     "ensure_library",
     "generate",
@@ -297,6 +321,7 @@ __all__ = [
     "model_bounds",
     "parse_model",
     "parse_model_result",
+    "part_measurements",
     "plan_download",
     "prepare_catalog",
     "read_inventory",
@@ -305,6 +330,7 @@ __all__ = [
     "render_preview",
     "snap_transform",
 ]
+
 _EXPORTS = {
     "ModelAnalysis": ("ldraw.analysis", "ModelAnalysis"),
     "analyze_model": ("ldraw.analysis", "analyze_model"),
@@ -448,6 +474,33 @@ _EXPORTS = {
     "compare_inventory": ("ldraw.bom", "compare_inventory"),
     "read_inventory": ("ldraw.bom", "read_inventory"),
 }
+
+_EXPORTS.update(
+    {
+        "api_inventory": ("ldraw.api", "api_inventory"),
+        "ApiEntry": ("ldraw.api", "ApiEntry"),
+        "ApiInventory": ("ldraw.api", "ApiInventory"),
+        "CatalogSearchResult": ("ldraw.catalog_search", "CatalogSearchResult"),
+        "doctor": ("ldraw.diagnosis", "doctor"),
+        "DoctorReport": ("ldraw.diagnosis", "DoctorReport"),
+    }
+)
+
+
+_EXPORTS.update(
+    {
+        "BomReport": ("ldraw.physical_bom", "BomReport"),
+        "bom_report": ("ldraw.physical_bom", "bom_report"),
+        "Coverage": ("ldraw.coverage", "Coverage"),
+        "ExtractionResult": ("ldraw.document_io", "ExtractionResult"),
+        "ExtractionAttribution": ("ldraw.document_io", "ExtractionAttribution"),
+        "SnapReport": ("ldraw.inspection_limits", "SnapReport"),
+        "ContactReport": ("ldraw.inspection_limits", "ContactReport"),
+        "RawGeometry": ("ldraw.resolution", "RawGeometry"),
+        "PartMeasurements": ("ldraw.measurements", "PartMeasurements"),
+        "part_measurements": ("ldraw.measurements", "part_measurements"),
+    }
+)
 
 # Cache the lightweight legacy module before exporting the generation function.
 # Later imports of ldraw.generate reuse sys.modules and cannot shadow the export.

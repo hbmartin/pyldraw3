@@ -16,6 +16,10 @@ def register(subparsers: _SubParsersAction) -> None:
         "inspect",
         help="Inspect exact world bounds, provenance, contacts, and gaps.",
     )
+    model_inspect_parser.add_argument("--occurrence-budget", type=int)
+    model_inspect_parser.add_argument("--feature-pair-budget", type=int)
+    model_inspect_parser.add_argument("--strict", action="store_true")
+    model_inspect_parser.add_argument("--geometry-only", action="store_true")
     model_inspect_parser.add_argument(
         "file",
         type=Path,
@@ -86,4 +90,8 @@ def run(args: Namespace) -> int:
         out=args.output,
         connection_shadows=tuple(args.ldcad_shadow),
         studio_metadata=tuple(args.studio_metadata),
+        occurrence_budget=args.occurrence_budget,
+        feature_pair_budget=args.feature_pair_budget,
+        strict=args.strict,
+        geometry_only=args.geometry_only,
     )

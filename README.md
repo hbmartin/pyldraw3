@@ -34,7 +34,23 @@ model.add(
 model.save(Path("scene.ldr"))
 ```
 
-For catalog searches, geometry, and connections, download a library and load it through a session:
+For catalog searches, geometry, and connections, select an installed library:
+
+```python
+from ldraw import LDrawSession
+
+parts = LDrawSession(library="/path/to/ldraw").load()
+print(parts.search("3001").items[0].description)
+```
+
+Find APIs without a library, and diagnose local installations without changing them:
+
+```bash
+uv run ldraw api Model.save --format json
+uv run ldraw doctor --format json
+```
+
+If you need a library, explicitly download one and load it through a session:
 
 ```bash
 uv run ldraw download --yes
@@ -53,6 +69,8 @@ Generated `ldraw.library.*` names remain available after `uv run ldraw generate 
 
 ## Workflows
 
+- [Adoption workflows](https://hbmartin.github.io/pyldraw3/adoption/): equivalent Python and CLI examples, requirements, and qualified reports.
+- [Adoption upgrade notes](https://hbmartin.github.io/pyldraw3/upgrading-adoption/): corrected physical counts, coverage migration, connection conventions, and compatibility.
 - [Guide](https://hbmartin.github.io/pyldraw3/guide/): construction, transformations, submodels, geometry, and session setup.
 - [CLI reference](https://hbmartin.github.io/pyldraw3/cli/): validation, BOM and inventory comparison, inspection, previews, and instruction exports.
 - [API reference](https://hbmartin.github.io/pyldraw3/api/): public types and functions.

@@ -322,6 +322,7 @@ def test_parts_commands_without_library_return_one(
     config_load_mock: MagicMock,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    no_library_discovery: None,
 ) -> None:
     config_load_mock.return_value = Config(
         ldraw_library_path=str(tmp_path),
@@ -432,6 +433,7 @@ def test_validate_without_library_is_syntax_only(
     config_load_mock: MagicMock,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    no_library_discovery: None,
 ) -> None:
     config_load_mock.return_value = Config(
         ldraw_library_path=str(tmp_path),
@@ -645,6 +647,7 @@ def test_bom_without_library_notes_on_stderr(
     config_load_mock: MagicMock,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    no_library_discovery: None,
 ) -> None:
     config_load_mock.return_value = Config(
         ldraw_library_path=str(tmp_path),
@@ -1293,7 +1296,8 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert payload["occurrences"][0]["connections"]
     assert payload["occurrences"][0]["connection_metadata"]["coverage"] == "partial"
     assert "connection_contacts" in payload
-    assert set(payload["connection_graphs"]) == {"confirmed", "nodes", "optimistic"}
+    assert {"confirmed", "nodes", "optimistic"} <= set(payload["connection_graphs"])
+    assert "coverage" in payload["connection_graphs"]
     assert payload["connection_graphs"]["nodes"] == [0, 1]
     assert len(payload["stud_contacts"]) == 8
     assert {
@@ -1434,10 +1438,10 @@ def test_render_defaults_to_all_standard_views(
     assert all(call.kwargs["size"] == (800, 600) for call in render_mock.call_args_list)
     assert all(call.kwargs["backend"] is None for call in render_mock.call_args_list)
     assert all(call.kwargs["refresh"] is False for call in render_mock.call_args_list)
-    for view in RenderView:
+    for view in (RenderView.FRONT, RenderView.ISOMETRIC, RenderView.TOP):
         output = tmp_path / f"model.{view.value}.png"
         assert output.read_bytes() == f"{view.value}:False".encode()
-    assert capsys.readouterr().out.count("RENDERED:") == len(RenderView)
+    assert capsys.readouterr().out.count("RENDERED:") == 3
 
 
 def test_render_promotes_and_reports_cached_results(
@@ -1648,3 +1652,11 @@ def test_config_load_error_exits_one(
     assert main(["config"]) == 1
 
     assert "Could not load config /c.yml: boom" in capsys.readouterr().err
+
+
+@pytest.fixture
+def no_library_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make missing-library checks independent of the developer's installations."""
+    monkeypatch.setattr("ldraw.config.get_cache_dir", lambda: str(tmp_path / "cache"))
+    monkeypatch.setattr("ldraw.library_access.get_config", lambda: tmp_path / "config")
+    monkeypatch.setattr("ldraw.library_access.discover_libraries", lambda: ())

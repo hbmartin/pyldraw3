@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import BinaryIO
 
+    from ldraw.parts import Parts
+
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.dirs import get_cache_dir
 from ldraw.operations import CancellationToken, OperationCancelled, check_cancelled
@@ -32,6 +34,7 @@ from ldraw.progress import (
     ProgressUnit,
     emit_progress,
 )
+from ldraw.render_document import camera_options, render_document
 
 _RENDER_TIMEOUT_SECONDS = 240
 _RENDER_POLL_SECONDS = 0.05
@@ -64,12 +67,20 @@ class RenderView(StrEnum):
     FRONT = "front"
     ISOMETRIC = "isometric"
     TOP = "top"
+    REAR = "rear"
+    LEFT = "left"
+    RIGHT = "right"
+    BOTTOM = "bottom"
 
 
 _VIEW_ANGLES: dict[RenderView, tuple[int, int]] = {
     RenderView.FRONT: (0, 0),
     RenderView.ISOMETRIC: (30, 45),
     RenderView.TOP: (89, 0),
+    RenderView.REAR: (0, 180),
+    RenderView.LEFT: (0, -90),
+    RenderView.RIGHT: (0, 90),
+    RenderView.BOTTOM: (-89, 0),
 }
 
 
@@ -112,7 +123,79 @@ def render_capabilities() -> tuple[RenderCapability, ...]:
     )
 
 
-def render_preview(  # noqa: PLR0913 - public render options are explicit
+def render_preview(  # noqa: PLR0913 - public render controls
+    source: str | Path,
+    *,
+    view: RenderView = RenderView.ISOMETRIC,
+    size: tuple[int, int] = (800, 600),
+    backend: RenderBackend | None = None,
+    output: str | Path | None = None,
+    cache_path: str | Path | None = None,
+    refresh: bool = False,
+    on_progress: ProgressCallback | None = None,
+    cancellation: CancellationToken | None = None,
+    section: str | None = None,
+    parts: Parts | None = None,
+    library: str | Path | None = None,
+) -> RenderResult:
+    """Render a section or whole document, invalidating cache on dependency edits."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from ldraw.errors import PartError  # noqa: PLC0415
+    from ldraw.render_document import prepare_render_document  # noqa: PLC0415
+
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_file():
+        return _render_preview(
+            source,
+            view=view,
+            size=size,
+            backend=backend,
+            output=output,
+            cache_path=cache_path,
+            refresh=refresh,
+            on_progress=on_progress,
+            cancellation=cancellation,
+        )
+    if min(size) <= 0:
+        message = "render size must contain positive dimensions"
+        raise ValueError(message)
+    try:
+        with prepare_render_document(
+            source_path, section=section, parts=parts, library=library
+        ) as context:
+            token = render_document.set(context)
+            try:
+                result = _render_preview(
+                    context.source,
+                    view=view,
+                    size=size,
+                    backend=backend,
+                    output=output,
+                    cache_path=cache_path,
+                    refresh=refresh,
+                    on_progress=on_progress,
+                    cancellation=cancellation,
+                )
+                return (
+                    result
+                    if result.source == source_path
+                    else replace(result, source=source_path)
+                )
+            finally:
+                render_document.reset(token)
+    except (OSError, ValueError, PartError) as error:
+        return _render_error_result(
+            source=source_path,
+            view=view,
+            size=size,
+            backend=backend,
+            message=f"Could not prepare render document: {error}",
+            cause=error,
+        )
+
+
+def _render_preview(  # noqa: PLR0913 - public render options are explicit
     source: str | Path,
     *,
     view: RenderView = RenderView.ISOMETRIC,
@@ -128,9 +211,8 @@ def render_preview(  # noqa: PLR0913 - public render options are explicit
 
     The cache key covers the top-level source bytes, the resolved renderer
     executable path, and the full render command (backend, view angles, size,
-    and renderer options).  Files referenced by the source (submodels and
-    sidecar part files) and the parts-library state are NOT part of the key,
-    so edits to them do not invalidate cached previews; pass ``refresh=True``
+    and renderer options). Referenced geometry, local sidecars, and the selected
+    library identity are included in the cache key. Pass ``refresh=True``
     to skip the cache read and force a re-render (the fresh image is still
     written back to the cache). The managed default cache evicts PNGs older
     than 90 days and caps retained data at 512 MiB, checking at most once
@@ -265,7 +347,8 @@ def _render_paths(  # noqa: PLR0913 - cache identity inputs are explicit
         ),
     )
     digest = hashlib.sha256()
-    digest.update(source.read_bytes())
+    context = render_document.get()
+    digest.update(context.identity if context is not None else source.read_bytes())
     digest.update(f"\0{identity}".encode())
     cached_path = cache_root / f"{digest.hexdigest()}.png"
     requested_output = Path(output).expanduser() if output is not None else cached_path
@@ -680,6 +763,12 @@ def _render_command(  # noqa: PLR0913 - renderer command fields are explicit
                 f"-DefaultLatLong={latitude},{longitude}",
                 "-AutoCrop=1",
                 "-SaveAlpha=0",
+                *camera_options(
+                    backend=backend.value,
+                    latitude=latitude,
+                    longitude=longitude,
+                    size=size,
+                ),
             ]
         case RenderBackend.LEOCAD:
             command = [
@@ -695,6 +784,13 @@ def _render_command(  # noqa: PLR0913 - renderer command fields are explicit
                 str(latitude),
                 str(longitude),
             ]
+            options = camera_options(
+                backend=backend.value, latitude=latitude, longitude=longitude, size=size
+            )
+            if options and "--camera-position-ldraw" in options:
+                index = command.index("--camera-angles")
+                del command[index : index + 3]
+            command.extend(options)
             if platform.system() == "Linux" and (xvfb := shutil.which("xvfb-run")):
                 return [xvfb, "-a", "-s", "-screen 0 1600x1200x24", *command]
             return command

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ldraw.inspection import ModelInspection
     from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
+    from ldraw.resolution import RawGeometry
 
 from ldraw.units import LDU_TO_MM
 
@@ -50,11 +51,18 @@ class ModelSummary:
         Cyclic submodel references (possible in tolerantly-loaded models)
         are skipped rather than raising.
         """
-        from ldraw.model import _iter_occurrences_skip_cycles  # noqa: PLC0415
+        if parts is not None:
+            from ldraw.inspection import inspect_model  # noqa: PLC0415
 
+            return cls.from_inspection(inspect_model(model, parts))
+        from ldraw.model import ModelOccurrence  # noqa: PLC0415
+        from ldraw.resolution import DocumentResolver, RawGeometry  # noqa: PLC0415
+
+        events = tuple(DocumentResolver(model).events())
         return cls.from_occurrences(
-            tuple(_iter_occurrences_skip_cycles(model)),
+            (event for event in events if isinstance(event, ModelOccurrence)),
             parts,
+            raw_geometry=(event for event in events if isinstance(event, RawGeometry)),
         )
 
     @classmethod
@@ -102,6 +110,8 @@ class ModelSummary:
         cls,
         occurrences: Iterable[ModelOccurrence],
         parts: Parts | None,
+        *,
+        raw_geometry: Iterable[RawGeometry] = (),
     ) -> ModelSummary:
         """Build a summary from occurrences already traversed by a caller."""
         geometry = _BoundsAccumulator()
@@ -139,6 +149,10 @@ class ModelSummary:
                 continue
             geometry.add(world_box.min)
             geometry.add(world_box.max)
+
+        for record in raw_geometry:
+            for point in record.points:
+                geometry.add(point)
 
         return cls(
             bounds=geometry.box(),

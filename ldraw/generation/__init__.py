@@ -46,13 +46,14 @@ def generation_hash_path(generated_path: str | Path) -> Path:
     return generated_library_path(generated_path) / "__hash__"
 
 
-def library_fingerprint(
+def library_fingerprint(  # noqa: PLR0913 - source and fingerprint context
     parts_lst: Path,
     *,
     parts_lst_digest: str | None = None,
     tree_fingerprint: str | None = None,
     on_progress: ProgressCallback | None = None,
     cancellation: CancellationToken | None = None,
+    library_root: Path | None = None,
 ) -> str:
     """Fingerprint everything the generated library is derived from.
 
@@ -62,12 +63,13 @@ def library_fingerprint(
     the generation.
     """
     ldconfig_md5 = ""
-    for item in parts_lst.parent.iterdir():
+    root = library_root or parts_lst.parent
+    for item in root.iterdir():
         if item.name.lower() == "ldconfig.ldr":
             ldconfig_md5 = _file_md5(item)
             break
     tree = tree_fingerprint or parts_tree_fingerprint(
-        parts_lst.parent,
+        root,
         on_progress=on_progress,
         cancellation=cancellation,
     )
@@ -130,11 +132,19 @@ def generate(
 
     hash_path = generation_hash_path(config.generated_path)
     library_path = Path(config.ldraw_library_path)
-    parts_lst = library_path / "ldraw" / "parts.lst"
+    from ldraw.library_access import data_directory  # noqa: PLC0415
+    from ldraw.parts import Parts  # noqa: PLC0415
+
+    root = data_directory(library_path)
+    parts_lst = root / "parts.lst"
+    portable = Parts.from_directory(root) if not parts_lst.is_file() else None
+    if portable is not None:
+        parts_lst = portable.path
     fingerprint = fingerprint or library_fingerprint(
         parts_lst,
         on_progress=on_progress,
         cancellation=cancellation,
+        library_root=root,
     )
 
     if hash_path.exists() and hash_path.read_text() == fingerprint and not force:
@@ -165,7 +175,7 @@ def generate(
         tree_fingerprint=fields.tree_fingerprint,
         generation_fingerprint=fingerprint,
     )
-    parts = load_parts(
+    parts = portable or load_parts(
         parts_lst,
         config.generated_path,
         build_index=True,

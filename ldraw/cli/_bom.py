@@ -19,6 +19,7 @@ from ldraw.cli._common import _parts_lst_path, _print_diagnostics, _try_load_par
 from ldraw.errors import ConfigLoadError, PartError
 from ldraw.model import load_model, read_model
 from ldraw.parts import Parts
+from ldraw.physical_bom import bom_report
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
@@ -52,13 +53,16 @@ def _format_bom(rows: list[BomRow], *, output_format: str) -> str:
             return _format_bom_table(rows)
 
 
-def bom_command(
+def bom_command(  # noqa: PLR0913 - explicit operation controls
     *,
     file: Path,
     output_format: str,
     out: Path | None,
     compare: Path | None = None,
     inventory_mapping: Path | None = None,
+    detail: str = "rows",
+    occurrence_budget: int | None = None,
+    strict: bool = False,
 ) -> int:
     """Print or write a bill of materials for an LDraw model file."""
     if compare is not None or inventory_mapping is not None:
@@ -80,11 +84,18 @@ def bom_command(
         )
     try:
         model = read_model(file)
-        rows = model.bill_of_materials(parts=parts)
+        report = bom_report(model, parts=parts, occurrence_budget=occurrence_budget)
+        rows = list(report.rows)
+        for diagnostic in report.diagnostics:
+            print(diagnostic.message, file=sys.stderr)
     except (PartError, UnicodeDecodeError) as exc:
         print(f"{file}: {exc}", file=sys.stderr)
         return 1
-    text = _format_bom(rows, output_format=output_format)
+    text = (
+        json.dumps(report.to_dict(), indent=2)
+        if detail == "full" and output_format == "json"
+        else _format_bom(rows, output_format=output_format)
+    )
     if not text.endswith("\n"):
         text = f"{text}\n"
     if out is not None:
@@ -96,7 +107,7 @@ def bom_command(
         print(f"Wrote {len(rows)} rows to {out}")
     else:
         print(text, end="")
-    return 0
+    return int(strict and report.coverage != "complete")
 
 
 class _InventoryMapping(TypedDict, total=False):

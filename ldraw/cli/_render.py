@@ -5,10 +5,15 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ldraw.parts import Parts
 from tempfile import TemporaryDirectory
 
-from ldraw.cli._common import _print_diagnostics
+from ldraw.cli._common import _print_diagnostics, _try_load_parts
 from ldraw.cli._defaults import _SAFE_RENDER_PREFIX, DEFAULT_RENDER_VIEWS
+from ldraw.cli._selection import library_argument
 from ldraw.rendering import RenderBackend, RenderResult, RenderView, render_preview
 
 
@@ -24,6 +29,8 @@ class _RenderPlan:
     outputs: tuple[Path, ...]
     refresh: bool
     overwrite: bool
+    section: str | None = None
+    parts: Parts | None = None
 
 
 def render_command(  # noqa: PLR0913 - explicit CLI controls
@@ -36,6 +43,7 @@ def render_command(  # noqa: PLR0913 - explicit CLI controls
     prefix: str | None,
     refresh: bool,
     overwrite: bool,
+    section: str | None = None,
 ) -> int:
     """Render a safe, deterministic standard-view set."""
     source = file.expanduser().resolve()
@@ -52,6 +60,13 @@ def render_command(  # noqa: PLR0913 - explicit CLI controls
             prefix=prefix,
             refresh=refresh,
             overwrite=overwrite,
+        )
+        from dataclasses import replace  # noqa: PLC0415
+
+        plan = replace(
+            plan,
+            section=section,
+            parts=_try_load_parts() if library_argument.get() is not None else None,
         )
         staged_results = _execute_render_plan(plan)
     except (OSError, ValueError) as exc:
@@ -145,6 +160,11 @@ def _execute_render_plan(plan: _RenderPlan) -> tuple[RenderResult, ...] | None:
                 backend=plan.backend,
                 output=temporary / output.name,
                 refresh=plan.refresh,
+                **(
+                    {"section": plan.section, "parts": plan.parts}
+                    if plan.section is not None or plan.parts is not None
+                    else {}
+                ),
             )
             if not result.complete:
                 _print_diagnostics(result.diagnostics, fallback_path=plan.source)

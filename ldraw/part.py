@@ -167,7 +167,18 @@ HANDLERS: dict[str, LineHandler] = {
 
 def parse_ldraw_line(line: str) -> ParsedObject | None:
     """Parse a single LDraw line; return None for a blank line."""
-    pieces = line.split()
+    stripped = line.lstrip()
+    if stripped[:1] == "0" and (len(stripped.strip()) == 1 or stripped[1:2].isspace()):
+        body = stripped[1:].strip()
+        tokens = (
+            body.split(maxsplit=1) if body.startswith("!") else [body] if body else []
+        )
+        return _comment_or_meta(tokens)
+    pieces = (
+        stripped.strip().split(maxsplit=14)
+        if stripped[:1] == "1" and stripped[1:2].isspace()
+        else stripped.split()
+    )
     if not pieces:
         return None
     if (handler := HANDLERS.get(pieces[0])) is None:

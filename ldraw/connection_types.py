@@ -147,8 +147,10 @@ class CylindricalProfile:
 
     sections: tuple[CylindricalSection, ...]
     centered: bool = True
-    friction: bool = False
+    friction: bool | None = None
     caps: CylindricalCaps = CylindricalCaps.NONE
+    direction: int = 1
+    """Physical sections advance in this direction along the mating frame's Y."""
 
     @property
     def length(self) -> float:
@@ -176,6 +178,8 @@ class CylindricalProfile:
 
     def scaled(self, *, radial: float, axial: float) -> CylindricalProfile:
         """Return this profile under radial and axial scaling."""
+        if abs(radial) == 1.0 and abs(axial) == 1.0:
+            return self
         return replace(
             self,
             sections=tuple(
@@ -333,8 +337,10 @@ def _transform_scales(
 class ConnectionFeature:
     """One physical connection interface in a part's local coordinates.
 
-    The feature frame uses local +Y as its axis. The X and Z axes retain
-    cross-section roll, which is significant for Technic axles and clips.
+    Local +Y is the outward mating normal for studs and sockets. Their
+    normals oppose when mated. Direction-symmetric interfaces retain
+    equivalent axes. X and Z retain cross-section roll; profile.direction
+    preserves physical section order when a source frame is normalized.
     """
 
     kind: ConnectionKind
@@ -357,6 +363,8 @@ class ConnectionFeature:
     connection_provenance: ConnectionProvenance | None = None
     scale_inheritance: str = "yandr"
     mirror_inheritance: str = "none"
+    editor_slide: bool | None = None
+    """Editor snapping preference, independent of physical friction evidence."""
 
     def __post_init__(self) -> None:
         if self.connection_provenance is not None and not self.provenance:
@@ -401,7 +409,12 @@ class ConnectionFeature:
         """Center of the feature's axial extent in its coordinate frame."""
         if self.centered:
             return self.position
-        return self.position + self.axis * (self.length / 2)
+        direction = (
+            self.profile.direction
+            if isinstance(self.profile, CylindricalProfile)
+            else 1
+        )
+        return self.position + self.axis * (direction * self.length / 2)
 
     def transformed(
         self,
@@ -536,6 +549,7 @@ class ConnectionResidual:
     roll_alignment: float = 1.0
     entry_face_gap: float | None = None
     penetration: float | None = None
+    engagement: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,6 +565,7 @@ _KIND_PAIRS = {
     frozenset((ConnectionKind.BAR, ConnectionKind.CLIP)),
     frozenset((ConnectionKind.PIN, ConnectionKind.PIN_HOLE)),
     frozenset((ConnectionKind.AXLE, ConnectionKind.AXLE_HOLE)),
+    frozenset((ConnectionKind.AXLE, ConnectionKind.PIN_HOLE)),
     frozenset((ConnectionKind.RIM_SEAT, ConnectionKind.TYRE_BEAD)),
 }
 _X_REFLECTION = Matrix([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
@@ -610,6 +625,14 @@ def _mated_profiles_compatible(
             CylindricalProfile() as left_profile,
             CylindricalProfile() as right_profile,
         ):
+            if {left.kind, right.kind} == {
+                ConnectionKind.AXLE,
+                ConnectionKind.PIN_HOLE,
+            }:
+                return (
+                    abs(left_profile.mating_radius - right_profile.mating_radius)
+                    <= radius_tolerance
+                )
             return _cylindrical_profiles_compatible(
                 left_profile,
                 right_profile,
@@ -709,7 +732,11 @@ def _cylindrical_profiles_compatible(
     left_rigid = tuple(section for section in left.sections if not section.flexible)
     right_rigid = tuple(section for section in right.sections if not section.flexible)
     return bool(left_rigid and right_rigid) and any(
-        left_section.shape is right_section.shape
+        (
+            left_section.shape is right_section.shape
+            or {left_section.shape, right_section.shape}
+            == {SectionShape.ROUND, SectionShape.SQUARE}
+        )
         and abs(left_section.radius - right_section.radius) <= radius_tolerance
         for left_section in left_rigid
         for right_section in right_rigid
@@ -785,6 +812,11 @@ def connection_residual(
         axial_gap=axial_gap,
         alignment=alignment,
         roll_alignment=roll_alignment,
+        engagement=max(
+            0.0,
+            min(left_interval[1], right_interval[1])
+            - max(left_interval[0], right_interval[0]),
+        ),
     )
 
 
@@ -799,6 +831,8 @@ def _feature_interval(
         if feature.centered
         else (0.0, feature.length)
     )
+    if isinstance(feature.profile, CylindricalProfile):
+        direction *= feature.profile.direction
     values = (origin + direction * local[0], origin + direction * local[1])
     return min(values), max(values)
 
@@ -830,8 +864,8 @@ def snap_transform(
     """Return a rigid transform placing ``moving`` onto ``target``.
 
     Centered cylindrical interfaces are direction-symmetric, so their target
-    frame is flipped when that gives the smaller axis rotation; non-centered
-    profiles extend one-sided and always mate axis-to-axis. Cross-section
+    frame is flipped when that gives the smaller axis rotation. Stud/socket
+    mating normals oppose; physical profile directions remain intact. Cross-section
     roll is preserved for axle profiles. Candidate frames are matched to the
     moving frame's handedness, so the delta is always a proper rotation and
     a part placed with a mirroring matrix is never reflected.
@@ -874,21 +908,8 @@ def _equivalent_target_frames(
     moving: ConnectionFeature,
     target: ConnectionFeature,
 ) -> tuple[Matrix, ...]:
-    direction_symmetric = moving.centered and target.centered
-    target_axis = (
-        -1 * target.axis
-        if direction_symmetric and moving.axis.dot(target.axis) < 0
-        else target.axis
-    )
-    if (
-        isinstance(moving.profile, CylindricalProfile)
-        and isinstance(target.profile, CylindricalProfile)
-        and moving.profile.primary_shape is SectionShape.ROUND
-        and target.profile.primary_shape is SectionShape.ROUND
-    ) or (
-        isinstance(moving.profile, AnnularProfile)
-        and isinstance(target.profile, AnnularProfile)
-    ):
+    target_axis = _mating_target_axis(moving, target)
+    if _axisymmetric_pair(moving, target):
         return (frame_for_axis(target_axis, radial=moving.radial),)
 
     base = target.frame
@@ -903,6 +924,38 @@ def _equivalent_target_frames(
         )
         return tuple(base * rotation for rotation in quarter_turns)
     return (base,)
+
+
+def _mating_target_axis(moving: ConnectionFeature, target: ConnectionFeature) -> Vector:
+    direction_symmetric = moving.centered and target.centered
+    opposing = {moving.kind, target.kind} == {
+        ConnectionKind.STUD,
+        ConnectionKind.STUD_RECEPTACLE,
+    }
+    opposite_spans = (
+        isinstance(moving.profile, CylindricalProfile)
+        and isinstance(target.profile, CylindricalProfile)
+        and moving.profile.direction != target.profile.direction
+    )
+    return (
+        -1 * target.axis
+        if opposing
+        or (not direction_symmetric and opposite_spans)
+        or (direction_symmetric and moving.axis.dot(target.axis) < 0)
+        else target.axis
+    )
+
+
+def _axisymmetric_pair(moving: ConnectionFeature, target: ConnectionFeature) -> bool:
+    return (
+        isinstance(moving.profile, CylindricalProfile)
+        and isinstance(target.profile, CylindricalProfile)
+        and moving.profile.primary_shape is SectionShape.ROUND
+        and target.profile.primary_shape is SectionShape.ROUND
+    ) or (
+        isinstance(moving.profile, AnnularProfile)
+        and isinstance(target.profile, AnnularProfile)
+    )
 
 
 def _frame_similarity(left: Matrix, right: Matrix) -> float:

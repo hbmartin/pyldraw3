@@ -90,6 +90,7 @@ EXPECTED_ALL = [
     "OperationCancelled",
     "PartCategory",
     "PartCompatibility",
+    "PartMeasurements",
     "PartFileKind",
     "PartGeometry",
     "PartHistoryEntry",
@@ -143,6 +144,7 @@ EXPECTED_ALL = [
     "iter_ldr_issues",
     "load_model",
     "model_bounds",
+    "part_measurements",
     "parse_model",
     "parse_model_result",
     "plan_download",
@@ -153,6 +155,34 @@ EXPECTED_ALL = [
     "render_preview",
     "snap_transform",
 ]
+
+
+EXPECTED_ALL = sorted(
+    [
+        *EXPECTED_ALL,
+        "ApiEntry",
+        "ApiInventory",
+        "CatalogSearchResult",
+        "DoctorReport",
+        "doctor",
+        "api_inventory",
+    ]
+)
+
+
+EXPECTED_ALL = sorted(
+    [
+        *EXPECTED_ALL,
+        "BomReport",
+        "bom_report",
+        "Coverage",
+        "ExtractionResult",
+        "ExtractionAttribution",
+        "SnapReport",
+        "ContactReport",
+        "RawGeometry",
+    ]
+)
 
 
 def test_all_is_the_expected_sorted_list() -> None:
@@ -302,6 +332,34 @@ EXPORT_ORIGINS: dict[str, str] = {
     "render_preview": "rendering",
     "snap_transform": "connection_types",
 }
+
+
+EXPORT_ORIGINS.update(
+    {
+        "ApiEntry": "api",
+        "ApiInventory": "api",
+        "api_inventory": "api",
+        "CatalogSearchResult": "catalog_search",
+        "DoctorReport": "diagnosis",
+        "doctor": "diagnosis",
+    }
+)
+
+
+EXPORT_ORIGINS.update(
+    {
+        "BomReport": "physical_bom",
+        "bom_report": "physical_bom",
+        "Coverage": "coverage",
+        "ExtractionResult": "document_io",
+        "ExtractionAttribution": "document_io",
+        "SnapReport": "inspection_limits",
+        "ContactReport": "inspection_limits",
+        "RawGeometry": "resolution",
+        "PartMeasurements": "measurements",
+        "part_measurements": "measurements",
+    }
+)
 
 
 def test_every_export_has_a_pinned_origin_module() -> None:

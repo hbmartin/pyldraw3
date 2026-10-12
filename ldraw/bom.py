@@ -84,7 +84,7 @@ def _colour_name(colour: Colour, parts: Parts | None) -> str | None:
     return catalogued.name if catalogued is not None else None
 
 
-def bill_of_materials(
+def _count_occurrences(
     model: _ModelLike | None = None,
     *,
     parts: Parts | None = None,
@@ -140,6 +140,21 @@ def bill_of_materials(
         ),
     )
     return rows
+
+
+def bill_of_materials(
+    model: _ModelLike | None = None,
+    *,
+    parts: Parts | None = None,
+    occurrences: Iterable[ModelOccurrence] | None = None,
+) -> list[BomRow]:
+    """Return physical row counts, expanding available shortcuts and aliases."""
+    from ldraw.model import Model  # noqa: PLC0415
+    from ldraw.physical_bom import bom_report  # noqa: PLC0415
+
+    if isinstance(model, Model) and occurrences is None:
+        return list(bom_report(model, parts=parts).rows)
+    return _count_occurrences(model, parts=parts, occurrences=occurrences)
 
 
 def rows_to_csv(rows: Iterable[BomRow]) -> str:

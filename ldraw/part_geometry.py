@@ -17,6 +17,7 @@ from weakref import WeakKeyDictionary
 
 from ldraw._connection_results import ConnectionMetadataCoverage, ShadowConnectionResult
 from ldraw._vertex_arrays import transform_vertices, vertex_bounds
+from ldraw.connection_deduplication import deduplicate_interfaces
 from ldraw.connection_inference import (
     StudSocketEvidence,
     derive_stud_socket_evidence,
@@ -551,7 +552,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     )
     inline_result = parse_ldcad_text(
         code,
-        path.read_text(encoding="utf-8-sig"),
+        "\n".join(line.rstrip("\r\n") for line in parts.part(code=code).lines),
         source=path,
         connection_shadows=(
             parts._connection_shadows_for_inline()  # noqa: SLF001
@@ -600,7 +601,7 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
         connections = list(
             mark_internal_fit_occupied(connections, assembly_code=code),
         )
-    connections = _stable_feature_ids(connections)
+    connections = _stable_feature_ids(list(deduplicate_interfaces(connections)))
     diagnostics.extend(metadata_diagnostics)
     statistics = _metadata_statistics(metadata_results)
     report_result = replace(
@@ -620,6 +621,15 @@ def _resolve_connections(  # noqa: PLR0913 - resolution inputs are explicit
     )
 
 
+def _referenced_geometry(
+    parts: _PartGeometryLibrary,
+    piece: Piece,
+    visiting: frozenset[str],
+) -> _LocalGeometry | None:
+    code = piece.part if piece.suffix.casefold() == ".dat" else piece.reference
+    return _local_geometry(parts, code, visiting)
+
+
 def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     *,
     parts: _PartGeometryLibrary,
@@ -637,7 +647,7 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     metadata_results: list[ShadowConnectionResult],
     resolved_codes: set[str],
 ) -> None:
-    local = _local_geometry(parts, piece.part, visiting)
+    local = _referenced_geometry(parts, piece, visiting)
     if local is None:
         return
     diagnostics.extend(local.diagnostics)
@@ -926,6 +936,10 @@ def _infer_catalog_connections(
 ) -> list[ConnectionFeature]:
     if not _is_catalog_part(parts, code):
         return connections
+    from ldraw.annular_geometry import annular_axis  # noqa: PLC0415
+
+    annular = description.strip(" ~=_|-").casefold().startswith(("wheel rim ", "tyre "))
+    axis_hint = annular_axis(parts, code) if annular else None
     return list(
         infer_part_connections(
             code=code,
@@ -933,6 +947,7 @@ def _infer_catalog_connections(
             bounds=bounds,
             existing=connections,
             compatible_parts=_compatible_parts(parts, code, description),
+            axis_hint=axis_hint,
         ),
     )
 

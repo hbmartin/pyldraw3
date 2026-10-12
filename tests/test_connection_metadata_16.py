@@ -91,7 +91,8 @@ def test_all_supported_ldcad_records_preserve_profile_semantics() -> None:
     } == {(-9, 2, -12), (-9, 2, 18), (11, 2, -12), (11, 2, 18)}
     axle = axles[0]
     assert axle.kind is ConnectionKind.AXLE_HOLE
-    assert axle.axis == Vector(0, -1, 0)
+    assert axle.axis == Vector(0, 1, 0)
+    assert axle.profile.direction == -1
     assert axle.metadata_id == "axle"
     assert axle.scale_inheritance == "yandr"
     assert axle.mirror_inheritance == "cor"

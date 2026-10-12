@@ -67,13 +67,13 @@ def _non_centered_parts(tmp_path: Path) -> Parts:
             "parts/nchole.dat": (
                 "0 Deep Socket Fixture\n"
                 "0 !LDCAD SNAP_CLEAR\n"
-                "0 !LDCAD SNAP_CYL [gender=F] [secs=R 6 60] [id=hole]\n"
+                "0 !LDCAD SNAP_CYL [gender=F] [secs=R 6 60] [caps=none] [id=hole]\n"
                 "2 24 -6 -60 -6 6 0 6\n"
             ),
             "parts/ncpin.dat": (
                 "0 Long Connector Fixture\n"
                 "0 !LDCAD SNAP_CLEAR\n"
-                "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 60] [id=pin]\n"
+                "0 !LDCAD SNAP_CYL [gender=M] [secs=R 6 60] [caps=none] [id=pin]\n"
                 "2 24 -6 -60 -6 6 0 6\n"
             ),
         },

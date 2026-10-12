@@ -29,7 +29,7 @@ def camel(input_string: str) -> str:
 
 def normalize_ref(ref: str) -> str:
     """Normalize a submodel reference for case-insensitive lookup."""
-    return " ".join(ref.split()).casefold().replace("\\", "/")
+    return ref.strip().casefold().replace("\\", "/")
 
 
 def split_reference(ref: str) -> tuple[str, str]:

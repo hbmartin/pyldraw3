@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,9 @@ from ldraw.config import Config
 if TYPE_CHECKING:
     from ldraw.diagnostics import Diagnostic
     from ldraw.parts import Parts
+
+
+from ldraw.cli._selection import library_argument
 
 
 def _confirm(prompt: str, *, yes: bool) -> bool:
@@ -27,7 +31,9 @@ def _confirm(prompt: str, *, yes: bool) -> bool:
 
 
 def _parts_lst_path() -> Path:
-    return Path(Config.load().ldraw_library_path) / "ldraw" / "parts.lst"
+    from ldraw.library_access import data_directory  # noqa: PLC0415
+
+    return data_directory(Config.load().ldraw_library_path) / "parts.lst"
 
 
 def _try_load_parts(
@@ -37,9 +43,40 @@ def _try_load_parts(
     studio_metadata: tuple[Path, ...] = (),
 ) -> Parts | None:
     """Load the configured parts catalog, or None when missing."""
+    if (
+        library_argument.get() is not None
+        or os.environ.get("LDRAW_DIR")
+        or os.environ.get("LDRAWDIR")
+    ):
+        from ldraw.library_access import select_library  # noqa: PLC0415
+        from ldraw.parts import Parts  # noqa: PLC0415
+
+        parts = Parts.from_directory(
+            select_library(library=library_argument.get()).directory
+        )
+        for source in connection_shadows:
+            parts.add_connection_shadow(source)
+        for source in studio_metadata:
+            parts.add_studio_metadata(source)
+        return parts
     parts_lst = _parts_lst_path()
     if not parts_lst.exists():
-        return None
+        from ldraw.library_access import select_library  # noqa: PLC0415
+        from ldraw.parts import Parts  # noqa: PLC0415
+
+        if (parts_lst.parent / "parts").is_dir():
+            parts = Parts.from_directory(parts_lst.parent)
+        else:
+            try:
+                selection = select_library()
+            except FileNotFoundError:
+                return None
+            parts = Parts.from_directory(selection.directory)
+        for source in connection_shadows:
+            parts.add_connection_shadow(source)
+        for source in studio_metadata:
+            parts.add_studio_metadata(source)
+        return parts
     generated_path = Config.load().generated_path
     if build_index and not catalog_db_path(generated_path).is_file():
         print("Building parts index (first run may take a while)...", file=sys.stderr)

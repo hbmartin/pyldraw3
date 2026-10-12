@@ -189,7 +189,7 @@ class Matrix:  # noqa: PLW1641 - mutable, deliberately unhashable like list
     def is_orthonormal(self, *, tolerance: float = 1e-6) -> bool:
         """Return whether the matrix is a pure rotation or reflection."""
         product = self._array @ self._array.T
-        return bool(np.allclose(product, np.eye(3), atol=tolerance))
+        return bool(np.allclose(product, np.eye(3), atol=tolerance, rtol=0.0))
 
     def flatten(self) -> tuple[float, ...]:
         """Flatten the matrix in row-major order."""
