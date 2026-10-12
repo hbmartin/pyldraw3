@@ -35,6 +35,9 @@ jobs:
       run: |
         uv sync --all-groups --locked
 
+    - name: Download pinned benchmark library
+      run: uv run ldraw download --version 2018-02 --yes
+
     - name: Run benchmarks
       run: |
         uv run pytest benchmarks/ --benchmark-json=benchmark-results.json --benchmark-only

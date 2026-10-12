@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
+from ldraw._vertex_arrays import transform_vertices, vertex_bounds
 from ldraw.connection_inference import (
     StudSocketEvidence,
     derive_stud_socket_evidence,
@@ -648,10 +649,7 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
     diagnostics.extend(local.diagnostics)
     metadata_results.append(local.metadata_result)
     resolved_codes.update(local.resolved_codes)
-    for point in local.points:
-        transformed = piece.position + piece.matrix * point
-        box.add(transformed)
-        points.append(transformed)
+    _fold_vertices(local=local, piece=piece, box=box, points=points)
     stem = _local_key(piece.part).rpartition("/")[2]
     inferred = primitive_connections(
         parent_code=parent_code,
@@ -1213,3 +1211,16 @@ class _BoxAccumulator:
         if self._min is None or self._max is None:
             return None
         return BoundingBox(min=self._min.copy(), max=self._max.copy())
+
+
+def _fold_vertices(
+    *, local: _LocalGeometry, piece: Piece, box: _BoxAccumulator, points: list[Vector]
+) -> None:
+    """Fold a child vertex batch and its bounds into the parent."""
+    vertices = transform_vertices(
+        local.points, position=piece.position, matrix=piece.matrix
+    )
+    if (bounds := vertex_bounds(vertices)) is not None:
+        box.add(bounds.min)
+        box.add(bounds.max)
+        points.extend(Vector(*map(float, row)) for row in vertices)

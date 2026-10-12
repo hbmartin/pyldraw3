@@ -18,6 +18,7 @@ nav = [
     { "CLI Reference" = "cli.md" },
     { "API Reference" = "api/index.md" },
     { "Library Imports" = "dynamic-imports.md" },
+    { "Performance" = "performance.md" },
     { "Upgrading" = [
     { "Upgrading to 1.1" = "upgrading-1.1.md" },
     { "Upgrading to 1.2" = "upgrading-1.2.md" },

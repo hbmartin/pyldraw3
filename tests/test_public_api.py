@@ -353,3 +353,37 @@ def test_parts_module_does_not_import_snippets() -> None:
             alias.name == "ldraw.snippets" for alias in node.names
         ):
             pytest.fail("ldraw.parts must not import ldraw.snippets")
+
+
+def test_lightweight_startup_and_generate_import_orders() -> None:
+    commands = (
+        (
+            "import sys; import ldraw; assert 'numpy' not in sys.modules; "
+            "assert 'requests' not in sys.modules; assert 'Model' in dir(ldraw); "
+            "assert ldraw.Model is ldraw.Model"
+        ),
+        (
+            "import sys; from ldraw.cli import build_parser;\n"
+            "try: build_parser().parse_args(['--help'])\n"
+            "except SystemExit: pass\n"
+            "assert 'numpy' not in sys.modules; assert 'requests' not in sys.modules"
+        ),
+        "import ldraw.generate; from ldraw import generate; assert callable(generate)",
+        (
+            "from ldraw import generate; import ldraw.generate; "
+            "import ldraw; assert callable(ldraw.generate)"
+        ),
+    )
+    for command in commands:
+        subprocess.run(
+            [sys.executable, "-c", command],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+
+def test_unknown_export() -> None:
+    with pytest.raises(AttributeError):
+        _ = ldraw.missing_public_export
