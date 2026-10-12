@@ -478,12 +478,13 @@ rows use `colour_name` when `colour_code` is empty. Quantities must be
 nonnegative integers. Missing columns, invalid quantities/colours, cycles,
 and unresolved model references fail rather than produce partial matches.
 
-Extensionless references that remain after submodel expansion need catalog
-evidence. Pass `parts=parts` to `compare_inventory` to accept catalog-known
-bare part codes. Unresolved `.ldr`/`.mpd` references always fail; an ambiguous
-bare reference fails before part aliases are applied. Explicit `.dat` part
-references do not require a catalog, and resolved extensionless submodels
-expand normally.
+Leaf references without an explicit `.dat` suffix need `parts.lst` evidence
+after submodel expansion. Pass `parts=parts` to `compare_inventory` to accept
+listed identifiers case-insensitively, including dotted identifiers. The
+whole reference must be listed, even if its stem names a known part.
+Unresolved `.ldr`/`.mpd` references always fail; ambiguous references fail
+before aliases are applied. Explicit `.dat` references do not require a
+catalog, and resolved submodels expand normally.
 
 For third-party CSV, `read_inventory(columns={"part": "Part ID",
 "colour": "Colour ID", "quantity": "Qty"}, colour_map={"red": 4})`
@@ -491,8 +492,9 @@ explicitly maps headers and colour values. A supplied colour map must cover
 every inventory colour. Colours map only on input; `compare_inventory` part
 aliases canonicalize both sides, including case and `.dat` suffixes.
 
-Validation emits `model.duplicate_placement` warnings for exact equality of
-normalized reference, colour, position, and matrix within one section,
+Validation emits `model.duplicate_placement` warnings for equality of
+normalized reference, colour, and transformed position and matrix at LDraw
+serialization precision within one section,
 including across STEP boundaries. The later line identifies the first
 occurrence. Independent MPD sections are checked separately; `--strict`
 makes these warnings fail validation.

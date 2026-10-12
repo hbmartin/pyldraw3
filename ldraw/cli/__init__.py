@@ -25,7 +25,7 @@ _COMMANDS = (
     "version",
 )
 # Fixed historical import manifest: new implementation names need no entries.
-# Patches target the consuming handler module, not these read-only aliases.
+# Import aliases do not forward assignments; patch the consuming handler module.
 _LEGACY = {
     "_confirm": "ldraw.cli._common",
     "_parts_lst_path": "ldraw.cli._common",

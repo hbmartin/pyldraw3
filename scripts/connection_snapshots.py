@@ -13,7 +13,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from ldraw._library_content import library_content_sha256
+from ldraw._library_content import (
+    archive_library_content_sha256,
+    library_content_sha256,
+)
 from ldraw.dirs import get_cache_dir
 from ldraw.geometry import Matrix
 from ldraw.part_geometry import part_connections
@@ -110,7 +113,7 @@ def main() -> None:
     parser.add_argument(
         "--archive",
         type=Path,
-        help="Record optional archive provenance; verification uses extracted content.",
+        help="Verify archive content before recording optional archive provenance.",
     )
     parser.add_argument(
         "--select",
@@ -138,11 +141,11 @@ def main() -> None:
                 "before explicitly reselecting"
             )
             raise ValueError(message)
-    receipt = parts.library_root / "_archive_sha256.txt"
     if args.archive is not None:
+        if archive_library_content_sha256(args.archive) != digest:
+            message = "archive library content differs from the extracted library"
+            raise ValueError(message)
         manifest["archive_sha256"] = archive_checksum(args.archive)
-    elif args.select and receipt.is_file():
-        manifest["archive_sha256"] = receipt.read_text().strip()
     result = snapshot(parts, manifest["part_codes"])
     CORPUS.mkdir(exist_ok=True)
     MANIFEST.write_text(f"{json.dumps(manifest, indent=2)}\n", encoding="utf-8")

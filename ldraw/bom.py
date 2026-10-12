@@ -6,7 +6,7 @@ import csv
 import io
 import json
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -331,21 +331,27 @@ def _inventory_counts(
     return counts
 
 
+def _inventory_reference_requires_catalog(reference: str) -> bool:
+    """Whether a leaf reference needs listing evidence to identify a part."""
+    _, suffix = split_reference(reference)
+    return suffix.casefold() not in {".dat", ".ldr", ".mpd"}
+
+
 def _validate_inventory_reference(
     occurrence: ModelOccurrence, *, parts: Parts | None
 ) -> None:
-    """Require catalog evidence for an unexpanded extensionless reference."""
+    """Require listing evidence for leaves without an explicit .dat suffix."""
     _, suffix = split_reference(occurrence.reference)
     if suffix.casefold() in {".ldr", ".mpd"}:
         message = (
             f"model contains unresolved submodel reference {occurrence.reference!r}"
         )
         raise ValueError(message)
-    if not suffix and (
-        parts is None or parts.get_entry_by_code(occurrence.part_code) is None
+    if _inventory_reference_requires_catalog(occurrence.reference) and (
+        parts is None or parts.description_for(occurrence.reference) is None
     ):
         message = (
-            f"unresolved or ambiguous extensionless reference "
+            f"unresolved or ambiguous reference without an explicit .dat suffix "
             f"{occurrence.reference!r}; "
             "supply a parts catalog or use .dat for part references"
         )
@@ -363,10 +369,27 @@ def compare_inventory(
 
     Part aliases apply to both sides; colour mapping belongs to CSV input.
     Cyclic or unresolved submodel references fail instead of returning a
-    potentially matching partial inventory. Extensionless leaf references
-    require a matching entry in ``parts`` before aliases are applied;
+    potentially matching partial inventory. Leaf references without an
+    explicit ``.dat`` suffix require listing evidence in ``parts`` before
+    aliases are applied;
     explicit ``.dat`` part references do not require a catalog.
     """
+    return _compare_inventory_occurrences(
+        occurrences=tuple(model.iter_occurrences(include_steps=False)),
+        expected=expected,
+        part_aliases=part_aliases,
+        parts=parts,
+    )
+
+
+def _compare_inventory_occurrences(
+    occurrences: tuple[ModelOccurrence, ...],
+    expected: Iterable[BomRow],
+    *,
+    part_aliases: Mapping[str, str] | None = None,
+    parts: Parts | None = None,
+) -> InventoryComparison:
+    """Compare already-expanded leaves without traversing the model again."""
     aliases = {
         normalize_ref(key).removesuffix(".dat"): normalize_ref(value).removesuffix(
             ".dat"
@@ -375,11 +398,18 @@ def compare_inventory(
     }
     for key in aliases:
         _canonical_part(key, aliases)
-    occurrences = tuple(model.iter_occurrences(include_steps=False))
     for occurrence in occurrences:
         _validate_inventory_reference(occurrence, parts=parts)
     actual = _inventory_counts(
-        bill_of_materials(occurrences=occurrences), aliases=aliases
+        bill_of_materials(
+            occurrences=(
+                replace(occurrence, part_code=occurrence.reference)
+                if _inventory_reference_requires_catalog(occurrence.reference)
+                else occurrence
+                for occurrence in occurrences
+            ),
+        ),
+        aliases=aliases,
     )
     inventory = _inventory_counts(expected, aliases=aliases)
     differences = tuple(

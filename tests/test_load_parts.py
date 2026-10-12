@@ -340,17 +340,21 @@ def test_minifig_descriptions_are_kept_as_written(tmp_path: Path) -> None:
     }
 
 
-def test_description_for_tolerates_casing_differences(tmp_path: Path) -> None:
+@pytest.mark.parametrize("listed_code", ["123abc", "123aBc"])
+def test_description_for_tolerates_casing_differences(
+    tmp_path: Path, listed_code: str
+) -> None:
     ldraw_dir = tmp_path / "ldraw"
     parts_dir = ldraw_dir / "parts"
     parts_dir.mkdir(parents=True)
     (parts_dir / "123abc.dat").write_text("0 Test Part\n")
-    (ldraw_dir / "parts.lst").write_text("123abc.dat  Test Part\n")
+    (ldraw_dir / "parts.lst").write_text(f"{listed_code}.dat  Test Part\n")
 
     parts = Parts(ldraw_dir / "parts.lst")
 
     assert parts.description_for("123abc") == "Test Part"
     assert parts.description_for("123ABC") == "Test Part"  # Piece.part casing
+    assert parts.description_for("123AbC") == "Test Part"
     assert parts.description_for("unknown") is None
 
 

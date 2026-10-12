@@ -8,23 +8,23 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from ldraw.bom import (
     BomRow,
-    compare_inventory,
+    _compare_inventory_occurrences,
+    _inventory_reference_requires_catalog,
     comparison_to_csv,
     read_inventory,
     rows_to_csv,
     rows_to_json,
 )
-from ldraw.cli._common import _print_diagnostics, _try_load_parts
-from ldraw.errors import PartError
+from ldraw.cli._common import _parts_lst_path, _print_diagnostics, _try_load_parts
+from ldraw.errors import ConfigLoadError, PartError
 from ldraw.model import load_model, read_model
-from ldraw.utils import split_reference
+from ldraw.parts import Parts
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ldraw.model import Model
-    from ldraw.parts import Parts
+    from ldraw.model import ModelOccurrence
 
 
 def _format_bom_table(rows: list[BomRow]) -> str:
@@ -131,14 +131,14 @@ def _read_inventory_mapping(path: Path | None) -> _InventoryMapping:
     return cast("_InventoryMapping", data)
 
 
-def _inventory_parts(model: Model) -> Parts | None:
-    """Load a catalog only when a bare leaf reference needs classification."""
-    if any(
-        not split_reference(item.reference)[1]
-        for item in model.iter_occurrences(include_steps=False)
+def _inventory_parts(occurrences: tuple[ModelOccurrence, ...]) -> Parts | None:
+    """Load only the listing, and only when a leaf needs classification."""
+    if not any(
+        _inventory_reference_requires_catalog(item.reference) for item in occurrences
     ):
-        return _try_load_parts()
-    return None
+        return None
+    parts_lst = _parts_lst_path()
+    return Parts(parts_lst) if parts_lst.is_file() else None
 
 
 def _compare_inventory_command(
@@ -169,11 +169,12 @@ def _compare_inventory_command(
             columns=options.get("columns"),
             colour_map=options.get("colour_map"),
         )
-        comparison = compare_inventory(
-            loaded.model,
-            expected,
+        occurrences = tuple(loaded.model.iter_occurrences(include_steps=False))
+        comparison = _compare_inventory_occurrences(
+            occurrences=occurrences,
+            expected=expected,
             part_aliases=options.get("part_aliases"),
-            parts=_inventory_parts(loaded.model),
+            parts=_inventory_parts(occurrences),
         )
         match output_format:
             case "json":
@@ -199,7 +200,7 @@ def _compare_inventory_command(
             print(text.rstrip("\n"))
         else:
             out.write_text(f"{text.rstrip(chr(10))}\n", encoding="utf-8")
-    except (OSError, ValueError, PartError, TypeError) as exc:
+    except (OSError, ValueError, PartError, TypeError, ConfigLoadError) as exc:
         print(f"inventory comparison failed: {exc}", file=sys.stderr)
         return 2
     return int(not comparison.matched)

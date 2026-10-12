@@ -2,11 +2,14 @@
 
 import os
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 
 import pytest
 
-from ldraw._library_content import library_content_sha256
+from ldraw._library_content import (
+    archive_library_content_sha256,
+    library_content_sha256,
+)
 
 SOURCES = {
     "parts/3001.dat": b"0 Brick\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud.dat\n",
@@ -61,6 +64,32 @@ def test_content_identity_detects_added_and_removed_sources(library: Path) -> No
     assert library_content_sha256(library) != original
 
 
+@pytest.mark.parametrize("relative", SOURCES)
+def test_uppercase_library_identity_matches_and_detects_edits(
+    tmp_path: Path, library: Path, relative: str
+) -> None:
+    uppercase = tmp_path / "uppercase"
+    for name, content in SOURCES.items():
+        path = uppercase / name.upper()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    original = library_content_sha256(library)
+    assert library_content_sha256(uppercase) == original
+    changed = uppercase / relative.upper()
+    changed.write_bytes(changed.read_bytes() + b"0 Changed\n")
+    assert library_content_sha256(uppercase) != original
+
+
+def test_directory_identity_rejects_case_colliding_sources(library: Path) -> None:
+    source = library / "parts" / "3001.dat"
+    collision = source.with_name("3001.DAT")
+    if collision.exists():
+        pytest.skip("case-insensitive filesystem cannot host colliding source names")
+    collision.write_bytes(source.read_bytes())
+    with pytest.raises(ValueError, match="duplicate normalized library path"):
+        library_content_sha256(library)
+
+
 def test_content_identity_is_independent_of_zip_encoding_and_wrapper(
     tmp_path: Path,
 ) -> None:
@@ -84,5 +113,55 @@ def test_content_identity_is_independent_of_zip_encoding_and_wrapper(
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(archive.read(member_name))
         digests.append(library_content_sha256(destination / wrapper / "ldraw"))
+        assert archive_library_content_sha256(archive_path) == digests[-1]
     assert archives[0] != archives[1]
     assert digests[0] == digests[1]
+
+
+@pytest.mark.parametrize("prefix", ["", "ldraw/", "wrapper/LDRAW/"])
+def test_archive_identity_normalizes_case_without_extraction(
+    tmp_path: Path, library: Path, monkeypatch: pytest.MonkeyPatch, prefix: str
+) -> None:
+    archive_path = tmp_path / "library.zip"
+    with ZipFile(archive_path, mode="w") as archive:
+        for relative, content in SOURCES.items():
+            archive.writestr(f"{prefix}{relative.upper()}", content)
+        archive.writestr(f"{prefix}parts.lst", "ignored generated listing")
+        archive.writestr("readme.txt", "ignored archive wrapper metadata")
+
+    def reject_extraction(*args: object, **kwargs: object) -> None:
+        pytest.fail("content verification must not extract ZIP entries")
+
+    monkeypatch.setattr(ZipFile, "extract", reject_extraction)
+    monkeypatch.setattr(ZipFile, "extractall", reject_extraction)
+    assert archive_library_content_sha256(archive_path) == library_content_sha256(
+        library
+    )
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        ["readme.txt"],
+        ["first/ldraw/parts/3001.dat", "second/ldraw/parts/3001.dat"],
+        ["ldraw/parts/3001.dat", "ldraw/PARTS/3001.DAT"],
+        ["../ldraw/parts/3001.dat"],
+    ],
+    ids=["unrelated", "ambiguous", "duplicate", "unsafe"],
+)
+def test_archive_identity_rejects_invalid_sources(
+    tmp_path: Path, members: list[str]
+) -> None:
+    archive_path = tmp_path / "invalid.zip"
+    with ZipFile(archive_path, mode="w") as archive:
+        for member in members:
+            archive.writestr(member, "0 Brick\n")
+    with pytest.raises(ValueError):
+        archive_library_content_sha256(archive_path)
+
+
+def test_archive_identity_rejects_malformed_zip(tmp_path: Path) -> None:
+    archive_path = tmp_path / "malformed.zip"
+    archive_path.write_bytes(b"not a zip archive")
+    with pytest.raises(BadZipFile):
+        archive_library_content_sha256(archive_path)

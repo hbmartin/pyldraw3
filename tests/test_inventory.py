@@ -10,6 +10,7 @@ import pytest
 from ldraw.bom import BomRow, compare_inventory, read_inventory, rows_to_csv
 from ldraw.cli import main
 from ldraw.colour import Colour
+from ldraw.config import Config
 from ldraw.geometry import Identity, Matrix, Radians, XAxis, YAxis, ZAxis
 from ldraw.model import Model, parse_model_result
 from ldraw.parts import Parts
@@ -20,6 +21,18 @@ from ldraw.units import BRICK_HEIGHT, LDU_TO_MM, PLATE_HEIGHT, STUD_PITCH
 @pytest.fixture
 def parts() -> Parts:
     return Parts(Path(__file__).parent / "test_ldraw" / "ldraw" / "parts.lst")
+
+
+def _comparison_files(
+    tmp_path: Path, *, reference: str, inventory_code: str
+) -> tuple[Path, Path]:
+    model = tmp_path / "model.ldr"
+    model.write_text(f"1 4 0 0 0 1 0 0 0 1 0 0 0 1 {reference}\n", encoding="utf-8")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text(
+        f"part,colour_code,quantity\n{inventory_code},4,1\n", encoding="utf-8"
+    )
+    return model, inventory
 
 
 def test_inventory_bare_parts_require_catalog_evidence(parts: Parts) -> None:
@@ -41,6 +54,75 @@ def test_inventory_alias_cannot_disguise_an_unknown_bare_reference(
             part_aliases={"Missing Sub": "3001"},
             parts=parts,
         )
+
+
+@pytest.mark.parametrize("reference", ["Car v1.5", "body.1", "3001.", "3001.xyz"])
+@pytest.mark.parametrize("with_alias", [False, True])
+def test_inventory_rejects_unknown_dotted_references_before_aliases(
+    tmp_path: Path,
+    parts: Parts,
+    reference: str,
+    *,
+    with_alias: bool,
+) -> None:
+    stem = reference.rsplit(".", maxsplit=1)[0]
+    aliases = {reference: "3001", stem: "3001"} if with_alias else None
+    expected_code = "3001" if with_alias else stem
+    model = Model(objects=[Piece.place(reference, colour=4)])
+    with pytest.raises(ValueError, match=r"without an explicit \.dat suffix") as raised:
+        compare_inventory(
+            model,
+            [BomRow(expected_code, None, 4, None, 1)],
+            parts=parts,
+            part_aliases=aliases,
+        )
+    assert reference in str(raised.value)
+    model_path, inventory = _comparison_files(
+        tmp_path, reference=reference, inventory_code=expected_code
+    )
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"part_aliases": aliases or {}}), encoding="utf-8")
+    with patch("ldraw.cli._bom._parts_lst_path", return_value=parts.path):
+        assert (
+            main(
+                [
+                    "bom",
+                    str(model_path),
+                    "--compare",
+                    str(inventory),
+                    "--inventory-mapping",
+                    str(mapping),
+                ]
+            )
+            == 2
+        )
+
+
+@pytest.mark.parametrize("reference", ["3001A", "mIxEd", "CUSTOM.V1"])
+@pytest.mark.parametrize("geometry", [None, b"\xff"])
+def test_inventory_accepts_listed_identifiers_without_parseable_geometry(
+    tmp_path: Path, reference: str, geometry: bytes | None
+) -> None:
+    root = tmp_path / "library" / "ldraw"
+    parts_dir = root / "parts"
+    parts_dir.mkdir(parents=True)
+    codes = ("3001a", "MiXeD", "custom.v1")
+    listing = root / "parts.lst"
+    listing.write_text(
+        "".join(f"{code}.dat  Brick Listed\n" for code in codes), encoding="utf-8"
+    )
+    if geometry is not None:
+        for code in codes:
+            (parts_dir / f"{code}.dat").write_bytes(geometry)
+    catalog = Parts(listing)
+    model_path, inventory = _comparison_files(
+        tmp_path, reference=reference, inventory_code=reference.lower()
+    )
+    model = parse_model_result(model_path.read_text()).model
+    assert model is not None
+    assert compare_inventory(model, read_inventory(inventory), parts=catalog).matched
+    with patch("ldraw.cli._bom._parts_lst_path", return_value=listing):
+        assert main(["bom", str(model_path), "--compare", str(inventory)]) == 0
 
 
 def test_inventory_expands_extensionless_submodels_without_catalog() -> None:
@@ -88,11 +170,11 @@ def test_comparison_cli_classifies_bare_references(
     inventory = tmp_path / "inventory.csv"
     inventory.write_text("part,colour_code,quantity\n3001,4,1\n", encoding="utf-8")
     with patch(
-        "ldraw.cli._bom._try_load_parts",
-        return_value=parts if catalog_available else None,
-    ) as load_catalog:
+        "ldraw.cli._bom._parts_lst_path",
+        return_value=parts.path if catalog_available else tmp_path / "missing.lst",
+    ) as listing_path:
         assert main(["bom", str(model), "--compare", str(inventory)]) == status
-    load_catalog.assert_called_once_with()
+    listing_path.assert_called_once_with()
     output = capsys.readouterr()
     if status == 2:
         assert reference in output.err
@@ -102,14 +184,60 @@ def test_comparison_cli_classifies_bare_references(
         assert "Inventory matches" in output.out
 
 
-def test_comparison_cli_dat_references_do_not_load_catalog(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", [".dat", ".DAT"])
+def test_comparison_cli_dat_references_do_not_load_config(
+    tmp_path: Path, suffix: str
+) -> None:
     model = tmp_path / "model.ldr"
-    model.write_text("1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n", encoding="utf-8")
+    model.write_text(f"1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001{suffix}\n", encoding="utf-8")
     inventory = tmp_path / "inventory.csv"
     inventory.write_text("part,colour_code,quantity\n3001,4,1\n", encoding="utf-8")
-    with patch("ldraw.cli._bom._try_load_parts") as load_catalog:
+    with patch.object(Config, "load", side_effect=AssertionError("unexpected config")):
         assert main(["bom", str(model), "--compare", str(inventory)]) == 0
-    load_catalog.assert_not_called()
+
+
+def test_comparison_cli_config_errors_are_invalid_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    model, inventory = _comparison_files(
+        tmp_path, reference="3001", inventory_code="3001"
+    )
+    config_file = tmp_path / "broken.yml"
+    config_file.write_text("[broken", encoding="utf-8")
+    with patch("ldraw.config.CONFIG_FILE", config_file):
+        assert main(["bom", str(model), "--compare", str(inventory)]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert "inventory comparison failed" in output.err
+    assert str(config_file) in output.err
+
+
+def test_comparison_cli_traverses_once_without_catalog_work(
+    tmp_path: Path, parts: Parts
+) -> None:
+    model, inventory = _comparison_files(
+        tmp_path, reference="3001", inventory_code="3001"
+    )
+    with (
+        patch("ldraw.cli._bom._parts_lst_path", return_value=parts.path),
+        patch.object(
+            Model,
+            "iter_occurrences",
+            autospec=True,
+            side_effect=Model.iter_occurrences,
+        ) as traversal,
+        patch.object(
+            Parts, "_categorize_parts", side_effect=AssertionError("categorization")
+        ),
+        patch(
+            "ldraw.catalog.catalog_fingerprint",
+            side_effect=AssertionError("fingerprint"),
+        ),
+        patch("sqlite3.connect", side_effect=AssertionError("SQLite")),
+    ):
+        assert main(["bom", str(model), "--compare", str(inventory)]) == 0
+    assert traversal.call_count == 1
+    assert traversal.call_args.kwargs == {"include_steps": False}
 
 
 @pytest.mark.parametrize("failure", ["missing", "unreadable", "undecodable"])

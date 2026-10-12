@@ -12,6 +12,7 @@ from zipfile import BadZipFile
 
 import httpx2
 
+from ldraw._constants import COMPLETE_VERSION
 from ldraw.catalog import (
     CATALOG_SCHEMA_VERSION,
     CatalogFingerprint,
@@ -23,7 +24,7 @@ from ldraw.catalog import (
 )
 from ldraw.config import Config
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
-from ldraw.downloads import COMPLETE_VERSION, cache_ldraw
+from ldraw.downloads import cache_ldraw
 from ldraw.downloads import download as download_library
 from ldraw.errors import CouldNotDetermineLatestVersionError
 from ldraw.generation import generate as generate_library
