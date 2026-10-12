@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import requests
+import httpx2
 
 from ldraw.config import Config
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -294,16 +294,16 @@ def plan_download(
     resumable = False
     release = version if version != COMPLETE_VERSION else None
     try:
-        response = requests.head(
+        response = httpx2.head(
             url=url,
-            allow_redirects=True,
+            follow_redirects=True,
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         if raw_size := response.headers.get("content-length"):
             size = int(raw_size)
         resumable = "bytes" in response.headers.get("accept-ranges", "").casefold()
-    except (OSError, ValueError, requests.RequestException) as exc:
+    except (OSError, ValueError, httpx2.HTTPError) as exc:
         diagnostics.append(
             Diagnostic(
                 line_number=None,
@@ -322,7 +322,7 @@ def plan_download(
             CouldNotDetermineLatestVersionError,
             OSError,
             ValueError,
-            requests.RequestException,
+            httpx2.HTTPError,
         ) as exc:
             diagnostics.append(
                 Diagnostic(

@@ -28,29 +28,34 @@ uv run ldraw generate --yes
 
 ### 2. Your First Model
 
-Create a single LEGO brick:
+Create and save a model without generating Python part modules:
 
 ```python
-#!/usr/bin/env python
+from pathlib import Path
+from ldraw import Matrix, Model, Piece, Vector, LDrawSession
+from ldraw.units import STUD_PITCH, PLATE_HEIGHT, BRICK_HEIGHT, LDU_TO_MM
 
-from ldraw.geometry import Identity, Vector
-from ldraw.library.colours import Red
-from ldraw.library.parts import Brick2X2
-from ldraw.pieces import Piece
-
-brick = Piece(
-    colour=Red,
-    position=Vector(0, 0, 0),
-    matrix=Identity(),
-    part=Brick2X2,
+model = Model(name="first.ldr")
+model.add(Piece.place("3001", colour=4))
+model.add(
+    Piece.place(
+        "3005",
+        colour=14,
+        position=Vector(STUD_PITCH, -BRICK_HEIGHT, 0),
+        matrix=Matrix.rotation(x=0, y=90, z=0),
+    )
 )
-
-print(brick.to_ldraw())
+model.write(Path("first.ldr"))
+parts = LDrawSession().load()
+print(parts.description_for("3001"))
 ```
 
-This outputs LDraw format text that can be saved to a `.ldr` file and opened
-in any LDraw-compatible viewer. `str(brick)` produces the same text; `repr`
-is reserved for debugging.
+`Matrix.rotation(*, x=0, y=0, z=0, units=Degrees)` returns a fresh matrix,
+equivalent to the existing local X/Y/Z `Identity().rotate(...)` chain.
+Use `Radians` from `ldraw.geometry` for radian angles. Each matrix is independent.
+Units are LDU: stud pitch 20, plate height 8, brick height 24; multiply by
+`LDU_TO_MM` (0.4) for millimetres. The historical `ldraw.model_summary.LDU_TO_MM`
+import remains available.
 
 ### 3. Understanding the Coordinate System
 
@@ -444,3 +449,43 @@ uv run ldraw generate --yes
 4. Browse the [API reference](api/index.md) for details on the public classes
    and helper functions.
 5. Create reusable model components.
+
+## Compare a model with inventory CSV
+
+```python
+from ldraw import compare_inventory, read_inventory, read_model
+
+inventory = read_inventory("inventory.csv")
+comparison = compare_inventory(
+    read_model("scene.mpd"), inventory, part_aliases={"old-part": "new-part"}
+)
+for difference in comparison.differences:
+    print(
+        difference.part,
+        difference.colour,
+        difference.expected,
+        difference.actual,
+        difference.missing,
+        difference.extra,
+    )
+assert comparison.matched
+```
+
+`InventoryComparison` and `InventoryDifference` are immutable. Repeated rows
+aggregate, nested/repeated submodels expand, and inherited colours resolve.
+Native BOM CSV accepts `part`, `colour_code`, and `quantity`; direct RGB BOM
+rows use `colour_name` when `colour_code` is empty. Quantities must be
+nonnegative integers. Missing columns, invalid quantities/colours, cycles,
+and unresolved model references fail rather than produce partial matches.
+
+For third-party CSV, `read_inventory(columns={"part": "Part ID",
+"colour": "Colour ID", "quantity": "Qty"}, colour_map={"red": 4})`
+explicitly maps headers and colour values. A supplied colour map must cover
+every inventory colour. Colours map only on input; `compare_inventory` part
+aliases canonicalize both sides, including case and `.dat` suffixes.
+
+Validation emits `model.duplicate_placement` warnings for exact equality of
+normalized reference, colour, position, and matrix within one section,
+including across STEP boundaries. The later line identifies the first
+occurrence. Independent MPD sections are checked separately; `--strict`
+makes these warnings fail validation.

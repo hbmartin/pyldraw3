@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
 
-LDU_TO_MM = 0.4
+from ldraw.units import LDU_TO_MM
 
 
 @dataclass(frozen=True, slots=True)

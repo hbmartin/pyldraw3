@@ -7,12 +7,17 @@ import io
 import json
 from collections import Counter
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+from ldraw.colour import Colour
+from ldraw.errors import PartError
+from ldraw.part import colour_from_str
+from ldraw.utils import normalize_ref
 
-    from ldraw.colour import Colour
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator, Mapping
+
     from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
 
@@ -155,3 +160,226 @@ def rows_to_csv(rows: Iterable[BomRow]) -> str:
 def rows_to_json(rows: Iterable[BomRow]) -> str:
     """Serialize rows to a JSON array of objects."""
     return json.dumps([row.to_dict() for row in rows], indent=2)
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryDifference:
+    """A mismatched part/colour count; expected is the inventory quantity."""
+
+    part: str
+    colour: str
+    expected: int
+    actual: int
+
+    @property
+    def missing(self) -> int:
+        """Number of inventory pieces missing from the model."""
+        return max(0, self.expected - self.actual)
+
+    @property
+    def extra(self) -> int:
+        """Number of model pieces absent from the inventory."""
+        return max(0, self.actual - self.expected)
+
+    def to_dict(self) -> dict[str, str | int]:
+        """Return counts suitable for JSON and CSV output."""
+        return {**asdict(self), "missing": self.missing, "extra": self.extra}
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryComparison:
+    """Deterministically ordered inventory differences."""
+
+    differences: tuple[InventoryDifference, ...]
+
+    @property
+    def matched(self) -> bool:
+        """Whether the model and inventory have identical counts."""
+        return not self.differences
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the comparison as a JSON-ready object."""
+        return {
+            "matched": self.matched,
+            "differences": [item.to_dict() for item in self.differences],
+        }
+
+
+def _inventory_colour(token: str) -> Colour:
+    token = token.strip()
+    if token.startswith("#"):
+        return Colour(rgb=token)
+    value = colour_from_str(token)
+    if isinstance(value, int):
+        if value < 0:
+            message = f"negative colour code {value}"
+            raise ValueError(message)
+        return Colour(code=value)
+    return value
+
+
+def _inventory_row(
+    row: dict[str, str | None],
+    *,
+    columns: Mapping[str, str],
+    colour_map: Mapping[str, str | int] | None,
+) -> BomRow:
+    part = (row.get(columns["part"]) or "").strip()
+    if not part:
+        message = "empty part identifier"
+        raise ValueError(message)
+    quantity = int(row.get(columns["quantity"]) or "")
+    if quantity < 0:
+        message = "quantity must be a nonnegative integer"
+        raise ValueError(message)
+    colour_token = (row.get(columns["colour"]) or "").strip()
+    if not colour_token and columns["colour"] == "colour_code":
+        colour_token = row.get("colour_name") or ""
+    if colour_map is not None:
+        if colour_token not in colour_map:
+            message = f"unmapped inventory colour {colour_token!r}"
+            raise ValueError(message)
+        colour_token = str(colour_map[colour_token])
+    colour = _inventory_colour(colour_token)
+    return BomRow(
+        part=part,
+        description=None,
+        colour_code=colour.code,
+        colour_name=colour.rgb,
+        quantity=quantity,
+    )
+
+
+def read_inventory(
+    path: str | Path,
+    *,
+    columns: Mapping[str, str] | None = None,
+    colour_map: Mapping[str, str | int] | None = None,
+) -> list[BomRow]:
+    """Read native BOM CSV or explicitly mapped inventory columns/colours.
+
+    ``columns`` maps ``part``, ``colour``, and ``quantity`` to CSV headers.
+    Without a colour map, colour values are LDraw codes or direct RGB.
+    When a map is supplied, every inventory colour must have an entry.
+    Empty native ``colour_code`` cells fall back to ``colour_name`` for RGB.
+    Malformed rows raise ``ValueError`` with their CSV line number.
+    """
+    names = {"part": "part", "colour": "colour_code", "quantity": "quantity"}
+    if columns is not None:
+        if set(columns) - names.keys():
+            message = "column mapping supports only part, colour, and quantity"
+            raise ValueError(message)
+        names.update(columns)
+    if any(not isinstance(value, str) or not value for value in names.values()):
+        message = "column names must be nonempty strings"
+        raise ValueError(message)
+    rows: list[BomRow] = []
+    with Path(path).open(encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        if reader.fieldnames is None or not set(names.values()) <= set(
+            reader.fieldnames
+        ):
+            message = (
+                f"inventory is missing required columns: {', '.join(names.values())}"
+            )
+            raise ValueError(message)
+        if len(reader.fieldnames) != len(set(reader.fieldnames)):
+            message = "inventory contains duplicate column headers"
+            raise ValueError(message)
+        for row in reader:
+            try:
+                if None in row:
+                    message = "row has more cells than the header"
+                    raise ValueError(message)  # noqa: TRY301 - attach CSV line context
+                parsed = _inventory_row(row, columns=names, colour_map=colour_map)
+            except (ValueError, TypeError, PartError) as exc:
+                message = f"inventory line {reader.line_num}: {exc}"
+                raise ValueError(message) from exc
+            if parsed.quantity:
+                rows.append(parsed)
+    return rows
+
+
+def _canonical_part(code: str, aliases: Mapping[str, str]) -> str:
+    key = normalize_ref(code).removesuffix(".dat")
+    seen: set[str] = set()
+    while key in aliases and aliases[key] != key:
+        if key in seen:
+            message = f"cyclic part alias involving {key!r}"
+            raise ValueError(message)
+        seen.add(key)
+        key = aliases[key]
+    return key
+
+
+def _inventory_counts(
+    rows: Iterable[BomRow], *, aliases: Mapping[str, str]
+) -> Counter[tuple[str, str]]:
+    counts: Counter[tuple[str, str]] = Counter()
+    for row in rows:
+        if not isinstance(row.quantity, int) or row.quantity < 0:
+            message = "inventory quantities must be nonnegative integers"
+            raise ValueError(message)
+        colour = (
+            str(row.colour_code)
+            if row.colour_code is not None
+            else _inventory_colour(row.colour_name or "").rgb
+        )
+        if colour is None:  # pragma: no cover - direct colours always have RGB
+            raise AssertionError
+        counts[(_canonical_part(row.part, aliases), colour)] += row.quantity
+    return counts
+
+
+def compare_inventory(
+    model: _ModelLike,
+    expected: Iterable[BomRow],
+    *,
+    part_aliases: Mapping[str, str] | None = None,
+) -> InventoryComparison:
+    """Compare expanded model counts with inventory rows, aggregating duplicates.
+
+    Part aliases apply to both sides; colour mapping belongs to CSV input.
+    Cyclic or unresolved submodel references fail instead of returning a
+    potentially matching partial inventory.
+    """
+    aliases = {
+        normalize_ref(key).removesuffix(".dat"): normalize_ref(value).removesuffix(
+            ".dat"
+        )
+        for key, value in (part_aliases or {}).items()
+    }
+    for key in aliases:
+        _canonical_part(key, aliases)
+    occurrences = tuple(model.iter_occurrences(include_steps=False))
+    if any(
+        item.reference.casefold().endswith((".ldr", ".mpd")) for item in occurrences
+    ):
+        message = "model contains unresolved submodel references"
+        raise ValueError(message)
+    actual = _inventory_counts(
+        bill_of_materials(occurrences=occurrences), aliases=aliases
+    )
+    inventory = _inventory_counts(expected, aliases=aliases)
+    differences = tuple(
+        InventoryDifference(
+            part=part, colour=colour, expected=inventory[key], actual=actual[key]
+        )
+        for key in sorted(actual.keys() | inventory.keys())
+        if actual[key] != inventory[key]
+        for part, colour in (key,)
+    )
+    return InventoryComparison(differences=differences)
+
+
+def comparison_to_csv(comparison: InventoryComparison) -> str:
+    """Serialize comparison differences as CSV, including an empty header on match."""
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=("part", "colour", "expected", "actual", "missing", "extra"),
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerows(item.to_dict() for item in comparison.differences)
+    return buffer.getvalue()

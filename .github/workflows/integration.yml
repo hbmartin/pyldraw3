@@ -52,7 +52,9 @@ jobs:
       timeout-minutes: 15
     
     - name: Run integration tests
-      run: uv run pytest --integration -v --tb=short --durations=10
+      env:
+        SNAPSHOT_ARGS: ${{ matrix.python-version == '3.12' && matrix.ldraw-version == '2018-02' && '--connection-snapshots' || '' }}
+      run: uv run pytest --integration -v --tb=short --durations=10 $SNAPSHOT_ARGS
       timeout-minutes: 45
     
     - name: Test CLI commands

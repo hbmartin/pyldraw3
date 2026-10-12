@@ -64,6 +64,8 @@ EXPECTED_ALL = [
     "InstructionIssue",
     "InstructionSection",
     "InstructionStep",
+    "InventoryComparison",
+    "InventoryDifference",
     "LDCadShadowLibrary",
     "LDrawCapability",
     "LDrawPaths",
@@ -128,6 +130,7 @@ EXPECTED_ALL = [
     "angular_alignment_within",
     "bill_of_materials",
     "bounds_gap",
+    "compare_inventory",
     "connection_residual",
     "connections_compatible",
     "discover_libraries",
@@ -144,6 +147,7 @@ EXPECTED_ALL = [
     "parse_model_result",
     "plan_download",
     "prepare_catalog",
+    "read_inventory",
     "read_model",
     "render_capabilities",
     "render_preview",
@@ -162,6 +166,10 @@ def test_every_exported_name_resolves() -> None:
 
 
 EXPORT_ORIGINS: dict[str, str] = {
+    "InventoryComparison": "bom",
+    "InventoryDifference": "bom",
+    "compare_inventory": "bom",
+    "read_inventory": "bom",
     "ALL_CATALOG_SEARCH_FIELDS": "parts",
     "AnnularProfile": "connection_types",
     "BfcCertification": "part_metadata",
@@ -314,6 +322,9 @@ def test_part_geometry_modules_import_in_either_order() -> None:
     for command in (
         "import ldraw.parts; import ldraw.part_geometry",
         "import ldraw.part_geometry; import ldraw.parts",
+        "import ldraw._connection_parser; import ldraw.connection_metadata",
+        "import ldraw._connection_sources; import ldraw.connection_metadata",
+        "import ldraw._connection_features; import ldraw._connection_reporting",
     ):
         try:
             subprocess.run(
@@ -342,3 +353,37 @@ def test_parts_module_does_not_import_snippets() -> None:
             alias.name == "ldraw.snippets" for alias in node.names
         ):
             pytest.fail("ldraw.parts must not import ldraw.snippets")
+
+
+def test_lightweight_startup_and_generate_import_orders() -> None:
+    commands = (
+        (
+            "import sys; import ldraw; assert 'numpy' not in sys.modules; "
+            "assert 'httpx2' not in sys.modules; assert 'Model' in dir(ldraw); "
+            "assert ldraw.Model is ldraw.Model"
+        ),
+        (
+            "import sys; from ldraw.cli import build_parser;\n"
+            "try: build_parser().parse_args(['--help'])\n"
+            "except SystemExit: pass\n"
+            "assert 'numpy' not in sys.modules; assert 'httpx2' not in sys.modules"
+        ),
+        "import ldraw.generate; from ldraw import generate; assert callable(generate)",
+        (
+            "from ldraw import generate; import ldraw.generate; "
+            "import ldraw; assert callable(ldraw.generate)"
+        ),
+    )
+    for command in commands:
+        subprocess.run(
+            [sys.executable, "-c", command],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+
+def test_unknown_export() -> None:
+    with pytest.raises(AttributeError):
+        _ = ldraw.missing_public_export

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from itertools import product
 from typing import TYPE_CHECKING, cast
 
+from ldraw._vertex_arrays import transform_vertices, vertex_bounds
 from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionKind,
@@ -552,10 +553,7 @@ def transformed_bounds(
     matrix: Matrix,
 ) -> BoundingBox | None:
     """Return the exact world AABB after transforming expanded points."""
-    bounds = _BoundsAccumulator()
-    for point in points:
-        bounds.add(position + matrix * point)
-    return bounds.box()
+    return vertex_bounds(transform_vertices(points, position=position, matrix=matrix))
 
 
 def occurrence_bounds(occurrence: ModelOccurrence, parts: Parts) -> BoundingBox:

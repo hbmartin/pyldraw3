@@ -287,15 +287,20 @@ def test_download_plan_reports_exact_size_release_and_resume(
 ) -> None:
     partial = tmp_path / "complete.zip.part"
     partial.write_bytes(b"partial")
-    response = type(
-        "Response",
-        (),
-        {
-            "headers": {"content-length": "1234", "accept-ranges": "bytes"},
-            "raise_for_status": lambda self: None,
-        },
-    )()
-    monkeypatch.setattr("ldraw.library_setup.requests.head", lambda **kwargs: response)
+
+    def head(**kwargs: object) -> object:
+        assert kwargs["follow_redirects"] is True
+        assert kwargs["timeout"] == 30
+        return type(
+            "Response",
+            (),
+            {
+                "headers": {"content-length": "1234", "accept-ranges": "bytes"},
+                "raise_for_status": lambda self: None,
+            },
+        )()
+
+    monkeypatch.setattr("ldraw.library_setup.httpx2.head", head)
     monkeypatch.setattr(
         "ldraw.library_setup.get_latest_release_id",
         lambda: "2026-01",

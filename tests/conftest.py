@@ -18,6 +18,11 @@ settings.load_profile("ci" if os.environ.get("CI") else "dev")
 
 def pytest_addoption(parser) -> None:
     parser.addoption("--integration", action="store_true", help="run integration tests")
+    parser.addoption(
+        "--connection-snapshots",
+        action="store_true",
+        help="check pinned 2018-02 corpus",
+    )
 
 
 def pytest_configure(config) -> None:

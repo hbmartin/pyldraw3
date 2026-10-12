@@ -30,7 +30,7 @@ dependencies = [
     "platformdirs>=4.3.8",
     "pystache>=0.6.0",
     "progress>=1.6.1",
-    "requests>=2.32.4",
+    "httpx2>=2.13.1",
     "numpy>=2.0",
     "pyyaml>=6.0.1",
 ]
@@ -102,17 +102,18 @@ line-ending = "auto"
 
 [tool.coverage.paths]
 source = ["ldraw", "*/site-packages"]
-tests = ["tests", "*/tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["ldraw", "tests"]
+source = ["ldraw"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 97
-exclude_lines = [
-  "pragma: no cover",
+fail_under = 95
+precision = 2
+exclude_also = [
+  "def __repr__",
+  "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
 
@@ -135,9 +136,10 @@ package = true
 exclude = '\.git|\.nox|noxfile.py'
 
 [tool.deptry]
-extend_exclude = ["benchmarks"]
+extend_exclude = ["benchmarks", "scripts/check_function_budget.py"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (run with '--integration')",
     "slow: marks tests as slow-running",

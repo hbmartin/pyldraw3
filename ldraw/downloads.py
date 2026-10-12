@@ -1,5 +1,6 @@
 """LDraw library file download and extraction functionality."""
 
+import hashlib
 import json
 import logging
 import re
@@ -8,7 +9,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import requests
+import httpx2
 from progress.bar import Bar
 
 from ldraw.dirs import get_cache_dir
@@ -293,7 +294,7 @@ def _read_resume_validator(partial: Path) -> _ResumeValidator | None:
     )
 
 
-def _write_resume_validator(*, partial: Path, response: requests.Response) -> None:
+def _write_resume_validator(*, partial: Path, response: httpx2.Response) -> None:
     """Persist the response's freshness validator, or clear a stale one.
 
     Weak ETags are ignored: ``If-Range`` requires a strong validator.
@@ -339,7 +340,7 @@ def _content_range_complete_size(header: str | None) -> int | None:
 
 def _response_validator_matches(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     validator: _ResumeValidator,
 ) -> bool | None:
     """Compare an echoed response validator with the stored resume validator."""
@@ -377,7 +378,7 @@ def _resume_state(
 
 def _finalize_unsatisfiable_range(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     partial: Path,
     offset: int,
     validator: _ResumeValidator | None,
@@ -407,7 +408,7 @@ def _finalize_unsatisfiable_range(
 
 def _resume_is_consistent(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     offset: int,
     validator: _ResumeValidator | None,
 ) -> bool:
@@ -478,7 +479,9 @@ def _download(  # noqa: PLR0913 - streaming state and controls are explicit
             break
     else:
         message = f"Could not download {url}: restarted transfer did not complete"
-        raise requests.HTTPError(message)
+        raise httpx2.RequestError(
+            message, request=httpx2.Request(method="GET", url=url)
+        )
     partial.replace(retrieved)
     _sidecar_path(partial).unlink(missing_ok=True)
     return retrieved
@@ -502,9 +505,10 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
     attempt discarded an unusable partial and the caller should restart.
     """
     offset, validator, request_headers = _resume_state(partial, resume=resume)
-    with requests.get(
+    with httpx2.stream(
+        method="GET",
         url=url,
-        stream=True,
+        follow_redirects=True,
         timeout=_REQUEST_TIMEOUT_SECONDS,
         headers=request_headers,
     ) as response:
@@ -552,7 +556,7 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
 
 def _stream_download(  # noqa: PLR0913 - transfer state is explicit
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     partial: Path,
     retrieved: Path,
     url: str,
@@ -596,7 +600,7 @@ def _stream_download(  # noqa: PLR0913 - transfer state is explicit
         with partial.open("ab" if accepted_resume else "wb") as file:
             bar = Bar(f"Downloading {url} ...", max=total) if show_progress else None
             current = offset
-            for data in response.iter_content(chunk_size=chunk_size):
+            for data in response.iter_bytes(chunk_size=chunk_size):
                 check_cancelled(cancellation)
                 written = file.write(data)
                 current += written
@@ -665,21 +669,12 @@ def download(
         resume=resume,
         cancellation=cancellation,
     )
-    if (retrieved != cached or not cached_archive_valid) and not (
-        integrity := check_archive_integrity(retrieved)
-    ).valid:
-        logger.warning(
-            "Discarding corrupt downloaded archive %s: %s",
-            retrieved,
-            integrity.bad_member or integrity.error,
-        )
-        retrieved.unlink(missing_ok=True)
-        detail = integrity.bad_member or integrity.error or "unknown integrity error"
-        message = (
-            f"Downloaded archive {retrieved.name} failed integrity check: {detail}"
-        )
-        raise zipfile.BadZipFile(message)
+    _verify_retrieved_archive(
+        retrieved, cached=cached, cached_archive_valid=cached_archive_valid
+    )
 
+    with retrieved.open("rb") as archive:
+        archive_digest = hashlib.file_digest(archive, "sha256").hexdigest()
     version_dir = unpack_version(
         version_zip=retrieved,
         version=version,
@@ -702,6 +697,11 @@ def download(
         mode="description",
         version_dir=version_dir,
     )
+    library_root = version_dir / "ldraw"
+    (library_root / "_archive_sha256.txt").write_text(
+        f"{archive_digest}\n", encoding="utf-8"
+    )
+
     if version == COMPLETE_VERSION:
         version = get_latest_release_id()
         release_file = Path(version_dir) / "ldraw" / "_release.txt"
@@ -709,3 +709,23 @@ def download(
         release_file.write_text(version)
 
     return version
+
+
+def _verify_retrieved_archive(
+    retrieved: Path, *, cached: Path, cached_archive_valid: bool
+) -> None:
+    """Reject corrupt downloads before extraction and checksum recording."""
+    if (retrieved != cached or not cached_archive_valid) and not (
+        integrity := check_archive_integrity(retrieved)
+    ).valid:
+        logger.warning(
+            "Discarding corrupt downloaded archive %s: %s",
+            retrieved,
+            integrity.bad_member or integrity.error,
+        )
+        retrieved.unlink(missing_ok=True)
+        detail = integrity.bad_member or integrity.error or "unknown integrity error"
+        message = (
+            f"Downloaded archive {retrieved.name} failed integrity check: {detail}"
+        )
+        raise zipfile.BadZipFile(message)

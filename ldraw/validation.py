@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ldraw.colour import Colour
-    from ldraw.model import ModelLoadResult
+    from ldraw.model import Model, ModelLoadResult
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
 
@@ -55,6 +55,39 @@ _COLOURED_TYPES = (Piece, Line, Triangle, Quadrilateral, OptionalLine)
 
 
 ValidationIssue = Diagnostic
+
+
+def iter_duplicate_issues(
+    model: Model, *, path: Path | None = None
+) -> Iterator[ValidationIssue]:
+    """Warn about exact duplicate placements within one model section."""
+    seen: dict[tuple[object, ...], int | None] = {}
+    for piece in model.pieces:
+        key = (
+            normalize_ref(piece.reference),
+            piece.colour,
+            piece.position.x,
+            piece.position.y,
+            piece.position.z,
+            *piece.matrix.flatten(),
+        )
+        number = model.source_line_for(piece)
+        if key in seen:
+            first = seen[key]
+            location = f"line {first}" if first is not None else "an earlier placement"
+            yield ValidationIssue(
+                line_number=number,
+                message=(
+                    f"duplicate placement of {piece.reference}; first at {location}"
+                ),
+                severity=Severity.WARNING,
+                code=DiagnosticCode.MODEL_DUPLICATE_PLACEMENT,
+                path=path,
+                section=model.name or None,
+                offending_value=piece.reference,
+            )
+        else:
+            seen[key] = number
 
 
 def _unknown_part(piece: Piece, parts: Parts) -> bool:

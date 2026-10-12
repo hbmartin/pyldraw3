@@ -1,9 +1,9 @@
 # Upgrading pyldraw3 from 1.6.0 to 1.7.0
 
-Version 1.7 is a correctness release for the connection subsystem that 1.6
-introduced. Nothing is removed, no signature gains a required argument, and
-the runtime dependencies are unchanged — but inferred `stud_receptacle`
-features move to different positions and are emitted in different numbers, so
+Version 1.7 corrects the connection subsystem that 1.6 introduced and replaces
+Requests with HTTPX2 for downloads. No public API is removed or gains a required
+argument. Inferred `stud_receptacle` features move to different positions and
+are emitted in different numbers, so
 `Parts.connections()`, `stud_contacts()`, the connection graphs, snap
 suggestions, and the `inspect` JSON payload all report different values for
 parts with tubes.
@@ -12,6 +12,18 @@ No cached artifact encodes connection features, so upgrading needs no
 `ldraw download`, `ldraw generate`, or catalog rebuild. Clear only the
 in-process geometry cache if you hold one across the upgrade
 (`clear_part_geometry_cache()`).
+
+## HTTP downloads use HTTPX2
+
+The runtime HTTP dependency is now `httpx2>=2.13.1`. Downloads retain streaming,
+redirect following, explicit timeouts, and ETag/Last-Modified resume validation.
+Streaming responses are closed when a transfer finishes or fails.
+
+If you catch network failures from `ldraw.download()`, catch `httpx2.HTTPError`.
+HTTP status failures use `httpx2.HTTPStatusError`; connection and timeout failures
+use other subclasses of `httpx2.HTTPError`. `ensure_library()` continues to wrap
+setup failures in `RuntimeError`, preserving the underlying exception as its
+cause.
 
 ## The problem 1.7 fixes
 

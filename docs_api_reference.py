@@ -21,6 +21,11 @@ class MacroEnvironment(Protocol):
 #: Each entry is (module, attribute); a missing attribute fails the docs
 #: build exactly like a stale ``__all__`` name.
 SUPPLEMENTAL_API: tuple[tuple[str, str], ...] = (
+    ("ldraw.bom", "comparison_to_csv"),
+    ("ldraw.units", "STUD_PITCH"),
+    ("ldraw.units", "PLATE_HEIGHT"),
+    ("ldraw.units", "BRICK_HEIGHT"),
+    ("ldraw.units", "LDU_TO_MM"),
     ("ldraw.bom", "rows_to_csv"),
     ("ldraw.bom", "rows_to_json"),
     ("ldraw.config", "Config"),

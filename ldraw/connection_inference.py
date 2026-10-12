@@ -23,6 +23,7 @@ from ldraw.connection_types import (
     frame_for_axis,
 )
 from ldraw.geometry import Matrix, Vector
+from ldraw.units import STUD_PITCH
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -40,7 +41,7 @@ _AXIS_VECTORS = (Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1))
 
 _SOCKET_PROVENANCE: Final[str] = "derived:stud-socket"
 _SOCKET_NAME: Final[str] = "Stud Socket"
-_SOCKET_GRID_PITCH: Final[int] = 20
+_SOCKET_GRID_PITCH: Final[int] = STUD_PITCH
 _SOCKET_HALF_PITCH: Final[float] = _SOCKET_GRID_PITCH / 2
 _SOCKET_LATERAL_MARGIN: Final[float] = 4.0
 _SOCKET_MERGE_TOLERANCE: Final[float] = 0.5

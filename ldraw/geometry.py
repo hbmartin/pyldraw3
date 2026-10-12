@@ -72,6 +72,27 @@ class Matrix:  # noqa: PLW1641 - mutable, deliberately unhashable like list
         matrix._array = array  # noqa: SLF001
         return matrix
 
+    @classmethod
+    def rotation(
+        cls,
+        *,
+        x: Number = 0,
+        y: Number = 0,
+        z: Number = 0,
+        units: type[AngleUnits] = Degrees,
+    ) -> Self:
+        """Create an X/Y/Z local-axis rotation, using degrees by default.
+
+        Equivalent to ``Identity().rotate(x, XAxis).rotate(y, YAxis)
+        .rotate(z, ZAxis)``; matrix composition applies the rightmost
+        rotation to a vector first. Each call owns a new matrix.
+        """
+        result = Identity()
+        for angle, axis in ((x, XAxis), (y, YAxis), (z, ZAxis)):
+            if angle:
+                result = result.rotate(angle=angle, axis=axis, units=units)
+        return cls._from_array(np.asarray(result.rows, dtype=float))
+
     @property
     def rows(self) -> MatrixRows:
         """Return matrix rows as plain Python lists."""

@@ -319,3 +319,33 @@ GitHub Pages must use the "GitHub Actions" publishing source. If the
 repository remains configured to publish from a branch such as `gh-pages`, the
 live site will continue to serve that branch instead of this workflow's
 Zensical artifact.
+
+## Inventory comparison
+
+```bash
+ldraw bom MODEL.mpd --compare INVENTORY.csv --inventory-mapping MAPPING.json --format json
+```
+
+Native BOM CSV needs no mapping file. A third-party mapping is a JSON object:
+
+```json
+{
+  "columns": {"part": "Part ID", "colour": "Colour ID", "quantity": "Qty"},
+  "part_aliases": {"old-part": "new-part"},
+  "colour_map": {"red": 4, "custom": "0x2ABCDEF"}
+}
+```
+
+Column keys are `part`, `colour`, and `quantity`. Part aliases apply to both
+model and inventory; colour mappings apply only to inventory. An explicit
+colour map must cover every input colour. Repeated CSV rows aggregate.
+Negative, fractional, or missing quantities and missing columns are invalid.
+
+`--format table|csv|json` and `--output PATH` support comparisons. Differences
+expose part, colour, expected/actual quantities, and missing/extra quantities.
+Exit codes are **0** for a match, **1** for differences, and **2** for invalid
+comparison input or incomplete model counts. Ordinary BOM behavior is unchanged.
+`--inventory-mapping` requires `--compare`.
+
+Duplicate placement warnings are section-local and use exact numeric equality.
+`ldraw validate MODEL --strict` fails on warnings, including duplicates.
