@@ -10,6 +10,7 @@ from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.parts import CatalogSearchField
 from ldraw.pieces import Piece
+from ldraw.serialization import format_ldraw_number
 from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
@@ -60,17 +61,17 @@ ValidationIssue = Diagnostic
 def iter_duplicate_issues(
     model: Model, *, path: Path | None = None
 ) -> Iterator[ValidationIssue]:
-    """Warn about exact duplicate placements within one model section."""
+    """Warn about placements equal at serialization precision in one section."""
     seen: dict[tuple[object, ...], int | None] = {}
     for piece in model.pieces:
         position, matrix = piece._transformed()  # noqa: SLF001 - section-local group transform
         key = (
             normalize_ref(piece.reference),
             piece.colour,
-            position.x,
-            position.y,
-            position.z,
-            *matrix.flatten(),
+            *(
+                format_ldraw_number(value)
+                for value in (position.x, position.y, position.z, *matrix.flatten())
+            ),
         )
         number = model.source_line_for(piece)
         if key in seen:

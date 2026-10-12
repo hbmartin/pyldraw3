@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from zipfile import BadZipFile, ZipFile
 
 import pytest
 
@@ -45,10 +46,11 @@ def test_select_codes_handles_exact_capacity(tmp_path: Path, count: int) -> None
         assert selected == select_codes(parts)
 
 
-@pytest.mark.parametrize("archive_provenance", [False, True])
-def test_regeneration_verifies_content_without_requiring_archive_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, archive_provenance: bool
-) -> None:
+@pytest.fixture
+def regeneration_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, Path]:
+    """Provide isolated corpus inputs and existing output files."""
     root = tmp_path / "ldraw"
     (root / "parts").mkdir(parents=True)
     source = root / "parts" / "3001.dat"
@@ -65,14 +67,34 @@ def test_regeneration_verifies_content_without_requiring_archive_receipt(
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     output_path = tmp_path / "snapshot.json"
+    output_path.write_text('{"historical": true}\n', encoding="utf-8")
     monkeypatch.setattr(connection_snapshots, "MANIFEST", manifest_path)
     monkeypatch.setattr(connection_snapshots, "SNAPSHOT", output_path)
     monkeypatch.setattr(connection_snapshots, "CORPUS", tmp_path)
     monkeypatch.setattr(connection_snapshots, "snapshot", lambda parts, codes: {})
+    monkeypatch.setattr(
+        "sys.argv", ["connection_snapshots", "--parts-list", str(listing)]
+    )
+    return root, manifest_path, output_path
+
+
+@pytest.mark.parametrize("archive_provenance", [False, True])
+def test_regeneration_verifies_content_without_requiring_archive_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regeneration_inputs: tuple[Path, Path, Path],
+    *,
+    archive_provenance: bool,
+) -> None:
+    root, manifest_path, output_path = regeneration_inputs
+    source = root / "parts" / "3001.dat"
+    listing = root / "parts.lst"
+    manifest = json.loads(manifest_path.read_text())
     arguments = ["connection_snapshots", "--parts-list", str(listing)]
     if archive_provenance:
         archive = tmp_path / "archive.zip"
-        archive.write_bytes(b"different archive encoding")
+        with ZipFile(archive, mode="w") as zipped:
+            zipped.write(source, "wrapper/LDRAW/PARTS/3001.DAT")
         arguments.extend(("--archive", str(archive)))
     monkeypatch.setattr("sys.argv", arguments)
     connection_snapshots.main()
@@ -81,9 +103,98 @@ def test_regeneration_verifies_content_without_requiring_archive_receipt(
     assert regenerated["part_codes"] == manifest["part_codes"]
     if archive_provenance:
         assert regenerated["archive_sha256"] != manifest["archive_sha256"]
+        assert regenerated["archive_sha256"] == connection_snapshots.archive_checksum(
+            archive
+        )
+    else:
+        assert regenerated["archive_sha256"] == manifest["archive_sha256"]
+    original_manifest = manifest_path.read_bytes()
+    original_output = output_path.read_bytes()
     source.write_text("0 Changed brick\n", encoding="utf-8")
     with pytest.raises(ValueError, match="library content differs"):
         connection_snapshots.main()
+    assert manifest_path.read_bytes() == original_manifest
+    assert output_path.read_bytes() == original_output
+
+
+@pytest.mark.parametrize("failure", ["mismatch", "malformed", "unrelated", "ambiguous"])
+@pytest.mark.parametrize("select", [False, True])
+def test_regeneration_rejects_unverified_provenance_without_writing_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regeneration_inputs: tuple[Path, Path, Path],
+    failure: str,
+    *,
+    select: bool,
+) -> None:
+    root, manifest_path, output_path = regeneration_inputs
+    original_manifest = manifest_path.read_bytes()
+    original_output = output_path.read_bytes()
+    archive = tmp_path / "archive.zip"
+    if failure == "malformed":
+        archive.write_bytes(b"not a zip archive")
+    else:
+        with ZipFile(archive, mode="w") as zipped:
+            match failure:
+                case "mismatch":
+                    zipped.writestr("ldraw/parts/3001.dat", "0 Changed brick\n")
+                case "unrelated":
+                    zipped.writestr("readme.txt", "unrelated archive")
+                case "ambiguous":
+                    for prefix in ("first", "second"):
+                        zipped.writestr(f"{prefix}/ldraw/parts/3001.dat", "0 Brick\n")
+    arguments = [
+        "connection_snapshots",
+        "--parts-list",
+        str(root / "parts.lst"),
+        "--archive",
+        str(archive),
+    ]
+    if select:
+        arguments.append("--select")
+        monkeypatch.setattr(
+            connection_snapshots, "select_codes", lambda parts: ["3001"]
+        )
+    monkeypatch.setattr("sys.argv", arguments)
+    with pytest.raises((ValueError, BadZipFile)):
+        connection_snapshots.main()
+    assert manifest_path.read_bytes() == original_manifest
+    assert output_path.read_bytes() == original_output
+
+
+@pytest.mark.parametrize("verified_archive", [False, True])
+def test_reselection_records_only_explicit_verified_archive_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regeneration_inputs: tuple[Path, Path, Path],
+    *,
+    verified_archive: bool,
+) -> None:
+    root, manifest_path, _ = regeneration_inputs
+    (root / "_archive_sha256.txt").write_text("unverified receipt\n", encoding="utf-8")
+    arguments = [
+        "connection_snapshots",
+        "--parts-list",
+        str(root / "parts.lst"),
+        "--select",
+    ]
+    if verified_archive:
+        archive = tmp_path / "archive.zip"
+        with ZipFile(archive, mode="w") as zipped:
+            zipped.write(root / "parts" / "3001.dat", "ldraw/parts/3001.dat")
+        arguments.extend(("--archive", str(archive)))
+    monkeypatch.setattr(connection_snapshots, "select_codes", lambda parts: ["3001"])
+    monkeypatch.setattr("sys.argv", arguments)
+    connection_snapshots.main()
+    regenerated = json.loads(manifest_path.read_text())
+    assert regenerated["schema_version"] == 2
+    assert regenerated["part_codes"] == ["3001"]
+    if verified_archive:
+        assert regenerated["archive_sha256"] == connection_snapshots.archive_checksum(
+            archive
+        )
+    else:
+        assert "archive_sha256" not in regenerated
 
 
 def assert_snapshot_equal(actual: object, expected: object, path: str = "root") -> None:

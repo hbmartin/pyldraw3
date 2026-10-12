@@ -1034,15 +1034,10 @@ class Parts:
     def description_for(self, code: str) -> str | None:
         """Return the ``parts.lst`` description for a part code, or None.
 
-        The lookup tolerates casing differences: ``Piece.part`` preserves
-        whatever casing the source used while ``parts.lst`` codes are
-        typically lowercase, so the code is tried as given, lowercased,
-        and uppercased.
+        The lookup normalizes casing and reference separators, matching
+        library reference lookups without parsing or categorizing parts.
         """
-        for candidate in dict.fromkeys((code, code.lower(), code.upper())):
-            if (description := self.by_code.get(candidate)) is not None:
-                return description
-        return None
+        return self._by_code_normalized.get(_reference_key(code))
 
     def part(
         self,
@@ -1210,6 +1205,7 @@ class Parts:
         )
 
     def _shadow_connections_for(self, code: str) -> ShadowConnectionResult:
+        # Load connection helpers only when connection metadata is requested.
         from ldraw._connection_results import ShadowConnectionResult  # noqa: PLC0415
 
         shadows = tuple(self._connection_shadow_libraries)

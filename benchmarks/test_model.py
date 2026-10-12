@@ -27,9 +27,9 @@ class _Benchmark(Protocol):
     ) -> object: ...
 
 
-@pytest.fixture
-def pinned_parts() -> Parts:
-    """Use the same dated library content as the connection regression corpus."""
+@pytest.fixture(scope="session")
+def pinned_library() -> Path:
+    """Verify the dated connection corpus library once per benchmark session."""
     path = Path(get_cache_dir()) / "2018-02" / "ldraw" / "parts.lst"
     if not path.is_file():
         pytest.fail(
@@ -45,7 +45,13 @@ def pinned_parts() -> Parts:
         or library_content_sha256(path.parent) != manifest["library_content_sha256"]
     ):
         pytest.fail("Pinned benchmark library content mismatch; redownload 2018-02.")
-    return Parts(path)
+    return path
+
+
+@pytest.fixture
+def pinned_parts(pinned_library: Path) -> Parts:
+    """Keep each benchmark's library caches independent."""
+    return Parts(pinned_library)
 
 
 @pytest.mark.parametrize("warm", [False, True], ids=["cold", "warm"])

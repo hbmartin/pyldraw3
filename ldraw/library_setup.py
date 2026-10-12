@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING
 
 import httpx2
 
+from ldraw._constants import COMPLETE_VERSION
 from ldraw.config import Config
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
 from ldraw.downloads import (
     ARCHIVE_URL,
-    COMPLETE_VERSION,
     LDRAW_URL,
     VERSION_RE,
     check_archive_integrity,

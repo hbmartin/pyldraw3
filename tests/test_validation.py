@@ -6,7 +6,7 @@ import pytest
 
 from ldraw.diagnostics import DiagnosticCode
 from ldraw.geometry import Identity, Matrix, Vector
-from ldraw.model import Model
+from ldraw.model import Model, read_model
 from ldraw.parts import Parts
 from ldraw.pieces import Group, Piece
 from ldraw.validation import (
@@ -53,6 +53,57 @@ def test_duplicate_placements_apply_group_rotations(*, compensate: bool) -> None
     model = Model(objects=[Piece.place("3001", colour=4, position=Vector(20, 0, 0))])
     model.add_group(group)
     assert len(list(iter_duplicate_issues(model))) == int(compensate)
+
+
+def test_rotated_group_duplicates_are_stable_after_save(tmp_path: Path) -> None:
+    rotation = Matrix.rotation(y=30)
+    group = Group(matrix=rotation)
+    grouped = Piece.place("3001", colour=4, position=Vector(20, 0, 20), group=group)
+    position, _ = grouped._transformed()  # noqa: SLF001 - verify computed placement
+    direct = Piece.place(
+        "3001",
+        colour=4,
+        position=Vector(27.320508075689, position.y, position.z),
+        matrix=rotation.copy(),
+    )
+    model = Model(objects=[direct])
+    model.add_group(group)
+    assert direct.position.x != position.x
+    assert len(list(iter_duplicate_issues(model))) == 1
+    path = tmp_path / "rotated.ldr"
+    model.save(path)
+    assert len(list(iter_duplicate_issues(read_model(path)))) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "delta", "duplicates"),
+    [
+        ("position", 1e-13, 1),
+        ("position", 1e-9, 0),
+        ("matrix", 1e-13, 1),
+        ("matrix", 1e-9, 0),
+        ("large_position", 1e-4, 0),
+    ],
+)
+def test_duplicates_use_serialization_precision_without_relative_tolerance(
+    tmp_path: Path, field: str, delta: float, duplicates: int
+) -> None:
+    first = Piece.place("3001", colour=4, position=Vector(1_000_000, 0, 0))
+    position = first.position.copy()
+    rows = Identity().rows
+    match field:
+        case "position":
+            position.y = delta
+        case "large_position":
+            position.x += delta
+        case "matrix":
+            rows[0][1] = delta
+    second = Piece.place("3001", colour=4, position=position, matrix=Matrix(rows))
+    model = Model(objects=[first, second])
+    assert len(list(iter_duplicate_issues(model))) == duplicates
+    path = tmp_path / "precision.ldr"
+    model.save(path)
+    assert len(list(iter_duplicate_issues(read_model(path)))) == duplicates
 
 
 @pytest.fixture

@@ -347,16 +347,18 @@ Exit codes are **0** for a match, **1** for differences, and **2** for invalid
 comparison input or incomplete model counts. Ordinary BOM behavior is unchanged.
 `--inventory-mapping` requires `--compare`.
 
-After submodel expansion, extensionless leaf references must identify a part
-in the configured catalog. Comparison loads that catalog only when needed;
-an unknown bare reference or an unavailable catalog exits **2** and names the
-reference. Use `.dat` for part references to compare without a library.
+After submodel expansion, leaf references without an explicit `.dat` suffix
+must identify a part by their whole reference in the configured `parts.lst`.
+Comparison loads that listing only when needed, without building the parts
+index. Unknown references, an unavailable listing, or invalid configuration
+exit **2**. Use `.dat` for part references to compare without a library.
 Unresolved `.ldr`/`.mpd` references always exit **2**, and part aliases cannot
 turn an unresolved reference into a known part. Missing or undecodable models
 report the underlying read/decode diagnostic, including the filename.
 
-Duplicate placement warnings are section-local and use exact numeric equality.
-Group transforms are applied before comparing placements.
+Duplicate placement warnings are section-local. Group transforms are applied
+before comparing positions and matrices at LDraw serialization precision.
+`ldraw validate MODEL --strict` fails on warnings, including duplicates.
 
 ## Testing CLI handlers
 
@@ -365,4 +367,3 @@ compatibility manifest. New implementation helpers are not added to that
 manifest. Assigning or mocking a historical alias does not change the runtime
 handler: patch the name in the module that consumes it, for example
 `ldraw.cli._instructions._load_parts` or `ldraw.cli._download.do_download`.
-`ldraw validate MODEL --strict` fails on warnings, including duplicates.
