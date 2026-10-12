@@ -107,6 +107,7 @@ def test_download(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    (tmp_path / "complete" / "ldraw").mkdir(parents=True)
     zip_mock.return_value.__enter__.return_value.infolist.return_value = []
     zip_mock.return_value.__enter__.return_value.testzip.return_value = None
     retrieved = tmp_path / "complete.zip"
@@ -164,6 +165,7 @@ def test_download_complete_uses_ldraw_url(
         archive.writestr("ldraw/parts.lst", "parts")
     download_mock.return_value = retrieved
     unpack_version_mock.return_value = tmp_path
+    (tmp_path / "ldraw").mkdir()
 
     assert download(show_progress=False) == "2099-01"
 
@@ -727,6 +729,7 @@ def test_download_complete_discards_cached_zip(
         patch("ldraw.downloads._download") as download_mock,
     ):
         unpack_version_mock.return_value = tmp_path / "complete"
+        (tmp_path / "complete" / "ldraw").mkdir(parents=True)
         replacement = tmp_path / "replacement.zip"
         with zipfile.ZipFile(replacement, "w") as archive:
             archive.writestr("ldraw/parts.lst", "parts")
@@ -999,3 +1002,16 @@ def test_latest_release_id_rejects_missing_segment_boundary(
 
     with pytest.raises(CouldNotDetermineLatestVersionError):
         get_latest_release_id()
+
+
+def test_download_receipt_does_not_create_a_missing_library_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ldraw.downloads.cache_ldraw", tmp_path)
+    archive_path = tmp_path / "wrong.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("unrelated/readme.txt", "not an LDraw library")
+    monkeypatch.setattr("ldraw.downloads._download", lambda **kwargs: archive_path)
+    with pytest.raises(FileNotFoundError):
+        download(version="2018-02", show_progress=False)
+    assert not (tmp_path / "2018-02" / "ldraw").exists()

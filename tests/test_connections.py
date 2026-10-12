@@ -6,9 +6,12 @@ import json
 import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from ldraw.connection_metadata import (
     ConnectionMetadataCoverage,
@@ -33,7 +36,7 @@ from ldraw.connection_types import (
     snap_transform,
 )
 from ldraw.diagnostics import DiagnosticCode
-from ldraw.geometry import Identity, Matrix, Vector, YAxis
+from ldraw.geometry import Identity, Matrix, Vector, XAxis, YAxis, ZAxis
 from ldraw.inspection import bounds_gap, inspect_model
 from ldraw.model import parse_model
 from ldraw.part_geometry import part_connections, part_geometry
@@ -2038,3 +2041,77 @@ def test_spatial_hash_matches_exhaustive_contact_oracle(tmp_path: Path) -> None:
     assert tuple(map(signature, indexed)) == tuple(
         sorted(map(signature, exhaustive), key=lambda value: value[:4]),
     )
+
+
+@settings(max_examples=25)
+@given(
+    turns=st.tuples(st.integers(-4, 4), st.integers(-4, 4), st.integers(-4, 4)),
+    x=st.integers(-5, 5),
+    y=st.integers(-5, 5),
+    z=st.integers(-5, 5),
+)
+def test_socket_metadata_moves_with_rigid_child(
+    turns: tuple[int, int, int], x: int, y: int, z: int
+) -> None:
+    with TemporaryDirectory() as directory:
+        parts = _connection_parts(Path(directory))
+        matrix = (
+            Identity()
+            .rotate(turns[0] * 90, axis=XAxis)
+            .rotate(turns[1] * 90, axis=YAxis)
+            .rotate(turns[2] * 90, axis=ZAxis)
+        )
+        position = Vector(x * 20, y * 8, z * 20)
+        parent = parts.part(code="nestedsolidmeta")
+        parent.path.write_text(
+            f"0 Rigid Parent\n1 16 {position.x} {position.y} {position.z} "
+            f"{' '.join(str(value) for value in matrix.flatten())} "
+            "narrowsolidmeta.dat\n",
+            encoding="utf-8",
+        )
+        standalone = parts.connections("narrowsolidmeta")
+        nested = parts.connections("nestedsolidmeta")
+        assert len(standalone) == len(nested) == 1
+        expected = position + matrix * standalone[0].position
+        assert (
+            nested[0].position.x,
+            nested[0].position.y,
+            nested[0].position.z,
+        ) == pytest.approx((expected.x, expected.y, expected.z))
+        assert nested[0].frame.flatten() == pytest.approx(
+            (matrix * standalone[0].frame).flatten()
+        )
+        fresh = Parts(parts.path)
+        assert fresh.connections("nestedsolidmeta") == nested
+
+
+@settings(max_examples=25)
+@given(
+    scale=st.sampled_from((0.0, 1e-8)),
+    offset=st.integers(2, 8),
+    collinear=st.booleans(),
+)
+def test_degenerate_child_preserves_valid_sibling(
+    *, scale: float, offset: int, collinear: bool
+) -> None:
+    with TemporaryDirectory() as directory:
+        parts = _connection_parts(Path(directory))
+        matrix = (
+            _SINGULAR_COLLINEAR_XZ if collinear else f"{scale} 0 0 0 1 0 0 0 {scale}"
+        )
+        sibling = offset * 20
+        parent = parts.part(code="singulargridevidence")
+        parent.path.write_text(
+            f"0 Degenerate Parent\n2 24 -20 0 -20 {sibling + 20} 8 20\n"
+            f"{_GRID_STUD_PAIR}"
+            f"1 16 0 0 0 {matrix} narrowsolid.dat\n"
+            f"1 16 {sibling} 0 0 {_IDENTITY} narrowsolid.dat\n",
+            encoding="utf-8",
+        )
+        sockets = _connections_with_kind(
+            parts=parts,
+            code="singulargridevidence",
+            kind=ConnectionKind.STUD_RECEPTACLE,
+        )
+        assert _connection_positions(sockets) == _sibling_socket_positions(sibling)
+        assert all(feature.confidence > 0 for feature in sockets)

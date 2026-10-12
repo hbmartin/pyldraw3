@@ -17,3 +17,22 @@ Coverage is configured only in `pyproject.toml`: production `ldraw` source, bran
 
 Default pytest discovery selects `tests/`. Integration tests require `--integration`; benchmarks require an explicit `benchmarks/` path. The integration matrix retains both the 2018-02 and complete libraries across all supported Python versions.
 
+## Connection regression corpus
+
+The fixed manifest in `tests/snapshots/connections-2018-02-manifest.json` selects 200 parts across categories, including connector/socket regressions. Snapshots include feature identities, kinds, roles, transforms, profiles, confidence, and provenance; library roots are normalized. Numbers compare with relative tolerance `1e-9` and absolute tolerance `1e-7`, while other fields compare exactly.
+
+Downloads record the archive SHA-256 in `ldraw/_archive_sha256.txt`. A checksum mismatch fails before snapshot comparison. Only the 3.12/2018-02 integration entry runs the corpus:
+
+```bash
+uv run ldraw download --version 2018-02 --yes
+uv run pytest --integration --connection-snapshots tests/test_connection_snapshots.py
+```
+
+Snapshots never update from a test. Regenerate explicitly and inspect the resulting diff:
+
+```bash
+uv run python scripts/connection_snapshots.py --parts-list /path/to/2018-02/ldraw/parts.lst
+```
+
+Pass `--archive /path/to/retained/archive.zip` if a checksum receipt is unavailable. `--select` deliberately recreates the manifest and archive identity; use it only when intentionally replacing the pinned corpus.
+

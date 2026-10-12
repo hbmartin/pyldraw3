@@ -1,5 +1,6 @@
 """LDraw library file download and extraction functionality."""
 
+import hashlib
 import json
 import logging
 import re
@@ -665,21 +666,12 @@ def download(
         resume=resume,
         cancellation=cancellation,
     )
-    if (retrieved != cached or not cached_archive_valid) and not (
-        integrity := check_archive_integrity(retrieved)
-    ).valid:
-        logger.warning(
-            "Discarding corrupt downloaded archive %s: %s",
-            retrieved,
-            integrity.bad_member or integrity.error,
-        )
-        retrieved.unlink(missing_ok=True)
-        detail = integrity.bad_member or integrity.error or "unknown integrity error"
-        message = (
-            f"Downloaded archive {retrieved.name} failed integrity check: {detail}"
-        )
-        raise zipfile.BadZipFile(message)
+    _verify_retrieved_archive(
+        retrieved, cached=cached, cached_archive_valid=cached_archive_valid
+    )
 
+    with retrieved.open("rb") as archive:
+        archive_digest = hashlib.file_digest(archive, "sha256").hexdigest()
     version_dir = unpack_version(
         version_zip=retrieved,
         version=version,
@@ -702,6 +694,11 @@ def download(
         mode="description",
         version_dir=version_dir,
     )
+    library_root = version_dir / "ldraw"
+    (library_root / "_archive_sha256.txt").write_text(
+        f"{archive_digest}\n", encoding="utf-8"
+    )
+
     if version == COMPLETE_VERSION:
         version = get_latest_release_id()
         release_file = Path(version_dir) / "ldraw" / "_release.txt"
@@ -709,3 +706,23 @@ def download(
         release_file.write_text(version)
 
     return version
+
+
+def _verify_retrieved_archive(
+    retrieved: Path, *, cached: Path, cached_archive_valid: bool
+) -> None:
+    """Reject corrupt downloads before extraction and checksum recording."""
+    if (retrieved != cached or not cached_archive_valid) and not (
+        integrity := check_archive_integrity(retrieved)
+    ).valid:
+        logger.warning(
+            "Discarding corrupt downloaded archive %s: %s",
+            retrieved,
+            integrity.bad_member or integrity.error,
+        )
+        retrieved.unlink(missing_ok=True)
+        detail = integrity.bad_member or integrity.error or "unknown integrity error"
+        message = (
+            f"Downloaded archive {retrieved.name} failed integrity check: {detail}"
+        )
+        raise zipfile.BadZipFile(message)
