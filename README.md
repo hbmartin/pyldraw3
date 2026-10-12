@@ -493,6 +493,9 @@ uv run ruff format .         # Format code
 uv run ruff check            # Lint code
 uv run ruff check --fix      # Fix linting issues
 
+# Package metadata (pyroma621 provides the pyroma command)
+uv run --locked pyroma --min 10 .
+
 # Build package
 uv build
 ```
@@ -535,11 +538,11 @@ instead of the Zensical workflow artifact.
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the fork/branch/PR workflow.
+Contributions are welcome! See [CONTRIBUTING.md](https://github.com/hbmartin/pyldraw3/blob/main/CONTRIBUTING.md) for the fork/branch/PR workflow.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](COPYING) file for details.
+This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](https://github.com/hbmartin/pyldraw3/blob/main/COPYING) file for details.
 
 ```
 pyldraw, a Python package for creating LDraw format files.
