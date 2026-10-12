@@ -31,7 +31,7 @@ model.add(
         matrix=Matrix.rotation(y=90),
     )
 )
-model.write(Path("scene.ldr"))
+model.save(Path("scene.ldr"))
 ```
 
 For catalog searches, geometry, and connections, download a library and load it through a session:

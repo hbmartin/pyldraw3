@@ -3,15 +3,26 @@
 import json
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from ldraw.cli import _dispatch_instructions, main
+from ldraw.config import Config
 from ldraw.parts import Parts
 
 TESTS_DIR = Path(__file__).resolve().parent
 PARTS = Parts(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep instruction tests independent of installed libraries."""
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing-library"),
+        generated_path=str(tmp_path / "generated"),
+    )
+    monkeypatch.setattr(Config, "load", lambda: config)
 
 
 def _piece(reference: str = "3001.dat", *, x: int = 0) -> str:
@@ -40,15 +51,19 @@ def test_unknown_instruction_subcommand_fails_explicitly() -> None:
         ["instructions", "snapshots", "model.ldr", "--out", "bundle"],
     ],
 )
-@patch("ldraw.cli._load_parts", return_value=None)
+@patch("ldraw.cli._instructions._load_parts", return_value=None)
 def test_all_instruction_commands_require_a_catalog(
-    load_parts_mock: object,
+    load_parts_mock: Mock,
     arguments: list[str],
+    tmp_path: Path,
 ) -> None:
+    model = _write_model(tmp_path / "model.ldr")
+    arguments = [*arguments[:2], str(model), *arguments[3:]]
     assert main(arguments) == 1
+    load_parts_mock.assert_called_once_with()
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_inspect_prints_step_rows_and_optional_parts_trays(
     load_parts_mock: object,
     tmp_path: Path,
@@ -69,7 +84,7 @@ def test_inspect_prints_step_rows_and_optional_parts_trays(
     assert "Brick  2 x  4" in output
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_inspect_selects_sections_and_reports_unknown_names(
     load_parts_mock: object,
     tmp_path: Path,
@@ -121,7 +136,7 @@ def test_inspect_selects_sections_and_reports_unknown_names(
     assert "No reachable instruction section" in capsys.readouterr().err
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_instruction_validate_combines_lint_and_semantic_exit_codes(
     load_parts_mock: object,
     tmp_path: Path,
@@ -144,7 +159,7 @@ def test_instruction_validate_combines_lint_and_semantic_exit_codes(
     assert "[malformed-directive]" in capsys.readouterr().out
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_instruction_validate_max_parts_and_invalid_threshold(
     load_parts_mock: object,
     tmp_path: Path,
@@ -181,7 +196,7 @@ def test_instruction_validate_max_parts_and_invalid_threshold(
     assert "zero or greater" in capsys.readouterr().err
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_export_supports_stdout_files_collisions_and_force(
     load_parts_mock: object,
     tmp_path: Path,
@@ -205,7 +220,7 @@ def test_export_supports_stdout_files_collisions_and_force(
     assert json.loads(output.read_text(encoding="utf-8"))["schema_version"] == 1
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_snapshots_support_section_selection_collisions_and_force(
     load_parts_mock: object,
     tmp_path: Path,
@@ -248,7 +263,7 @@ def test_snapshots_support_section_selection_collisions_and_force(
     assert "No reachable instruction section" in capsys.readouterr().err
 
 
-@patch("ldraw.cli._load_parts", return_value=PARTS)
+@patch("ldraw.cli._instructions._load_parts", return_value=PARTS)
 def test_instruction_commands_report_missing_or_invalid_input(
     load_parts_mock: object,
     tmp_path: Path,

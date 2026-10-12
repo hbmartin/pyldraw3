@@ -1,7 +1,9 @@
 """Inventory comparison contracts, including CLI failure boundaries."""
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -10,8 +12,130 @@ from ldraw.cli import main
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Radians, XAxis, YAxis, ZAxis
 from ldraw.model import Model, parse_model_result
+from ldraw.parts import Parts
 from ldraw.pieces import Piece
 from ldraw.units import BRICK_HEIGHT, LDU_TO_MM, PLATE_HEIGHT, STUD_PITCH
+
+
+@pytest.fixture
+def parts() -> Parts:
+    return Parts(Path(__file__).parent / "test_ldraw" / "ldraw" / "parts.lst")
+
+
+def test_inventory_bare_parts_require_catalog_evidence(parts: Parts) -> None:
+    model = Model(objects=[Piece.place("3001", colour=4, suffix="")])
+    expected = [BomRow("3001", None, 4, None, 1)]
+    with pytest.raises(ValueError, match=r"3001.*supply a parts catalog"):
+        compare_inventory(model, expected)
+    assert compare_inventory(model, expected, parts=parts).matched
+
+
+def test_inventory_alias_cannot_disguise_an_unknown_bare_reference(
+    parts: Parts,
+) -> None:
+    model = Model(objects=[Piece.place("Missing Sub", colour=4, suffix="")])
+    with pytest.raises(ValueError, match="Missing Sub"):
+        compare_inventory(
+            model,
+            [BomRow("3001", None, 4, None, 1)],
+            part_aliases={"Missing Sub": "3001"},
+            parts=parts,
+        )
+
+
+def test_inventory_expands_extensionless_submodels_without_catalog() -> None:
+    child = Model(name="body", objects=[Piece.place("3001", colour=16)])
+    model = Model(name="main.ldr")
+    model.add_submodel(child, colour=4)
+    assert compare_inventory(model, [BomRow("3001", None, 4, None, 1)]).matched
+
+
+@pytest.mark.parametrize("reference", ["missing.ldr", "Missing.MPD"])
+def test_inventory_rejects_unresolved_submodels(reference: str, parts: Parts) -> None:
+    with pytest.raises(ValueError, match="unresolved submodel") as raised:
+        compare_inventory(Model(objects=[Piece.place(reference)]), [], parts=parts)
+    assert reference in str(raised.value)
+
+
+def test_native_colour_name_is_trimmed_before_mapping(tmp_path: Path) -> None:
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text(
+        "part,colour_code,colour_name,quantity\n3001,, Red ,1\n", encoding="utf-8"
+    )
+    assert read_inventory(inventory, colour_map={"Red": 4}) == [
+        BomRow("3001", None, 4, None, 1)
+    ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("3001", True, 0),
+        ("3001", False, 2),
+        ("Missing Sub", True, 2),
+        ("Missing Sub", False, 2),
+    ],
+)
+def test_comparison_cli_classifies_bare_references(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    parts: Parts,
+    case: tuple[str, bool, int],
+) -> None:
+    reference, catalog_available, status = case
+    model = tmp_path / "model.ldr"
+    model.write_text(f"1 4 0 0 0 1 0 0 0 1 0 0 0 1 {reference}\n", encoding="utf-8")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text("part,colour_code,quantity\n3001,4,1\n", encoding="utf-8")
+    with patch(
+        "ldraw.cli._bom._try_load_parts",
+        return_value=parts if catalog_available else None,
+    ) as load_catalog:
+        assert main(["bom", str(model), "--compare", str(inventory)]) == status
+    load_catalog.assert_called_once_with()
+    output = capsys.readouterr()
+    if status == 2:
+        assert reference in output.err
+        assert "supply a parts catalog or use .dat" in output.err
+        assert not output.out
+    else:
+        assert "Inventory matches" in output.out
+
+
+def test_comparison_cli_dat_references_do_not_load_catalog(tmp_path: Path) -> None:
+    model = tmp_path / "model.ldr"
+    model.write_text("1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n", encoding="utf-8")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text("part,colour_code,quantity\n3001,4,1\n", encoding="utf-8")
+    with patch("ldraw.cli._bom._try_load_parts") as load_catalog:
+        assert main(["bom", str(model), "--compare", str(inventory)]) == 0
+    load_catalog.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreadable", "undecodable"])
+def test_comparison_cli_preserves_model_read_diagnostics(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
+    model = tmp_path / "model.ldr"
+    if failure == "undecodable":
+        model.write_bytes(b"\xff")
+    reader = (
+        patch(
+            "ldraw.model.Path.read_bytes",
+            side_effect=PermissionError("permission denied"),
+        )
+        if failure == "unreadable"
+        else nullcontext()
+    )
+    with reader:
+        assert (
+            main(["bom", str(model), "--compare", str(tmp_path / "inventory.csv")]) == 2
+        )
+    error = capsys.readouterr().err
+    assert str(model) in error
+    expected_code = "io.decode_failed" if failure == "undecodable" else "io.read_failed"
+    assert expected_code in error
+    assert "incomplete" not in error
 
 
 def test_rotation_factory() -> None:

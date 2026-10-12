@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ldraw._library_content import library_content_sha256
 from ldraw.dirs import get_cache_dir
 from ldraw.geometry import Matrix
 from ldraw.part_geometry import part_connections
@@ -41,7 +42,7 @@ SEEDS = (
 
 
 def archive_checksum(archive: Path) -> str:
-    """Return the immutable release archive digest."""
+    """Return an archive digest for optional provenance, not content identity."""
     with archive.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
@@ -59,7 +60,7 @@ def select_codes(parts: Parts) -> list[str]:
                 codes.append(categories[category].popleft())
                 if len(codes) == 200:
                     break
-        if not any(categories.values()):
+        if len(codes) < 200 and not any(categories.values()):
             message = "library does not contain 200 eligible parts"
             raise ValueError(message)
     return codes
@@ -109,35 +110,39 @@ def main() -> None:
     parser.add_argument(
         "--archive",
         type=Path,
-        help="Verify a retained archive instead of its download receipt.",
+        help="Record optional archive provenance; verification uses extracted content.",
     )
     parser.add_argument(
         "--select",
         action="store_true",
-        help="Explicitly replace the fixed part selection and archive digest.",
+        help="Explicitly replace the fixed part selection and content digest.",
     )
     args = parser.parse_args()
     parts = Parts(args.parts_list)
-    digest = (
-        archive_checksum(args.archive)
-        if args.archive is not None
-        else (parts.library_root / "_archive_sha256.txt").read_text().strip()
-    )
+    digest = library_content_sha256(parts.library_root)
     if args.select:
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "release": "2018-02",
-            "archive_sha256": digest,
+            "library_content_sha256": digest,
             "part_codes": select_codes(parts),
         }
     else:
         manifest = json.loads(MANIFEST.read_text())
-        if digest != manifest["archive_sha256"]:
+        if manifest.get("schema_version") != 2:
+            message = "unsupported corpus manifest schema; migrate to content identity"
+            raise ValueError(message)
+        if digest != manifest["library_content_sha256"]:
             message = (
-                "2018-02 archive checksum differs; inspect the download "
+                "2018-02 library content differs; inspect the extracted files "
                 "before explicitly reselecting"
             )
             raise ValueError(message)
+    receipt = parts.library_root / "_archive_sha256.txt"
+    if args.archive is not None:
+        manifest["archive_sha256"] = archive_checksum(args.archive)
+    elif args.select and receipt.is_file():
+        manifest["archive_sha256"] = receipt.read_text().strip()
     result = snapshot(parts, manifest["part_codes"])
     CORPUS.mkdir(exist_ok=True)
     MANIFEST.write_text(f"{json.dumps(manifest, indent=2)}\n", encoding="utf-8")

@@ -31,11 +31,11 @@ from ldraw.utils import camel, clean
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ldraw.connection_metadata import (
+    from ldraw._connection_results import (
         ConnectionMetadataReport,
-        LDCadShadowLibrary,
         ShadowConnectionResult,
     )
+    from ldraw.connection_metadata import LDCadShadowLibrary
     from ldraw.connection_studio import StudioConnectionLibrary
     from ldraw.connection_types import ConnectionFeature, PartCompatibility
     from ldraw.geometry import Matrix, Vector
@@ -1210,7 +1210,7 @@ class Parts:
         )
 
     def _shadow_connections_for(self, code: str) -> ShadowConnectionResult:
-        from ldraw.connection_metadata import ShadowConnectionResult  # noqa: PLC0415
+        from ldraw._connection_results import ShadowConnectionResult  # noqa: PLC0415
 
         shadows = tuple(self._connection_shadow_libraries)
         combined = ShadowConnectionResult()

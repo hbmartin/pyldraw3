@@ -20,7 +20,7 @@ from ldraw.geometry import Matrix, Vector
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ldraw.connection_metadata import ShadowConnectionResult
+    from ldraw._connection_results import ShadowConnectionResult
 
 _SHADOW_LINE_RE = re.compile(
     r"^\s*0\s+!LDCAD\s+(SNAP_\w+)\b(.*)$",

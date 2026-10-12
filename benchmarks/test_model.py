@@ -8,6 +8,7 @@ from typing import Protocol
 import pytest
 
 from benchmarks.synthetic_model import PART_CODES, synthetic_model
+from ldraw._library_content import library_content_sha256
 from ldraw.analysis import analyze_model
 from ldraw.dirs import get_cache_dir
 from ldraw.inspection import inspect_model
@@ -28,7 +29,7 @@ class _Benchmark(Protocol):
 
 @pytest.fixture
 def pinned_parts() -> Parts:
-    """Use the same dated archive as the connection regression corpus."""
+    """Use the same dated library content as the connection regression corpus."""
     path = Path(get_cache_dir()) / "2018-02" / "ldraw" / "parts.lst"
     if not path.is_file():
         pytest.fail(
@@ -38,10 +39,12 @@ def pinned_parts() -> Parts:
         Path(__file__).resolve().parents[1]
         / "tests/snapshots/connections-2018-02-manifest.json"
     )
-    checksum = json.loads(manifest_path.read_text())["archive_sha256"]
-    receipt = path.parent / "_archive_sha256.txt"
-    if not receipt.is_file() or receipt.read_text().strip() != checksum:
-        pytest.fail("Pinned benchmark checksum mismatch; redownload 2018-02.")
+    manifest = json.loads(manifest_path.read_text())
+    if (
+        manifest["schema_version"] != 2
+        or library_content_sha256(path.parent) != manifest["library_content_sha256"]
+    ):
+        pytest.fail("Pinned benchmark library content mismatch; redownload 2018-02.")
     return Parts(path)
 
 

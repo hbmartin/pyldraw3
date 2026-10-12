@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "release": "2018-02",
   "archive_sha256": "8b8fbad0584da059d7c954bbb01423d6dc5645ce864238a8fdc95144365a6a46",
   "part_codes": [
@@ -203,5 +203,6 @@
     "11438",
     "2671",
     "61898a"
-  ]
+  ],
+  "library_content_sha256": "a3fc31e32d0dd28a6b74e816d89b1ed97e926b0bc392643f9fd1b93179e09029"
 }

@@ -41,7 +41,7 @@ from ldraw.geometry import Identity, Vector
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from ldraw.connection_metadata import ShadowConnectionResult
+    from ldraw._connection_results import ShadowConnectionResult
 
 
 def _feature_instances(

@@ -45,7 +45,7 @@ model.add(
         matrix=Matrix.rotation(x=0, y=90, z=0),
     )
 )
-model.write(Path("first.ldr"))
+model.save(Path("first.ldr"))
 parts = LDrawSession().load()
 print(parts.description_for("3001"))
 ```
@@ -477,6 +477,13 @@ Native BOM CSV accepts `part`, `colour_code`, and `quantity`; direct RGB BOM
 rows use `colour_name` when `colour_code` is empty. Quantities must be
 nonnegative integers. Missing columns, invalid quantities/colours, cycles,
 and unresolved model references fail rather than produce partial matches.
+
+Extensionless references that remain after submodel expansion need catalog
+evidence. Pass `parts=parts` to `compare_inventory` to accept catalog-known
+bare part codes. Unresolved `.ldr`/`.mpd` references always fail; an ambiguous
+bare reference fails before part aliases are applied. Explicit `.dat` part
+references do not require a catalog, and resolved extensionless submodels
+expand normally.
 
 For third-party CSV, `read_inventory(columns={"part": "Part ID",
 "colour": "Colour ID", "quantity": "Qty"}, colour_map={"red": 4})`

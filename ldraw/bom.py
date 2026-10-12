@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 from ldraw.colour import Colour
 from ldraw.errors import PartError
 from ldraw.part import colour_from_str
-from ldraw.utils import normalize_ref
+from ldraw.utils import normalize_ref, split_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
@@ -234,7 +234,7 @@ def _inventory_row(
         raise ValueError(message)
     colour_token = (row.get(columns["colour"]) or "").strip()
     if not colour_token and columns["colour"] == "colour_code":
-        colour_token = row.get("colour_name") or ""
+        colour_token = (row.get("colour_name") or "").strip()
     if colour_map is not None:
         if colour_token not in colour_map:
             message = f"unmapped inventory colour {colour_token!r}"
@@ -331,17 +331,41 @@ def _inventory_counts(
     return counts
 
 
+def _validate_inventory_reference(
+    occurrence: ModelOccurrence, *, parts: Parts | None
+) -> None:
+    """Require catalog evidence for an unexpanded extensionless reference."""
+    _, suffix = split_reference(occurrence.reference)
+    if suffix.casefold() in {".ldr", ".mpd"}:
+        message = (
+            f"model contains unresolved submodel reference {occurrence.reference!r}"
+        )
+        raise ValueError(message)
+    if not suffix and (
+        parts is None or parts.get_entry_by_code(occurrence.part_code) is None
+    ):
+        message = (
+            f"unresolved or ambiguous extensionless reference "
+            f"{occurrence.reference!r}; "
+            "supply a parts catalog or use .dat for part references"
+        )
+        raise ValueError(message)
+
+
 def compare_inventory(
     model: _ModelLike,
     expected: Iterable[BomRow],
     *,
     part_aliases: Mapping[str, str] | None = None,
+    parts: Parts | None = None,
 ) -> InventoryComparison:
     """Compare expanded model counts with inventory rows, aggregating duplicates.
 
     Part aliases apply to both sides; colour mapping belongs to CSV input.
     Cyclic or unresolved submodel references fail instead of returning a
-    potentially matching partial inventory.
+    potentially matching partial inventory. Extensionless leaf references
+    require a matching entry in ``parts`` before aliases are applied;
+    explicit ``.dat`` part references do not require a catalog.
     """
     aliases = {
         normalize_ref(key).removesuffix(".dat"): normalize_ref(value).removesuffix(
@@ -352,11 +376,8 @@ def compare_inventory(
     for key in aliases:
         _canonical_part(key, aliases)
     occurrences = tuple(model.iter_occurrences(include_steps=False))
-    if any(
-        item.reference.casefold().endswith((".ldr", ".mpd")) for item in occurrences
-    ):
-        message = "model contains unresolved submodel references"
-        raise ValueError(message)
+    for occurrence in occurrences:
+        _validate_inventory_reference(occurrence, parts=parts)
     actual = _inventory_counts(
         bill_of_materials(occurrences=occurrences), aliases=aliases
     )

@@ -14,13 +14,17 @@ from ldraw.bom import (
     rows_to_csv,
     rows_to_json,
 )
-from ldraw.cli._common import _try_load_parts
+from ldraw.cli._common import _print_diagnostics, _try_load_parts
 from ldraw.errors import PartError
 from ldraw.model import load_model, read_model
+from ldraw.utils import split_reference
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ldraw.model import Model
+    from ldraw.parts import Parts
 
 
 def _format_bom_table(rows: list[BomRow]) -> str:
@@ -127,6 +131,16 @@ def _read_inventory_mapping(path: Path | None) -> _InventoryMapping:
     return cast("_InventoryMapping", data)
 
 
+def _inventory_parts(model: Model) -> Parts | None:
+    """Load a catalog only when a bare leaf reference needs classification."""
+    if any(
+        not split_reference(item.reference)[1]
+        for item in model.iter_occurrences(include_steps=False)
+    ):
+        return _try_load_parts()
+    return None
+
+
 def _compare_inventory_command(
     *,
     file: Path,
@@ -141,11 +155,13 @@ def _compare_inventory_command(
             raise ValueError(message)  # noqa: TRY301 - input failures share exit status 2
         options = _read_inventory_mapping(mapping)
         loaded = load_model(file)
-        if (
-            loaded.model is None
-            or not loaded.complete
-            or any(item.severity is Severity.ERROR for item in loaded.diagnostics)
+        if loaded.model is None:
+            _print_diagnostics(loaded.diagnostics, fallback_path=file)
+            return 2
+        if not loaded.complete or any(
+            item.severity is Severity.ERROR for item in loaded.diagnostics
         ):
+            _print_diagnostics(loaded.diagnostics, fallback_path=file)
             message = "model counts are incomplete; fix model errors before comparing"
             raise ValueError(message)  # noqa: TRY301 - input failures share exit status 2
         expected = read_inventory(
@@ -154,7 +170,10 @@ def _compare_inventory_command(
             colour_map=options.get("colour_map"),
         )
         comparison = compare_inventory(
-            loaded.model, expected, part_aliases=options.get("part_aliases")
+            loaded.model,
+            expected,
+            part_aliases=options.get("part_aliases"),
+            parts=_inventory_parts(loaded.model),
         )
         match output_format:
             case "json":

@@ -5,9 +5,85 @@ from pathlib import Path
 
 import pytest
 
+from ldraw._library_content import library_content_sha256
 from ldraw.config import Config
 from ldraw.parts import Parts
-from scripts.connection_snapshots import MANIFEST, SNAPSHOT, snapshot
+from scripts import connection_snapshots
+from scripts.connection_snapshots import (
+    MANIFEST,
+    SEEDS,
+    SNAPSHOT,
+    select_codes,
+    snapshot,
+)
+
+
+@pytest.mark.parametrize("count", [199, 200, 201])
+def test_select_codes_handles_exact_capacity(tmp_path: Path, count: int) -> None:
+    root = tmp_path / "ldraw"
+    parts_dir = root / "parts"
+    parts_dir.mkdir(parents=True)
+    codes = [
+        *SEEDS,
+        *(str(code) for code in range(10_000, 10_000 + count - len(SEEDS))),
+    ]
+    for code in codes:
+        (parts_dir / f"{code}.dat").write_text("0 Brick Test\n", encoding="utf-8")
+    listing = root / "parts.lst"
+    listing.write_text(
+        "".join(f"{code}.dat  Brick Test\n" for code in reversed(codes)),
+        encoding="utf-8",
+    )
+    parts = Parts(listing)
+    if count < 200:
+        with pytest.raises(ValueError, match="200 eligible parts"):
+            select_codes(parts)
+    else:
+        selected = select_codes(parts)
+        assert len(selected) == len(set(selected)) == 200
+        assert selected[: len(SEEDS)] == list(SEEDS)
+        assert selected == select_codes(parts)
+
+
+@pytest.mark.parametrize("archive_provenance", [False, True])
+def test_regeneration_verifies_content_without_requiring_archive_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, archive_provenance: bool
+) -> None:
+    root = tmp_path / "ldraw"
+    (root / "parts").mkdir(parents=True)
+    source = root / "parts" / "3001.dat"
+    source.write_text("0 Brick\n", encoding="utf-8")
+    listing = root / "parts.lst"
+    listing.write_text("3001.dat  Brick\n", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {
+        "schema_version": 2,
+        "release": "2018-02",
+        "archive_sha256": "historical provenance",
+        "library_content_sha256": library_content_sha256(root),
+        "part_codes": ["3001"],
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    output_path = tmp_path / "snapshot.json"
+    monkeypatch.setattr(connection_snapshots, "MANIFEST", manifest_path)
+    monkeypatch.setattr(connection_snapshots, "SNAPSHOT", output_path)
+    monkeypatch.setattr(connection_snapshots, "CORPUS", tmp_path)
+    monkeypatch.setattr(connection_snapshots, "snapshot", lambda parts, codes: {})
+    arguments = ["connection_snapshots", "--parts-list", str(listing)]
+    if archive_provenance:
+        archive = tmp_path / "archive.zip"
+        archive.write_bytes(b"different archive encoding")
+        arguments.extend(("--archive", str(archive)))
+    monkeypatch.setattr("sys.argv", arguments)
+    connection_snapshots.main()
+    regenerated = json.loads(manifest_path.read_text())
+    assert regenerated["library_content_sha256"] == manifest["library_content_sha256"]
+    assert regenerated["part_codes"] == manifest["part_codes"]
+    if archive_provenance:
+        assert regenerated["archive_sha256"] != manifest["archive_sha256"]
+    source.write_text("0 Changed brick\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="library content differs"):
+        connection_snapshots.main()
 
 
 def assert_snapshot_equal(actual: object, expected: object, path: str = "root") -> None:
@@ -33,10 +109,9 @@ def test_pinned_connection_corpus(pytestconfig) -> None:
         pytest.skip("pass --connection-snapshots with the pinned 2018-02 library")
     manifest = json.loads(MANIFEST.read_text())
     root = Path(Config.load().ldraw_library_path) / "ldraw"
-    receipt = root / "_archive_sha256.txt"
-    assert receipt.is_file(), "Redownload 2018-02 to record its archive checksum"
-    assert receipt.read_text().strip() == manifest["archive_sha256"], (
-        "Pinned 2018-02 archive checksum mismatch; inspect the release before "
+    assert manifest["schema_version"] == 2
+    assert library_content_sha256(root) == manifest["library_content_sha256"], (
+        "Pinned 2018-02 library content mismatch; inspect the release before "
         "explicitly regenerating the corpus"
     )
     assert len(manifest["part_codes"]) == len(set(manifest["part_codes"])) == 200
