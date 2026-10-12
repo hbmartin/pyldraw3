@@ -359,14 +359,14 @@ def test_lightweight_startup_and_generate_import_orders() -> None:
     commands = (
         (
             "import sys; import ldraw; assert 'numpy' not in sys.modules; "
-            "assert 'requests' not in sys.modules; assert 'Model' in dir(ldraw); "
+            "assert 'httpx2' not in sys.modules; assert 'Model' in dir(ldraw); "
             "assert ldraw.Model is ldraw.Model"
         ),
         (
             "import sys; from ldraw.cli import build_parser;\n"
             "try: build_parser().parse_args(['--help'])\n"
             "except SystemExit: pass\n"
-            "assert 'numpy' not in sys.modules; assert 'requests' not in sys.modules"
+            "assert 'numpy' not in sys.modules; assert 'httpx2' not in sys.modules"
         ),
         "import ldraw.generate; from ldraw import generate; assert callable(generate)",
         (

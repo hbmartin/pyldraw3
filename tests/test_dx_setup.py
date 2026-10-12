@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call
 
+import httpx2
 import pytest
-import requests
 
 from ldraw import rendering
 from ldraw.config import Config
@@ -231,7 +231,7 @@ def test_download_plans_cover_integrity_and_network_failures(
         archive.writestr("ldraw/parts.lst", "parts")
     (tmp_path / "2018-02.zip.part").write_bytes(b"too much cached")
     monkeypatch.setattr(
-        "ldraw.library_setup.requests.head",
+        "ldraw.library_setup.httpx2.head",
         lambda **kwargs: _response({"content-length": "4"}),
     )
 
@@ -244,8 +244,8 @@ def test_download_plans_cover_integrity_and_network_failures(
 
     (tmp_path / "complete.zip").write_bytes(b"not a zip")
     monkeypatch.setattr(
-        "ldraw.library_setup.requests.head",
-        lambda **kwargs: (_ for _ in ()).throw(requests.ConnectionError("offline")),
+        "ldraw.library_setup.httpx2.head",
+        lambda **kwargs: (_ for _ in ()).throw(httpx2.ReadError("offline")),
     )
     monkeypatch.setattr(
         "ldraw.library_setup.get_latest_release_id",
@@ -301,7 +301,7 @@ def test_download_plan_reports_bad_archive_member(
         lambda path: CorruptArchive(),
     )
     monkeypatch.setattr(
-        "ldraw.library_setup.requests.head",
+        "ldraw.library_setup.httpx2.head",
         lambda **kwargs: _response({}),
     )
 

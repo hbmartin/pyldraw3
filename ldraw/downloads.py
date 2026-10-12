@@ -9,7 +9,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import requests
+import httpx2
 from progress.bar import Bar
 
 from ldraw.dirs import get_cache_dir
@@ -294,7 +294,7 @@ def _read_resume_validator(partial: Path) -> _ResumeValidator | None:
     )
 
 
-def _write_resume_validator(*, partial: Path, response: requests.Response) -> None:
+def _write_resume_validator(*, partial: Path, response: httpx2.Response) -> None:
     """Persist the response's freshness validator, or clear a stale one.
 
     Weak ETags are ignored: ``If-Range`` requires a strong validator.
@@ -340,7 +340,7 @@ def _content_range_complete_size(header: str | None) -> int | None:
 
 def _response_validator_matches(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     validator: _ResumeValidator,
 ) -> bool | None:
     """Compare an echoed response validator with the stored resume validator."""
@@ -378,7 +378,7 @@ def _resume_state(
 
 def _finalize_unsatisfiable_range(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     partial: Path,
     offset: int,
     validator: _ResumeValidator | None,
@@ -408,7 +408,7 @@ def _finalize_unsatisfiable_range(
 
 def _resume_is_consistent(
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     offset: int,
     validator: _ResumeValidator | None,
 ) -> bool:
@@ -479,7 +479,9 @@ def _download(  # noqa: PLR0913 - streaming state and controls are explicit
             break
     else:
         message = f"Could not download {url}: restarted transfer did not complete"
-        raise requests.HTTPError(message)
+        raise httpx2.RequestError(
+            message, request=httpx2.Request(method="GET", url=url)
+        )
     partial.replace(retrieved)
     _sidecar_path(partial).unlink(missing_ok=True)
     return retrieved
@@ -503,9 +505,10 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
     attempt discarded an unusable partial and the caller should restart.
     """
     offset, validator, request_headers = _resume_state(partial, resume=resume)
-    with requests.get(
+    with httpx2.stream(
+        method="GET",
         url=url,
-        stream=True,
+        follow_redirects=True,
         timeout=_REQUEST_TIMEOUT_SECONDS,
         headers=request_headers,
     ) as response:
@@ -553,7 +556,7 @@ def _transfer(  # noqa: PLR0913 - transfer state and controls are explicit
 
 def _stream_download(  # noqa: PLR0913 - transfer state is explicit
     *,
-    response: requests.Response,
+    response: httpx2.Response,
     partial: Path,
     retrieved: Path,
     url: str,
@@ -597,7 +600,7 @@ def _stream_download(  # noqa: PLR0913 - transfer state is explicit
         with partial.open("ab" if accepted_resume else "wb") as file:
             bar = Bar(f"Downloading {url} ...", max=total) if show_progress else None
             current = offset
-            for data in response.iter_content(chunk_size=chunk_size):
+            for data in response.iter_bytes(chunk_size=chunk_size):
                 check_cancelled(cancellation)
                 written = file.write(data)
                 current += written

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from zipfile import BadZipFile
 
-import requests
+import httpx2
 
 from ldraw.cli._common import _confirm
 from ldraw.cli._defaults import COMPLETE_VERSION
@@ -28,7 +28,7 @@ def download_command(*, version: str, yes: bool) -> int:
     try:
         release_id = do_download(version=version, show_progress=sys.stderr.isatty())
     except (
-        requests.RequestException,
+        httpx2.HTTPError,
         ValueError,
         BadZipFile,
         CouldNotDetermineLatestVersionError,

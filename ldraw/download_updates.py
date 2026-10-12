@@ -3,7 +3,7 @@
 import html.parser
 import re
 
-import requests
+import httpx2
 
 from ldraw.errors import CouldNotDetermineLatestVersionError
 
@@ -65,8 +65,9 @@ def get_latest_release_id() -> str:
     Preserves dashed ``YYYY-MM`` update ids in full rather than splitting
     on dashes, which would truncate ``...-2024-01`` to ``01``.
     """
-    response = requests.get(
+    response = httpx2.get(
         url=UPDATES_PAGE_URL,
+        follow_redirects=True,
         timeout=_REQUEST_TIMEOUT_SECONDS,
     )
     response.raise_for_status()

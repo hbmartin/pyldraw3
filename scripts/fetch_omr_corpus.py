@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import requests
+import httpx2
 
 OMR_BASE = "https://library.ldraw.org/library/omr"
 
@@ -56,11 +56,16 @@ def fetch_model(name: str, url: str, dest: Path, *, force: bool) -> str:
     if target.exists() and not force:
         return "cached"
     partial = target.with_suffix(f"{target.suffix}.part")
-    response = requests.get(url, stream=True, timeout=_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    with partial.open("wb") as handle:
-        for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
-            handle.write(chunk)
+    with httpx2.stream(
+        method="GET",
+        url=url,
+        follow_redirects=True,
+        timeout=_TIMEOUT_SECONDS,
+    ) as response:
+        response.raise_for_status()
+        with partial.open("wb") as handle:
+            for chunk in response.iter_bytes(chunk_size=_CHUNK_SIZE):
+                handle.write(chunk)
     if not _looks_like_ldraw(partial):
         partial.unlink()
         message = f"{url} did not return LDraw content (moved or removed?)"
@@ -91,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, url in CURATED_MODELS.items():
         try:
             statuses[name] = fetch_model(name, url, dest, force=args.force)
-        except (requests.RequestException, ValueError) as exc:
+        except (httpx2.HTTPError, ValueError) as exc:
             statuses[name] = f"FAILED: {exc}"
         print(f"{name}: {statuses[name]}")
 
