@@ -75,9 +75,15 @@ def _feature_instances(
             base,
             position=position + orientation * offset,
             # LDCad cylinder/finger lengths extend along local -Y.  Keep the
-            # public ConnectionFeature contract (+Y is the feature axis) by
-            # folding that convention into the normalized feature frame.
-            frame=orientation * _NEGATIVE_Y_FRAME,
+            # outward mating frame for female cylinders; profile.direction
+            # retains their original negative-Y physical section locations.
+            frame=orientation
+            * (
+                Identity()
+                if isinstance(base.profile, CylindricalProfile)
+                and base.role is ConnectionRole.FEMALE
+                else _NEGATIVE_Y_FRAME
+            ),
             feature_id=feature_id,
             metadata_id=metadata_id,
             source=source,
@@ -88,7 +94,9 @@ def _feature_instances(
                 "cor" if command.kind == "SNAP_CYL" else "none",
             ).casefold(),
         )
-        features.append(projected)
+        from ldraw.connection_regions import engagement_regions  # noqa: PLC0415
+
+        features.extend(engagement_regions(projected))
     return tuple(features)
 
 
@@ -158,13 +166,14 @@ def _cylinder_feature(
         profile=CylindricalProfile(
             sections=sections,
             centered=_boolean(options.get("center"), default=False),
-            friction=not slide,
+            direction=-1 if role is ConnectionRole.FEMALE else 1,
             caps=_caps(options.get("caps")),
         ),
         name=identifier or group or "LDCad cylinder",
         group=group,
         freedoms=frozenset(freedoms),
         owner_code=code,
+        editor_slide=slide,
     )
 
 
@@ -202,6 +211,7 @@ def _clip_feature(
                 ),
             ),
             centered=_boolean(options.get("center"), default=False),
+            direction=-1,
         ),
         name=identifier or group or "LDCad clip",
         group=group,
@@ -477,7 +487,10 @@ def _is_stud_shaped(
     return (
         rigid_count == 1
         and abs(_min_rigid_radius(sections) - 6.0) <= 0.25
-        and abs(length - 4.0) <= 0.5
+        and (
+            abs(length - 4.0) <= 0.5
+            or (sections[0].shape is SectionShape.SQUARE and 4 <= length <= 24)
+        )
         and caps is not CylindricalCaps.NONE
     )
 

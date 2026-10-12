@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, replace
 from itertools import product
 from typing import TYPE_CHECKING, cast
@@ -11,6 +12,8 @@ from ldraw._constants import (
     DEFAULT_PAGE_MARKER_PREFIX as DEFAULT_PAGE_MARKER_PREFIX,  # noqa: PLC0414 - public re-export
 )
 from ldraw._vertex_arrays import transform_vertices, vertex_bounds
+from ldraw.connection_placement import place_connections
+from ldraw.connection_regions import supported_engagement
 from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionKind,
@@ -21,11 +24,11 @@ from ldraw.connection_types import (
     angular_alignment_within,
     connection_residual,
     connections_compatible,
-    snap_transform,
 )
-from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
+from ldraw.coverage import Coverage
+from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity, _merge_diagnostics
 from ldraw.errors import NoGeometryError, PartError
-from ldraw.geometry import Vector
+from ldraw.geometry import Identity, Vector
 from ldraw.lines import Comment
 from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
@@ -34,8 +37,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from ldraw.geometry import Matrix
+    from ldraw.inspection_limits import ContactReport, SnapReport
     from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
+    from ldraw.resolution import RawGeometry
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +171,31 @@ class ConnectionMultigraph:
 
     nodes: tuple[int, ...]
     edges: tuple[ConnectionGraphEdge, ...]
+    coverage: Coverage = Coverage.UNAVAILABLE
+
+    def components(self) -> tuple[tuple[int, ...], ...]:
+        """Return deterministic components with isolated nodes and parallel edges."""
+        adjacency = {node: set() for node in self.nodes}
+        for edge in self.edges:
+            if edge.first not in adjacency or edge.second not in adjacency:
+                message = "Graph edge references a node absent from nodes"
+                raise ValueError(message)
+            adjacency[edge.first].add(edge.second)
+            adjacency[edge.second].add(edge.first)
+        unseen = set(adjacency)
+        components: list[tuple[int, ...]] = []
+        while unseen:
+            pending = [min(unseen)]
+            group: set[int] = set()
+            while pending:
+                node = pending.pop()
+                if node in group:
+                    continue
+                group.add(node)
+                unseen.discard(node)
+                pending.extend(adjacency[node] - group)
+            components.append(tuple(sorted(group)))
+        return tuple(components)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +216,8 @@ class SnapCandidate:
     fixed: ConnectionFeature
     transform: SnapTransform
     residual: ConnectionResidual
+    contact_supported: bool = False
+    """Whether applying this transform passes the shared interface contact check."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,11 +229,79 @@ class ModelInspection:
     skipped_geometry: tuple[SkippedOccurrenceGeometry, ...]
     diagnostics: tuple[Diagnostic, ...]
     occurrence_count: int
+    raw_geometry: tuple[RawGeometry, ...] = ()
+    occurrence_total: int | None = None
+    budget_exhausted: bool = False
+    feature_pair_budget: int | None = None
+    pair_budget_exhausted: bool = False
 
     @property
     def complete(self) -> bool:
         """Whether every occurrence and nested part reference resolved."""
+        warnings.warn(
+            "ModelInspection.complete is deprecated; use explicit coverage fields "
+            "(removed in 2.0)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.legacy_complete
+
+    @property
+    def legacy_complete(self) -> bool:
+        """The unchanged 1.x aggregate rule, for compatibility serialization."""
         return not self.skipped_geometry and not self.diagnostics
+
+    @property
+    def geometry_coverage(self) -> Coverage:
+        """Geometry completeness is independent of connection metadata."""
+        incomplete = (
+            self.budget_exhausted
+            or bool(self.skipped_geometry)
+            or any(
+                occurrence.local.geometry_coverage != Coverage.COMPLETE
+                for occurrence in self.occurrences
+            )
+            or any(
+                str(item.code)
+                in {
+                    "mpd.cycle",
+                    "part.reference_unresolved",
+                    "part.reference_cycle",
+                    "document.unresolved_alias",
+                }
+                for item in self.diagnostics
+            )
+        )
+        if incomplete and self.bounds is None:
+            return Coverage.UNAVAILABLE
+        return Coverage.PARTIAL if incomplete else Coverage.COMPLETE
+
+    @property
+    def connection_coverage(self) -> Coverage:
+        """Coverage of supported physical interfaces across processed occurrences."""
+        coverages = [
+            occurrence.local.connection_coverage for occurrence in self.occurrences
+        ]
+        if not coverages or all(value == Coverage.UNAVAILABLE for value in coverages):
+            return Coverage.UNAVAILABLE
+        return (
+            Coverage.COMPLETE
+            if not self.budget_exhausted
+            and not self.pair_budget_exhausted
+            and not self.skipped_geometry
+            and not any(
+                str(item.code)
+                in {
+                    "document.provisional_part",
+                    "document.unresolved_contents",
+                    "document.unresolved_alias",
+                    "mpd.cycle",
+                }
+                for item in self.diagnostics
+            )
+            and all(value == Coverage.COMPLETE for value in coverages)
+            else Coverage.PARTIAL
+        )
 
     def stud_contacts(
         self,
@@ -264,6 +364,12 @@ class ModelInspection:
         if angular_tolerance < 0:
             message = "angular_tolerance must be non-negative"
             raise ValueError(message)
+        if self.feature_pair_budget is not None:
+            return self.connection_report(
+                feature_pair_budget=self.feature_pair_budget,
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            ).contacts
         contacts: list[ConnectionContact] = []
         for first_index, second_index in _candidate_occurrence_pairs(
             self.occurrences,
@@ -317,8 +423,12 @@ class ModelInspection:
             if edge.status is ConnectionStatus.CONFIRMED
         )
         return ConnectionGraphs(
-            confirmed=ConnectionMultigraph(nodes=nodes, edges=confirmed_edges),
-            optimistic=ConnectionMultigraph(nodes=nodes, edges=optimistic_edges),
+            confirmed=ConnectionMultigraph(
+                nodes=nodes, edges=confirmed_edges, coverage=self.connection_coverage
+            ),
+            optimistic=ConnectionMultigraph(
+                nodes=nodes, edges=optimistic_edges, coverage=self.connection_coverage
+            ),
         )
 
     def snap_candidates(
@@ -328,68 +438,44 @@ class ModelInspection:
         fixed: OccurrenceGeometry | int | None = None,
         limit: int | None = None,
     ) -> tuple[SnapCandidate, ...]:
-        """Return ranked placements for mating a moving occurrence's features.
+        """Return the historical tuple for an unbounded pair search."""
+        return self.snap_report(moving, fixed=fixed, limit=limit).candidates
 
-        ``moving`` and ``fixed`` accept either an occurrence geometry or its
-        stable inspection index. When ``fixed`` is omitted, every other
-        occurrence is considered.
-        """
-        if limit is not None and limit < 0:
-            message = "limit must be non-negative"
-            raise ValueError(message)
-        moving_occurrence = self._resolve_occurrence(moving)
-        fixed_occurrences = (
-            (self._resolve_occurrence(fixed),)
-            if fixed is not None
-            else tuple(
-                occurrence
-                for occurrence in self.occurrences
-                if occurrence.index != moving_occurrence.index
-            )
+    def snap_report(
+        self,
+        moving: OccurrenceGeometry | int,
+        *,
+        fixed: OccurrenceGeometry | int | None = None,
+        limit: int | None = None,
+        feature_pair_budget: int | None = None,
+    ) -> SnapReport:
+        """Rank candidates over completed work and qualify bounded searches."""
+        from ldraw.inspection_limits import bounded_snap  # noqa: PLC0415
+
+        return bounded_snap(
+            self,
+            moving=moving,
+            fixed=fixed,
+            limit=limit,
+            feature_pair_budget=feature_pair_budget,
         )
-        candidates: list[SnapCandidate] = []
-        for fixed_occurrence in fixed_occurrences:
-            if fixed_occurrence.index == moving_occurrence.index:
-                continue
-            for moving_feature in moving_occurrence.connections:
-                for fixed_feature in fixed_occurrence.connections:
-                    if not connections_compatible(moving_feature, fixed_feature):
-                        continue
-                    residual = connection_residual(moving_feature, fixed_feature)
-                    delta = snap_transform(moving_feature, fixed_feature)
-                    candidates.append(
-                        SnapCandidate(
-                            moving_occurrence=moving_occurrence,
-                            fixed_occurrence=fixed_occurrence,
-                            moving=moving_feature,
-                            fixed=fixed_feature,
-                            transform=SnapTransform(
-                                position=(
-                                    delta.position
-                                    + delta.matrix
-                                    * moving_occurrence.occurrence.position
-                                ),
-                                matrix=(
-                                    delta.matrix * moving_occurrence.occurrence.matrix
-                                ),
-                            ),
-                            residual=residual,
-                        ),
-                    )
-        ranked = tuple(
-            sorted(
-                candidates,
-                key=lambda candidate: (
-                    candidate.residual.distance + candidate.residual.axial_gap,
-                    -candidate.residual.alignment,
-                    -candidate.residual.roll_alignment,
-                    candidate.fixed_occurrence.index,
-                    candidate.moving.feature_id or "",
-                    candidate.fixed.feature_id or "",
-                ),
-            ),
+
+    def connection_report(
+        self,
+        *,
+        feature_pair_budget: int,
+        tolerance: float = 0.25,
+        angular_tolerance: float = 2.0,
+    ) -> ContactReport:
+        """Return contact evidence and the coverage of a bounded pair search."""
+        from ldraw.inspection_limits import bounded_contacts  # noqa: PLC0415
+
+        return bounded_contacts(
+            self,
+            feature_pair_budget=feature_pair_budget,
+            tolerance=tolerance,
+            angular_tolerance=angular_tolerance,
         )
-        return ranked if limit is None else ranked[:limit]
 
     def _resolve_occurrence(
         self,
@@ -452,7 +538,86 @@ class ModelInspection:
         )
 
 
-def inspect_model(
+def inspect_model(  # noqa: PLR0913 - explicit operation controls
+    model: Model,
+    parts: Parts,
+    *,
+    occurrences: Iterable[ModelOccurrence] | None = None,
+    page_marker_prefix: str = DEFAULT_PAGE_MARKER_PREFIX,
+    occurrence_budget: int | None = None,
+    feature_pair_budget: int | None = None,
+    raw_geometry: Iterable[RawGeometry] = (),
+) -> ModelInspection:
+    """Inspect physical boundaries and raw geometry with incremental budgets."""
+    from ldraw.resolution import DocumentResolver, RawGeometry  # noqa: PLC0415
+
+    if occurrence_budget is not None and occurrence_budget < 0:
+        message = "occurrence_budget must be non-negative"
+        raise ValueError(message)
+    resolver = DocumentResolver(model, parts)
+    physical: list[ModelOccurrence] = []
+    raw: list[RawGeometry] = list(raw_geometry)
+    exhausted = False
+    for event in resolver.events() if occurrences is None else occurrences:
+        if isinstance(event, RawGeometry):
+            raw.append(event)
+        elif occurrence_budget is not None and len(physical) >= occurrence_budget:
+            exhausted = True
+            resolver.diagnostics.append(
+                Diagnostic(
+                    code="analysis.occurrence_budget",
+                    severity=Severity.WARNING,
+                    message=f"Stopped after {len(physical)} occurrences; total unknown",
+                )
+            )
+            break
+        else:
+            physical.append(event)
+    inspection = _inspect_occurrences(
+        model,
+        resolver.parts or parts,
+        occurrences=physical,
+        page_marker_prefix=page_marker_prefix,
+    )
+    bounds = _BoundsAccumulator()
+    if inspection.bounds is not None:
+        bounds.add_box(inspection.bounds)
+    for geometry in raw:
+        box = transformed_bounds(
+            geometry.points,
+            position=Vector(0, 0, 0),
+            matrix=Identity(),
+        )
+        if box is not None:
+            bounds.add_box(box)
+    inspection = replace(
+        inspection,
+        bounds=bounds.box(),
+        raw_geometry=tuple(raw),
+        diagnostics=(*resolver.diagnostics, *inspection.diagnostics),
+        occurrence_total=None if exhausted or resolver.unresolved else len(physical),
+        budget_exhausted=exhausted,
+    )
+    if feature_pair_budget is not None:
+        report = inspection.connection_report(feature_pair_budget=feature_pair_budget)
+        inspection = replace(
+            inspection,
+            feature_pair_budget=feature_pair_budget,
+            pair_budget_exhausted=report.coverage != Coverage.COMPLETE,
+            diagnostics=_merge_diagnostics(inspection.diagnostics, report.diagnostics),
+        )
+    return inspection
+
+
+def _geometry_code(occurrence: ModelOccurrence) -> str:
+    return (
+        occurrence.part_code
+        if occurrence.reference.casefold().endswith(".dat")
+        else occurrence.reference
+    )
+
+
+def _inspect_occurrences(
     model: Model,
     parts: Parts,
     *,
@@ -465,11 +630,7 @@ def inspect_model(
     inspected: list[OccurrenceGeometry] = []
     skipped: list[SkippedOccurrenceGeometry] = []
     diagnostics: list[Diagnostic] = []
-    all_occurrences = tuple(
-        model.iter_occurrences(include_steps=True)
-        if occurrences is None
-        else occurrences
-    )
+    all_occurrences = tuple(occurrences or ())
     noted_parts: set[str] = set()
 
     def note_part_diagnostics(code: str, local: PartGeometry) -> None:
@@ -483,7 +644,7 @@ def inspect_model(
     for index, occurrence in enumerate(all_occurrences):
         attribution = _attribution(occurrence, index=index, piece_pages=piece_pages)
         try:
-            local = parts.geometry(occurrence.part_code)
+            local = parts.geometry(_geometry_code(occurrence))
             # Recorded before the bounds checks so the root-cause
             # diagnostics (e.g. an unresolved subfile) survive even when
             # the occurrence is skipped below.
@@ -528,12 +689,12 @@ def inspect_model(
                 )
                 for stud in local.studs
             ),
-            connections=tuple(
-                feature.transformed(
-                    position=occurrence.position,
-                    matrix=occurrence.matrix,
-                )
-                for feature in local.connections
+            connections=place_connections(
+                parts,
+                code=occurrence.part_code,
+                features=local.connections,
+                position=occurrence.position,
+                matrix=occurrence.matrix,
             ),
         )
         inspected.append(geometry)
@@ -693,7 +854,9 @@ def _paired_contacts(
                 ConnectionKind.STUD_RECEPTACLE,
             }:
                 continue
-            if not connections_compatible(first, second):
+            if not connections_compatible(first, second) or not supported_engagement(
+                first, second
+            ):
                 continue
             residual = connection_residual(first, second)
             if (
@@ -849,7 +1012,9 @@ def _strict_stud_candidate(
     angular_tolerance: float,
 ) -> ConnectionResidual | None:
     """Return the centerline residual when one pair aligns strictly."""
-    if not connections_compatible(stud, receptacle):
+    if not connections_compatible(stud, receptacle) or not supported_engagement(
+        stud, receptacle
+    ):
         return None
     if not angular_alignment_within(
         -stud.axis.dot(receptacle.axis),

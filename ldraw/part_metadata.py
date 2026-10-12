@@ -198,14 +198,23 @@ class _MetadataFields:
 def parse_part_metadata(path: Path) -> PartMetadata:
     """Parse one part header and relationship target from disk."""
     lines = path.read_text(encoding="utf-8-sig").splitlines()
+    return parse_metadata_lines(lines, source=str(path))
+
+
+def parse_metadata_lines(
+    lines: list[str], *, source: str = "embedded definition"
+) -> PartMetadata:
+    """Interpret a header without requiring a persistent file."""
     if not lines:
         from ldraw.errors import EmptyPartFileError  # noqa: PLC0415
 
-        raise EmptyPartFileError(str(path))
+        raise EmptyPartFileError(source)
     description = " ".join(lines[0].split()[1:])
-    fields = _collect_metadata_fields(lines[1:])
+    fields = _collect_metadata_fields(lines)
     status, replacement = _part_status(
-        description,
+        lines[0].split(maxsplit=1)[1].strip()
+        if description.casefold().startswith("~moved to ")
+        else description,
         qualifiers=fields.qualifiers,
         first_reference=fields.first_reference,
     )
@@ -241,17 +250,21 @@ def _collect_metadata_fields(lines: list[str]) -> _MetadataFields:
             continue
         if tokens[0] != "0":
             header_open = False
-        if header_open and _apply_header_command(tokens, fields):
+        if header_open and _apply_header_command(tokens, fields, line=line):
             continue
         if fields.first_reference is None and tokens[0] == "1":
             fields.first_reference = _reference_from_line(line)
     return fields
 
 
-def _apply_header_command(tokens: list[str], fields: _MetadataFields) -> bool:
+def _apply_header_command(
+    tokens: list[str], fields: _MetadataFields, *, line: str
+) -> bool:
     match tokens:
         case ["0", command, *rest]:
             value = " ".join(rest)
+            if command == "Name:" and len(raw := line.split(maxsplit=2)) > 2:
+                value = raw[2].strip()
             return _apply_identity_command(
                 command=command,
                 value=value,

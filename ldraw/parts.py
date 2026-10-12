@@ -35,10 +35,13 @@ if TYPE_CHECKING:
         ConnectionMetadataReport,
         ShadowConnectionResult,
     )
+    from ldraw.catalog_search import CatalogSearchResult
     from ldraw.connection_metadata import LDCadShadowLibrary
     from ldraw.connection_studio import StudioConnectionLibrary
     from ldraw.connection_types import ConnectionFeature, PartCompatibility
     from ldraw.geometry import Matrix, Vector
+    from ldraw.measurements import PartMeasurements
+    from ldraw.model import Model
     from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
     from ldraw.part_metadata import PartMetadata
 
@@ -429,7 +432,7 @@ class PartInspection:
         """Return whether every requested inspection component succeeded."""
         return not any(
             diagnostic.severity is Severity.ERROR for diagnostic in self.diagnostics
-        ) and (self.geometry is None or self.geometry.complete)
+        ) and (self.geometry is None or self.geometry.legacy_complete)
 
 
 @dataclass(slots=True)
@@ -692,6 +695,61 @@ class Parts:
     )
 
     @classmethod
+    def from_directory(
+        cls, directory: str | Path, *, cache: str | Path | None = None
+    ) -> Parts:
+        """Load a root or data directory, caching indexes outside the installation."""
+        from ldraw.library_access import directory_parts  # noqa: PLC0415
+
+        return directory_parts(directory, cache=cache)
+
+    def search(
+        self,
+        query: str = "",
+        *,
+        category: PartCategory | str | None = None,
+        physical_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> CatalogSearchResult:
+        """Search literally with ranking, filters, totals, and diagnostics."""
+        from ldraw.catalog_search import search_parts  # noqa: PLC0415
+
+        return search_parts(
+            self,
+            query=query,
+            category=category,
+            physical_only=physical_only,
+            limit=limit,
+            offset=offset,
+        )
+
+    def with_embedded(self, model: Model) -> Parts:
+        """Overlay embedded definitions, reporting library shadowing."""
+        from ldraw.document_parts import DocumentParts  # noqa: PLC0415
+
+        if not model.submodels and not model.name.casefold().endswith(".dat"):
+            return self
+        return DocumentParts(self, model)
+
+    def resolve_symbol(self, symbol: str) -> CatalogEntry | None:
+        """Resolve a full or unambiguous short generated name without importing it."""
+        from ldraw.symbols import symbol_mapping  # noqa: PLC0415
+
+        mapping = symbol_mapping(self.catalog)
+        if symbol in mapping:
+            return mapping[symbol]
+        matches = [
+            entry
+            for name, entry in mapping.items()
+            if name.rsplit(".", 1)[-1] == symbol
+        ]
+        if len(matches) > 1:
+            message = f"Ambiguous symbol {symbol!r}; supply its qualified name"
+            raise ValueError(message)
+        return matches[0] if matches else None
+
+    @classmethod
     def get(
         cls,
         parts_lst: str | Path,
@@ -749,9 +807,15 @@ class Parts:
             studio_metadata=studio_metadata,
         )
 
-    def __init__(self, parts_lst: str | Path) -> None:
+    def __init__(
+        self, parts_lst: str | Path, *, library_root: Path | None = None
+    ) -> None:
         logger.debug("reading parts %s", parts_lst)
         self.path = Path(parts_lst)
+        self._library_root = library_root or self.path.parent
+        self.search_index: Path | None = None
+        self.diagnostics: tuple[Diagnostic, ...] = ()
+        self._temporary_index: object | None = None
 
         self.parts_dirs: list[Path] = []
         self.parts_subdirs: dict[str, Path] = {}
@@ -788,7 +852,7 @@ class Parts:
     @property
     def library_root(self) -> Path:
         """Directory containing ``parts.lst``, parts, primitives, and colours."""
-        return self.path.parent
+        return self._library_root
 
     @classmethod
     def from_catalog(cls, parts_lst: str | Path, catalog: PartsCatalog) -> Parts:
@@ -922,7 +986,7 @@ class Parts:
 
     def _scan_library_directories(self) -> None:
         """Scan the library directory for parts, colours, and primitives."""
-        for item in self.path.parent.iterdir():
+        for item in self.library_root.iterdir():
             name = item.name.lower()
             match name:
                 case "parts" | "p" if item.is_dir():
@@ -1090,6 +1154,12 @@ class Parts:
         from ldraw.part_geometry import part_geometry  # noqa: PLC0415
 
         return part_geometry(self, code)
+
+    def measurements(self, code: str) -> PartMeasurements:
+        """Return optional body, stacking, and stud-footprint measurements."""
+        from ldraw.measurements import part_measurements  # noqa: PLC0415
+
+        return part_measurements(self, code)
 
     def connections(self, code: str) -> tuple[ConnectionFeature, ...]:
         """Return physical connection features detected for a part."""
@@ -1572,14 +1642,15 @@ class Parts:
         else:
             parts_dirs = self.parts_dirs
 
-        paths = [
-            candidate
-            for parts_dir in parts_dirs
-            for candidate in (
-                parts_dir / f"{normalized_code.lower()}.dat",
-                parts_dir / f"{normalized_code.upper()}.DAT",
-            )
-        ]
+        filename = (
+            normalized_code
+            if normalized_code.casefold().endswith((".dat", ".ldr", ".mpd"))
+            else f"{normalized_code}.dat"
+        )
+        names = (filename.lower(), filename.upper())
+        if filename not in names:
+            names = (*names, filename)
+        paths = (parts_dir / name for parts_dir in parts_dirs for name in names)
         for path in paths:
             if path.exists():
                 return Part(path)

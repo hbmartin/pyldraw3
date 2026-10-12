@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Protocol
 
+from ldraw.api import SUPPLEMENTAL_API
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import ModuleType
@@ -20,26 +22,6 @@ class MacroEnvironment(Protocol):
 #: Public API taught in the docs but not re-exported via ``ldraw.__all__``.
 #: Each entry is (module, attribute); a missing attribute fails the docs
 #: build exactly like a stale ``__all__`` name.
-SUPPLEMENTAL_API: tuple[tuple[str, str], ...] = (
-    ("ldraw.bom", "comparison_to_csv"),
-    ("ldraw.units", "STUD_PITCH"),
-    ("ldraw.units", "PLATE_HEIGHT"),
-    ("ldraw.units", "BRICK_HEIGHT"),
-    ("ldraw.units", "LDU_TO_MM"),
-    ("ldraw.bom", "rows_to_csv"),
-    ("ldraw.bom", "rows_to_json"),
-    ("ldraw.config", "Config"),
-    ("ldraw.errors", "NoGeometryError"),
-    ("ldraw.errors", "PartNotFoundError"),
-    ("ldraw.errors", "UnknownSubmodelError"),
-    ("ldraw.part_geometry", "part_bounding_box"),
-    ("ldraw.part_geometry", "part_studs"),
-    ("ldraw.parts", "symbol_description"),
-    ("ldraw.snippets", "module_path"),
-    ("ldraw.snippets", "suggested_import"),
-    ("ldraw.snippets", "symbol_name"),
-    ("ldraw.snippets", "symbol_name_for_description"),
-)
 
 
 def _public_names(package: ModuleType) -> list[str]:

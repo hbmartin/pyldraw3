@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
-from argparse import ArgumentParser
+from argparse import SUPPRESS, ArgumentParser
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+from ldraw.cli._selection import library_argument
 from ldraw.errors import ConfigLoadError
 
 if TYPE_CHECKING:
@@ -23,6 +24,10 @@ _COMMANDS = (
     "instructions",
     "config",
     "version",
+    "api",
+    "doctor",
+    "extract",
+    "snap",
 )
 # Fixed historical import manifest: new implementation names need no entries.
 # Import aliases do not forward assignments; patch the consuming handler module.
@@ -172,9 +177,17 @@ def build_parser() -> ArgumentParser:
             "and render LDraw models."
         ),
     )
+    parser.add_argument("--library", help="LDraw installation root or data directory.")
     subparsers = parser.add_subparsers(dest="command", metavar="command")
     for name in _COMMANDS:
         import_module(f"ldraw.cli.{name}").register(subparsers)
+    for command_parser in subparsers.choices.values():
+        command_parser.add_argument("--library", default=SUPPRESS)
+        for action in command_parser._actions:  # noqa: SLF001 - configure nested parsers
+            if hasattr(action, "choices") and isinstance(action.choices, dict):
+                for child in action.choices.values():
+                    if isinstance(child, ArgumentParser):
+                        child.add_argument("--library", default=SUPPRESS)
     return parser
 
 
@@ -190,8 +203,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     parser = build_parser()
     try:
-        return _dispatch(parser.parse_args(argv), parser)
-    except ConfigLoadError as exc:
+        args = parser.parse_args(argv)
+        token = library_argument.set(args.library)
+        try:
+            return _dispatch(args, parser)
+        finally:
+            library_argument.reset(token)
+    except (ConfigLoadError, FileNotFoundError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
 

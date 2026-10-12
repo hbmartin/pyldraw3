@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -126,7 +127,14 @@ def inspect_library(path: str | Path) -> LibraryInspection:
     components: list[LibraryComponent] = []
     diagnostics: list[Diagnostic] = []
     for name in _REQUIRED_COMPONENTS:
-        component_path = ldraw_path / name
+        component_path = (
+            next(
+                (item for item in ldraw_path.iterdir() if item.name.casefold() == name),
+                ldraw_path / name,
+            )
+            if ldraw_path.is_dir()
+            else ldraw_path / name
+        )
         expects_directory = name in {"parts", "p"}
         present = component_path.exists()
         valid = (
@@ -202,6 +210,11 @@ def discover_libraries(
                 Path("/usr/local/share/ldraw"),
             ),
         )
+        for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            if directory := os.environ.get(variable):
+                candidates.extend(
+                    (Path(directory) / "LDraw", Path(directory) / "LeoCAD" / "library")
+                )
     unique = tuple(dict.fromkeys(path.expanduser() for path in candidates))
     total = len(unique)
     emit_progress(

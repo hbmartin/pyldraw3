@@ -78,6 +78,7 @@ def test_session_none_config_loads_default(monkeypatch: MonkeyPatch) -> None:
 
     monkeypatch.setattr("ldraw.session.Config.load", staticmethod(fake_load))
 
+    monkeypatch.setattr("ldraw.session.select_library", lambda *args, **kwargs: None)
     assert LDrawSession(None).config is config
 
 

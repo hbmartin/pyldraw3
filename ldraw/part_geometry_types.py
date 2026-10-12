@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ldraw.coverage import Coverage
 from ldraw.geometry import Vector
 
 if TYPE_CHECKING:
@@ -66,7 +68,42 @@ class PartGeometry:
     @property
     def complete(self) -> bool:
         """Whether every referenced child was resolved and expanded."""
+        warnings.warn(
+            "PartGeometry.complete is deprecated; use explicit coverage fields "
+            "(removed in 2.0)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.legacy_complete
+
+    @property
+    def legacy_complete(self) -> bool:
+        """The unchanged 1.x aggregate rule, for compatibility serialization."""
         return not self.diagnostics
+
+    @property
+    def geometry_coverage(self) -> Coverage:
+        """Drawable coverage independent of optional connection metadata warnings."""
+        if self.bounds is None:
+            return Coverage.UNAVAILABLE
+        return (
+            Coverage.PARTIAL
+            if any(
+                not str(item.code).startswith("connection.")
+                for item in self.diagnostics
+            )
+            else Coverage.COMPLETE
+        )
+
+    @property
+    def connection_coverage(self) -> Coverage:
+        """Coverage of supported connection evidence rather than geometry."""
+        if (
+            self.connection_metadata is not None
+            and self.connection_metadata.coverage == "complete"
+        ):
+            return Coverage.COMPLETE
+        return Coverage.PARTIAL if self.connections else Coverage.UNAVAILABLE
 
     @property
     def top_studs(self) -> tuple[StudReference, ...]:

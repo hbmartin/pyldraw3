@@ -301,7 +301,7 @@ class InstructionStep:
         view = Model(
             name=self._model.name,
             objects=included,
-            submodels=_expandable_submodels(self._root, expand=expand_submodels),
+            submodels=self._root.submodels if expand_submodels else {},
         )
         return bill_of_materials(view, parts=parts)
 
@@ -735,7 +735,23 @@ def _parse_arrow(
 
 
 def _is_instruction_model(model: Model) -> bool:
-    return not model.name.casefold().endswith(".dat")
+    from ldraw.part_metadata import (  # noqa: PLC0415
+        PartFileKind,
+        PartStatus,
+        parse_metadata_lines,
+    )
+
+    if not model.objects:
+        return not model.name.casefold().endswith(".dat")
+    metadata = parse_metadata_lines([obj.to_ldraw() for obj in model.objects])
+    return (
+        metadata.file_kind == PartFileKind.SHORTCUT
+        or metadata.status in {PartStatus.ALIAS, PartStatus.MOVED}
+        or (
+            metadata.file_kind == PartFileKind.UNKNOWN
+            and not model.name.casefold().endswith(".dat")
+        )
+    )
 
 
 def _expandable_submodels(root: Model, *, expand: bool) -> dict[str, Model]:

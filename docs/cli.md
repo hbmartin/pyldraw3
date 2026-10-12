@@ -6,7 +6,7 @@ preview views, exports bills of materials, and produces renderer-neutral
 instruction data.
 
 ```text
-usage: ldraw [-h] command ...
+usage: ldraw [-h] [--library PATH] command ...
 
 Manage LDraw libraries and create, inspect, validate, and render LDraw models.
 
@@ -24,6 +24,10 @@ positional arguments:
               Inspect, validate, and export renderer-neutral instructions.
     config    Print the current configuration.
     version   Print the installed pyldraw3 version.
+    api       Search the public API inventory without a parts library.
+    doctor    Diagnose selection, caches, FTS5, and optional renderers.
+    extract   Extract a section and its dependencies with attribution.
+    snap      Report candidate snap transforms and bounded-search coverage.
 
 options:
   -h, --help  show this help message and exit
@@ -31,12 +35,34 @@ options:
 
 ## Commands
 
+`--library PATH` accepts an installation root or data directory, globally or
+after a subcommand. It takes precedence over configuration and environment
+selection. Ordinary commands may prepare local derived caches; downloads and
+configuration writes remain explicit. See [adoption workflows](adoption.md)
+for executable Python equivalents and operation requirements.
+
+- `ldraw api [QUERY] --format table|json --limit N --offset N --output PATH`
+  inventories public names, signatures, methods, documentation, and units.
+  Pagination changes the displayed page while totals cover the full query.
+- `ldraw doctor --format table|json` reports library selection, capabilities,
+  cache state, FTS5 support, and renderer availability without repair.
+- `ldraw extract FILE SECTION --namespace PREFIX --output MODEL --manifest JSON`
+  copies the dependency closure and preserves attribution and licence records.
+  The manifest is optional; extraction needs no installed library.
+- `ldraw snap FILE --moving INDEX [--fixed INDEX] --feature-pair-budget N
+  --limit N --format table|json --output PATH` reports candidate transforms,
+  contact support after application, unsupported checks, and search coverage.
+  It does not modify the document. Occurrence indexes are zero-based.
+- `ldraw parts measurements CODE --format table|json --output PATH` reports
+  optional body bounds, stack height, and footprint positions with provenance.
+
 - `ldraw download [--version VERSION] [--yes]` downloads and unpacks an
   LDraw release. The default version is `complete`.
 - `ldraw generate [--yes] [--force]` regenerates `ldraw.library.*` from the
   currently configured release. `--force` regenerates even when already up to
   date.
-- `ldraw parts search TERM [--limit N]` searches the catalog across part
+- `ldraw parts search TERM [--limit N] [--offset N] [--format table|json]
+  [--output PATH] [--category CATEGORY] [--physical-only]` searches across part
   codes, descriptions, categories, and keywords. Every whitespace-separated
   token in `TERM` must match (case-insensitive), and results are ranked by
   relevance. It exits with code 1 when nothing matches.
@@ -50,7 +76,10 @@ options:
   Suspect matrices, legacy dithered colours, and unknown meta-commands are
   warnings. `--strict` makes warnings fail.
 - `ldraw bom FILE [--format table|csv|json] [-o OUT]` prints a bill of
-  materials counted by part and colour, with submodels expanded.
+  physical materials counted by part and colour, with shortcuts and aliases
+  expanded and declared physical parts kept as boundaries. `--detail full`
+  adds diagnostics, coverage, and unresolved contents to JSON; the default
+  JSON schema remains rows-only.
 - `ldraw inspect FILE [--format table|json] [--gap-threshold LDU]
   [--chronological] [--page-marker-prefix TEXT] [-o OUT]` reports exact
   transformed occurrence geometry, provenance, stud contacts, nearest AABB

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 # metadata fingerprint (meta key `tree_fingerprint`), so path, size, or mtime
 # changes that leave parts.lst byte-identical still invalidate the index.
 # (Version 3: entry descriptions stored as written in parts.lst.)
-CATALOG_SCHEMA_VERSION = 6
+CATALOG_SCHEMA_VERSION = 7
 
 _CREATE_META = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 _CREATE_PARTS = """
@@ -341,6 +341,7 @@ def save_catalog(  # noqa: PLR0913 - explicit index inputs and operation control
     try:
         with connection:
             connection.execute(f"PRAGMA user_version = {CATALOG_SCHEMA_VERSION}")
+            connection.execute("DROP TABLE IF EXISTS parts_fts")
             connection.execute("DROP TABLE IF EXISTS meta")
             connection.execute("DROP TABLE IF EXISTS parts")
             connection.execute(_CREATE_META)
@@ -388,6 +389,17 @@ def save_catalog(  # noqa: PLR0913 - explicit index inputs and operation control
                             unit=ProgressUnit.PARTS,
                         ),
                     )
+            try:
+                connection.execute(
+                    "CREATE VIRTUAL TABLE parts_fts "
+                    "USING fts5(code, description, category, keywords)"
+                )
+                connection.execute(
+                    "INSERT INTO parts_fts "
+                    "SELECT code, description, category, keywords FROM parts"
+                )
+            except sqlite3.OperationalError:
+                logger.debug("FTS5 unavailable; ranked matcher will be used")
     finally:
         connection.close()
 
@@ -440,6 +452,7 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
             studio_metadata=studio_sources,
         )
         parts.adopt_catalog(catalog)
+        parts.search_index = db_path
         return parts
     # Both fingerprints participate in the memo key: the tree catches in-place
     # ``.dat`` edits, while the MD5 catches a changed ``parts.lst`` whose size
@@ -478,4 +491,5 @@ def load_parts(  # noqa: PLR0913 - compatibility plus operation controls
             )
         except (OSError, sqlite3.Error):
             logger.debug("could not persist parts index to %s", db_path)
+    parts.search_index = db_path if db_path.is_file() else None
     return parts

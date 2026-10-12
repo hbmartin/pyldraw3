@@ -8,6 +8,7 @@ from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 
@@ -133,6 +134,16 @@ def _json_safe(value: object | None) -> str | int | float | bool | None:
             return value
         case _:
             return repr(value)
+
+
+def _merge_diagnostics(*groups: Iterable[Diagnostic]) -> tuple[Diagnostic, ...]:
+    """Retain distinct evidence in encounter order across composed reports."""
+    result: list[Diagnostic] = []
+    for group in groups:
+        for diagnostic in group:
+            if diagnostic not in result:
+                result.append(diagnostic)
+    return tuple(result)
 
 
 __all__ = ["Diagnostic", "DiagnosticCode", "Severity"]

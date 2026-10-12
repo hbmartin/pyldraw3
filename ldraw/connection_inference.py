@@ -143,7 +143,7 @@ def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
             bounds=bounds,
             kind=ConnectionKind.PIN_HOLE,
             role=ConnectionRole.FEMALE,
-            friction=False,
+            friction=None,
         )
     elif _PIN_RE.fullmatch(lowered) and "hole" not in lowered:
         feature = _round_feature(
@@ -153,7 +153,7 @@ def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
             bounds=bounds,
             kind=ConnectionKind.PIN,
             role=ConnectionRole.MALE,
-            friction="fric" in lowered,
+            friction=True if "fric" in lowered else None,
         )
     elif _AXLE_RE.fullmatch(lowered) and not _AXLE_EXCLUDED_RE.fullmatch(lowered):
         feature = _axle_feature(
@@ -169,13 +169,14 @@ def primitive_connections(  # noqa: PLR0913 - primitive context is explicit
     return (feature.transformed(position=position, matrix=matrix),)
 
 
-def infer_part_connections(
+def infer_part_connections(  # noqa: PLR0913 - inference evidence
     *,
     code: str,
     description: str,
     bounds: BoundingBox | None,
     existing: Iterable[ConnectionFeature],
     compatible_parts: tuple[str, ...] = (),
+    axis_hint: Vector | None = None,
 ) -> tuple[ConnectionFeature, ...]:
     """Add conservative part-level bar, rim, and tyre semantics."""
     connections = list(existing)
@@ -199,6 +200,7 @@ def infer_part_connections(
                     kind=ConnectionKind.RIM_SEAT,
                     role=ConnectionRole.MALE,
                     compatible_parts=compatible_parts,
+                    axis_hint=axis_hint,
                 ),
             )
         elif lowered.startswith("tyre ") and not any(
@@ -211,6 +213,7 @@ def infer_part_connections(
                     kind=ConnectionKind.TYRE_BEAD,
                     role=ConnectionRole.FEMALE,
                     compatible_parts=compatible_parts,
+                    axis_hint=axis_hint,
                 ),
             )
     return normalize_connections(connections)
@@ -502,6 +505,9 @@ def _tube_socket_evidence(
     opening = replace(
         tube,
         position=center,
+        profile=replace(tube.profile, centered=False, direction=-1)
+        if isinstance(tube.profile, CylindricalProfile)
+        else tube.profile,
         feature_id=(
             tube.feature_id
             if open_tube
@@ -622,6 +628,9 @@ def _offset_socket(
     return replace(
         tube,
         position=position,
+        profile=replace(tube.profile, centered=False, direction=-1)
+        if isinstance(tube.profile, CylindricalProfile)
+        else tube.profile,
         name=_SOCKET_NAME,
         feature_id=f"{tube.feature_id}:{suffix}" if tube.feature_id else suffix,
         provenance=(*tube.provenance, _SOCKET_PROVENANCE),
@@ -793,6 +802,7 @@ def _stud_feature(
         frame=frame_for_axis(Vector(0, -1, 0)),
         profile=CylindricalProfile(
             sections=(CylindricalSection(SectionShape.ROUND, 6.0, 4.0),),
+            centered=False,
         ),
         name=description,
         feature_id=stem,
@@ -908,7 +918,7 @@ def _round_feature(  # noqa: PLR0913 - semantic feature fields are explicit
     bounds: BoundingBox | None,
     kind: ConnectionKind,
     role: ConnectionRole,
-    friction: bool,
+    friction: bool | None,
 ) -> ConnectionFeature:
     length = _axis_size(bounds, 1, fallback=20.0)
     radius = (
@@ -1030,16 +1040,27 @@ def _slender_bar(
     )
 
 
-def _annular_feature(
+def _annular_feature(  # noqa: PLR0913 - annular evidence
     *,
     code: str,
     bounds: BoundingBox,
     kind: ConnectionKind,
     role: ConnectionRole,
     compatible_parts: tuple[str, ...],
+    axis_hint: Vector | None = None,
 ) -> ConnectionFeature:
     sizes = (bounds.size.x, bounds.size.y, bounds.size.z)
-    axis_index = min(range(3), key=sizes.__getitem__)
+    axis_index = (
+        max(
+            range(3),
+            key=lambda index: abs((axis_hint.x, axis_hint.y, axis_hint.z)[index]),
+        )
+        if axis_hint is not None
+        else min(
+            range(3),
+            key=lambda index: abs(sizes[(index + 1) % 3] - sizes[(index + 2) % 3]),
+        )
+    )
     radial_sizes = tuple(
         size for index, size in enumerate(sizes) if index != axis_index
     )
@@ -1051,7 +1072,7 @@ def _annular_feature(
         kind=kind,
         role=role,
         position=_box_center(bounds),
-        frame=frame_for_axis(_AXIS_VECTORS[axis_index]),
+        frame=frame_for_axis(axis_hint or _AXIS_VECTORS[axis_index]),
         profile=AnnularProfile(
             radius=max(radial_sizes) / 2,
             width=sizes[axis_index],

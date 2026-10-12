@@ -20,6 +20,9 @@ def register(subparsers: _SubParsersAction) -> None:
         type=Path,
         help="Path to the .ldr or .mpd file.",
     )
+    bom_parser.add_argument("--detail", choices=("rows", "full"), default="rows")
+    bom_parser.add_argument("--occurrence-budget", type=int)
+    bom_parser.add_argument("--strict", action="store_true")
     bom_parser.add_argument(
         "--compare", type=Path, help="Compare counts against inventory CSV."
     )
@@ -55,4 +58,7 @@ def run(args: Namespace) -> int:
         out=args.output,
         compare=args.compare,
         inventory_mapping=args.inventory_mapping,
+        detail=args.detail,
+        occurrence_budget=args.occurrence_budget,
+        strict=args.strict,
     )

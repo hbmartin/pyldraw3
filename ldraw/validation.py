@@ -181,6 +181,7 @@ def _matrix_issue(
     *,
     path: Path | None,
     section: str | None,
+    tolerance: float = 1e-6,
 ) -> ValidationIssue | None:
     if piece.matrix.is_singular():
         return ValidationIssue(
@@ -192,7 +193,7 @@ def _matrix_issue(
             section=section,
             offending_value=piece.matrix,
         )
-    if not piece.matrix.is_orthonormal():
+    if not piece.matrix.is_orthonormal(tolerance=tolerance):
         return ValidationIssue(
             line_number=number,
             message="transformation matrix is not orthonormal (scaled or sheared part)",
@@ -286,6 +287,10 @@ def iter_object_issues(  # noqa: PLR0913 - parsed-object context is explicit
 def iter_ldr_issues(
     path: Path | ModelLoadResult,
     parts: Parts | None = None,
+    *,
+    profile: str = "format",
+    matrix_tolerance: float = 1e-6,
+    connectivity: bool = False,
 ) -> Iterator[ValidationIssue]:
     """Yield the issues found in an LDraw model or part file, in line order.
 
@@ -305,7 +310,43 @@ def iter_ldr_issues(
     result = (
         path if isinstance(path, ModelLoadResult) else load_model(path, parts=parts)
     )
+    if profile not in {"format", "assembly"}:
+        message = f"Unknown validation profile {profile!r}"
+        raise ValueError(message)
+    diagnostics = list(result.diagnostics)
+    if result.model is not None and matrix_tolerance != 1e-6:
+        diagnostics = [
+            item
+            for item in diagnostics
+            if item.code
+            not in {
+                DiagnosticCode.MODEL_NON_ORTHONORMAL_MATRIX,
+                DiagnosticCode.MODEL_SINGULAR_MATRIX,
+            }
+        ]
+        for section in (result.model, *result.model.submodels.values()):
+            for piece in section.pieces:
+                issue = _matrix_issue(
+                    piece,
+                    section.source_line_for(piece) or 0,
+                    path=None,
+                    section=section.name,
+                    tolerance=matrix_tolerance,
+                )
+                if issue is not None:
+                    diagnostics.append(issue)
+    if profile == "assembly" and result.model is not None:
+        from ldraw.assembly_validation import assembly_issues  # noqa: PLC0415
+
+        diagnostics.extend(
+            assembly_issues(
+                result.model,
+                parts=parts,
+                matrix_tolerance=matrix_tolerance,
+                connectivity=connectivity,
+            )
+        )
     yield from sorted(
-        result.diagnostics,
+        diagnostics,
         key=lambda issue: (issue.line_number is not None, issue.line_number or 0),
     )

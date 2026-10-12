@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from argparse import Namespace, _SubParsersAction
-from ldraw.cli._defaults import DEFAULT_RENDER_SIZE, DEFAULT_RENDER_VIEWS
+from ldraw.cli._defaults import DEFAULT_RENDER_SIZE
 from ldraw.rendering import RenderBackend, RenderView
 
 
@@ -17,6 +17,7 @@ def register(subparsers: _SubParsersAction) -> None:
         "render",
         help="Render a deterministic set of standard preview views.",
     )
+    render_parser.add_argument("--section", help="Render a selected MPD section.")
     render_parser.add_argument(
         "file",
         type=Path,
@@ -26,7 +27,7 @@ def register(subparsers: _SubParsersAction) -> None:
         "--view",
         action="append",
         type=RenderView,
-        choices=DEFAULT_RENDER_VIEWS,
+        choices=tuple(RenderView),
         default=None,
         help="Standard view to render; repeat for multiple views.",
     )
@@ -82,4 +83,5 @@ def run(args: Namespace) -> int:
         prefix=args.prefix,
         refresh=args.refresh,
         overwrite=args.overwrite,
+        section=args.section,
     )

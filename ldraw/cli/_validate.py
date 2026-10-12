@@ -13,7 +13,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def validate_command(*, file: Path, strict: bool = False) -> int:
+def validate_command(
+    *,
+    file: Path,
+    strict: bool = False,
+    profile: str = "format",
+    matrix_tolerance: float = 1e-6,
+    connectivity: bool = False,
+) -> int:
     """Validate an LDraw file, reporting issues with line numbers."""
     if not file.is_file():
         print(f"{file}: not found", file=sys.stderr)
@@ -25,7 +32,15 @@ def validate_command(*, file: Path, strict: bool = False) -> int:
             file=sys.stderr,
         )
     try:
-        issues = list(iter_ldr_issues(file, parts))
+        issues = list(
+            iter_ldr_issues(
+                file,
+                parts,
+                profile=profile,
+                matrix_tolerance=matrix_tolerance,
+                connectivity=connectivity,
+            )
+        )
     except UnicodeDecodeError as exc:
         print(f"{file}: error: not valid UTF-8 text ({exc})", file=sys.stderr)
         return 1

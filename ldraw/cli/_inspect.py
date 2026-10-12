@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from ldraw.connection_metadata import ConnectionMetadataReport
     from ldraw.diagnostics import Diagnostic
     from ldraw.geometry import Vector
+    from ldraw.inspection import OccurrenceGeometry
     from ldraw.part_geometry_types import BoundingBox
 
 
@@ -52,6 +53,10 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
     out: Path | None,
     connection_shadows: tuple[Path, ...] = (),
     studio_metadata: tuple[Path, ...] = (),
+    occurrence_budget: int | None = None,
+    feature_pair_budget: int | None = None,
+    strict: bool = False,
+    geometry_only: bool = False,
 ) -> int:
     """Inspect exact occurrence geometry, provenance, contacts, and gaps."""
     if gap_threshold < 0:
@@ -82,6 +87,8 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
             loaded.model,
             parts=parts,
             page_marker_prefix=page_marker_prefix,
+            occurrence_budget=occurrence_budget,
+            feature_pair_budget=feature_pair_budget,
         )
         contacts = inspection.contact_gaps(
             minimum_gap=gap_threshold,
@@ -95,9 +102,41 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
         return 1
 
     diagnostics = (*loaded.diagnostics, *inspection.diagnostics)
-    complete = loaded.complete and inspection.complete
+    complete = loaded.complete and inspection.legacy_complete
+    text = _inspection_text(
+        output_format=output_format,
+        file=file,
+        inspection=inspection,
+        contacts=contacts,
+        diagnostics=diagnostics,
+        complete=complete,
+        gap_threshold=gap_threshold,
+        chronological=chronological,
+    )
+    if not _write_report(text, out=out, description="inspection"):
+        return 1
+    incomplete = inspection.geometry_coverage != "complete" or (
+        not geometry_only and inspection.connection_coverage != "complete"
+    )
+    return int(
+        any(item.severity is Severity.ERROR for item in diagnostics)
+        or (strict and incomplete)
+    )
+
+
+def _inspection_text(  # noqa: PLR0913 - report context is explicit
+    *,
+    output_format: str,
+    file: Path,
+    inspection: ModelInspection,
+    contacts: tuple[OccurrenceContact, ...],
+    diagnostics: tuple[Diagnostic, ...],
+    complete: bool,
+    gap_threshold: float,
+    chronological: bool,
+) -> str:
     if output_format == "json":
-        text = json.dumps(
+        return json.dumps(
             _inspection_data(
                 file=file,
                 inspection=inspection,
@@ -110,19 +149,15 @@ def inspect_command(  # noqa: PLR0911, PLR0913 - mirrors explicit CLI controls
             indent=2,
             sort_keys=True,
         )
-    else:
-        text = _format_inspection_table(
-            file=file,
-            inspection=inspection,
-            contacts=contacts,
-            diagnostics=diagnostics,
-            complete=complete,
-            gap_threshold=gap_threshold,
-            chronological=chronological,
-        )
-    if not _write_report(text, out=out, description="inspection"):
-        return 1
-    return int(any(item.severity is Severity.ERROR for item in diagnostics))
+    return _format_inspection_table(
+        file=file,
+        inspection=inspection,
+        contacts=contacts,
+        diagnostics=diagnostics,
+        complete=complete,
+        gap_threshold=gap_threshold,
+        chronological=chronological,
+    )
 
 
 def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
@@ -140,6 +175,19 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         "bounds": _box_data(inspection.bounds),
         "chronological": chronological,
         "complete": complete,
+        "geometry_coverage": inspection.geometry_coverage.value,
+        "connection_coverage": inspection.connection_coverage.value,
+        "processed_occurrences": inspection.occurrence_count,
+        "total_occurrences": inspection.occurrence_total,
+        "raw_geometry": [
+            {
+                "section": item.section,
+                "source_line": item.source_line,
+                "point_count": len(item.points),
+                "piece_index_path": [entry.piece_index for entry in item.path],
+            }
+            for item in inspection.raw_geometry
+        ],
         "connection_contacts": [
             _connection_contact_data(contact)
             for contact in inspection.connection_contacts()
@@ -147,6 +195,9 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         "connection_graphs": {
             "confirmed": [_graph_edge_data(edge) for edge in graphs.confirmed.edges],
             "nodes": list(graphs.optimistic.nodes),
+            "coverage": graphs.optimistic.coverage.value,
+            "confirmed_components": graphs.confirmed.components(),
+            "optimistic_components": graphs.optimistic.components(),
             "optimistic": [_graph_edge_data(edge) for edge in graphs.optimistic.edges],
         },
         "diagnostics": [item.to_dict() for item in diagnostics],
@@ -171,42 +222,7 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         "geometry_count": len(inspection.occurrences),
         "model": str(file),
         "occurrence_count": inspection.occurrence_count,
-        "occurrences": [
-            {
-                "bounds": _box_data(item.bounds),
-                "colour": (
-                    item.occurrence.colour.code
-                    if item.occurrence.colour.code is not None
-                    else item.occurrence.colour.rgb
-                ),
-                "connection_count": len(item.connections),
-                "connections": [
-                    _connection_data(connection) for connection in item.connections
-                ],
-                "connection_metadata": _connection_metadata_data(
-                    item.local.connection_metadata,
-                ),
-                "effective_step_path": list(item.attribution.effective_step_path),
-                "index": item.index,
-                "installation_page": item.attribution.installation_page,
-                "local_point_count": len(item.local.points),
-                "local_step_path": list(item.attribution.local_step_path),
-                "model_path": list(item.attribution.model_path),
-                "page_path": list(item.attribution.page_path),
-                "part": item.occurrence.part_code,
-                "position": _vector_data(item.occurrence.position),
-                "reference_path": list(item.attribution.reference_path),
-                "source_line": item.occurrence.source_line,
-                "source_line_path": list(item.attribution.source_line_path),
-                "source_model": item.occurrence.source_model.name,
-                "source_page": item.attribution.source_page,
-                "source_step": item.occurrence.source_step,
-                "step": item.occurrence.step,
-                "step_path": list(item.attribution.step_path),
-                "stud_count": len(item.studs),
-            }
-            for item in inspection.occurrences
-        ],
+        "occurrences": [_occurrence_data(item) for item in inspection.occurrences],
         "skipped_geometry": [
             {
                 "diagnostic": skipped.diagnostic.to_dict(),
@@ -221,6 +237,44 @@ def _inspection_data(  # noqa: PLR0913 - report inputs are explicit
         "stud_contacts": [
             _stud_contact_data(contact) for contact in inspection.stud_contacts()
         ],
+    }
+
+
+def _occurrence_data(item: OccurrenceGeometry) -> dict[str, object]:
+    """Serialize one physical occurrence and its stable placement path."""
+    return {
+        "bounds": _box_data(item.bounds),
+        "colour": (
+            item.occurrence.colour.code
+            if item.occurrence.colour.code is not None
+            else item.occurrence.colour.rgb
+        ),
+        "connection_count": len(item.connections),
+        "connections": [
+            _connection_data(connection) for connection in item.connections
+        ],
+        "connection_metadata": _connection_metadata_data(
+            item.local.connection_metadata,
+        ),
+        "effective_step_path": list(item.attribution.effective_step_path),
+        "index": item.index,
+        "piece_index_path": [entry.piece_index for entry in item.occurrence.path],
+        "installation_page": item.attribution.installation_page,
+        "local_point_count": len(item.local.points),
+        "local_step_path": list(item.attribution.local_step_path),
+        "model_path": list(item.attribution.model_path),
+        "page_path": list(item.attribution.page_path),
+        "part": item.occurrence.part_code,
+        "position": _vector_data(item.occurrence.position),
+        "reference_path": list(item.attribution.reference_path),
+        "source_line": item.occurrence.source_line,
+        "source_line_path": list(item.attribution.source_line_path),
+        "source_model": item.occurrence.source_model.name,
+        "source_page": item.attribution.source_page,
+        "source_step": item.occurrence.source_step,
+        "step": item.occurrence.step,
+        "step_path": list(item.attribution.step_path),
+        "stud_count": len(item.studs),
     }
 
 
@@ -245,6 +299,8 @@ def _format_inspection_table(  # noqa: PLR0913 - report inputs are explicit
     lines = [
         f"model: {file}",
         f"complete: {'yes' if complete else 'no'}",
+        f"geometry coverage: {inspection.geometry_coverage}",
+        f"connection coverage: {inspection.connection_coverage}",
         (
             f"occurrences: {inspection.occurrence_count} "
             f"geometry: {len(inspection.occurrences)} "
@@ -379,6 +435,7 @@ def _connection_data(connection: ConnectionFeature) -> dict[str, object]:
             if connection.connection_provenance is not None
             else None
         ),
+        "editor_slide": connection.editor_slide,
         "radial": _vector_data(connection.radial),
         "role": connection.role.value,
         "scale_inheritance": connection.scale_inheritance,
@@ -393,6 +450,7 @@ def _connection_profile_data(connection: ConnectionFeature) -> dict[str, object]
                 "centered": profile.centered,
                 "caps": profile.caps.value,
                 "friction": profile.friction,
+                "direction": profile.direction,
                 "sections": [
                     {
                         "flexible": section.flexible,
@@ -465,6 +523,7 @@ def _residual_data(residual: object) -> dict[str, object]:
         "axial_gap": residual.axial_gap,
         "distance": residual.distance,
         "entry_face_gap": residual.entry_face_gap,
+        "engagement": residual.engagement,
         "penetration": residual.penetration,
         "roll_alignment": residual.roll_alignment,
     }
