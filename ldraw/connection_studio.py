@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from ldraw.connection_metadata import ShadowConnectionResult
+from ldraw._connection_results import ShadowConnectionResult
 from ldraw.connection_types import (
     AnnularProfile,
     ConnectionFeature,

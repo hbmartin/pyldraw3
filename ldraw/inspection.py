@@ -7,6 +7,9 @@ from dataclasses import dataclass, replace
 from itertools import product
 from typing import TYPE_CHECKING, cast
 
+from ldraw._constants import (
+    DEFAULT_PAGE_MARKER_PREFIX as DEFAULT_PAGE_MARKER_PREFIX,  # noqa: PLC0414 - public re-export
+)
 from ldraw._vertex_arrays import transform_vertices, vertex_bounds
 from ldraw.connection_types import (
     ConnectionFeature,
@@ -33,8 +36,6 @@ if TYPE_CHECKING:
     from ldraw.geometry import Matrix
     from ldraw.model import Model, ModelOccurrence
     from ldraw.parts import Parts
-
-DEFAULT_PAGE_MARKER_PREFIX = "// PDF_PAGE "
 
 
 @dataclass(frozen=True, slots=True)

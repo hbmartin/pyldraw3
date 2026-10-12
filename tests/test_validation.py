@@ -5,11 +5,15 @@ from pathlib import Path
 import pytest
 
 from ldraw.diagnostics import DiagnosticCode
+from ldraw.geometry import Identity, Matrix, Vector
+from ldraw.model import Model
 from ldraw.parts import Parts
+from ldraw.pieces import Group, Piece
 from ldraw.validation import (
     KNOWN_META_COMMANDS,
     Severity,
     ValidationIssue,
+    iter_duplicate_issues,
     iter_ldr_issues,
 )
 
@@ -19,6 +23,36 @@ IDENTITY = "1 0 0 0 1 0 0 0 1"
 ROTATED_90_Y = "0 0 -1 0 1 0 1 0 0"
 SCALED = "2 0 0 0 1 0 0 0 1"
 SINGULAR = "1 0 0 0 1 0 0 0 0"
+
+
+@pytest.mark.parametrize(("local_x", "duplicates"), [(0, 0), (-100, 1)])
+def test_duplicate_placements_apply_group_translations(
+    local_x: int, duplicates: int
+) -> None:
+    first = Group()
+    second = Group(position=Vector(100, 0, 0))
+    Piece.place("3001", colour=4, group=first)
+    Piece.place("3001", colour=4, position=Vector(local_x, 0, 0), group=second)
+    model = Model()
+    model.add_group(first)
+    model.add_group(second)
+    assert len(list(iter_duplicate_issues(model))) == duplicates
+
+
+@pytest.mark.parametrize("compensate", [False, True])
+def test_duplicate_placements_apply_group_rotations(*, compensate: bool) -> None:
+    rotation = Matrix([[0, 0, -1], [0, 1, 0], [1, 0, 0]])
+    group = Group(matrix=rotation)
+    Piece.place(
+        "3001",
+        colour=4,
+        position=Vector(0, 0, -20),
+        matrix=rotation.transpose() if compensate else Identity(),
+        group=group,
+    )
+    model = Model(objects=[Piece.place("3001", colour=4, position=Vector(20, 0, 0))])
+    model.add_group(group)
+    assert len(list(iter_duplicate_issues(model))) == int(compensate)
 
 
 @pytest.fixture

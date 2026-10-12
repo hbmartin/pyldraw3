@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ldraw.geometry import Vector
 
 if TYPE_CHECKING:
-    from ldraw.connection_metadata import ConnectionMetadataReport
+    from ldraw._connection_results import ConnectionMetadataReport
     from ldraw.connection_types import ConnectionFeature
     from ldraw.diagnostics import Diagnostic
 

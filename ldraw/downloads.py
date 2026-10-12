@@ -12,6 +12,9 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import httpx2
 from progress.bar import Bar
 
+from ldraw._constants import (
+    COMPLETE_VERSION as COMPLETE_VERSION,  # noqa: PLC0414 - public re-export
+)
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
 from ldraw.generate import generate_parts_lst
@@ -26,7 +29,6 @@ from ldraw.progress import (
 
 logger = logging.getLogger(__name__)
 
-COMPLETE_VERSION = "complete"
 LDRAW_URL = "https://library.ldraw.org/library/updates"
 ARCHIVE_URL = "https://github.com/rienafairefr/ldraw-parts/archive/refs/tags"
 VERSION_RE = re.compile(r"^\d{4}-\d{2}$")

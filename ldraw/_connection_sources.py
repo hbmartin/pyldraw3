@@ -12,6 +12,7 @@ from ldraw._connection_common import (
     _normalized_code,
     _ParsedCommand,
 )
+from ldraw._connection_results import ShadowConnectionResult
 from ldraw.connection_types import ConnectionSource
 from ldraw.diagnostics import Diagnostic, DiagnosticCode
 
@@ -299,7 +300,3 @@ class _SourceText:
     path: Path
     archive_member: str | None
     logical_name: str
-
-
-# Resolve the public result type after the source class is available to the façade.
-from ldraw.connection_metadata import ShadowConnectionResult  # noqa: E402

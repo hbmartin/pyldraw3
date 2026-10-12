@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import WeakKeyDictionary
 
+from ldraw._connection_results import ConnectionMetadataCoverage, ShadowConnectionResult
 from ldraw._vertex_arrays import transform_vertices, vertex_bounds
 from ldraw.connection_inference import (
     StudSocketEvidence,
@@ -25,12 +26,7 @@ from ldraw.connection_inference import (
     primitive_connections,
     same_interface,
 )
-from ldraw.connection_metadata import (
-    ConnectionMetadataCoverage,
-    ShadowConnectionResult,
-    metadata_report,
-    parse_ldcad_text,
-)
+from ldraw.connection_metadata import metadata_report, parse_ldcad_text
 from ldraw.connection_types import (
     METADATA_SOURCES as _METADATA_SOURCES,
 )
@@ -43,10 +39,8 @@ from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
 from ldraw.pieces import Piece
 
 if TYPE_CHECKING:
-    from ldraw.connection_metadata import (
-        ConnectionMetadataReport,
-        LDCadShadowLibrary,
-    )
+    from ldraw._connection_results import ConnectionMetadataReport
+    from ldraw.connection_metadata import LDCadShadowLibrary
     from ldraw.connection_types import ConnectionFeature
     from ldraw.part import Part
 

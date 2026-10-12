@@ -27,8 +27,9 @@ from ldraw._connection_features import (
     _transform_include,
     _validate_common_options,
 )
+from ldraw._connection_results import ShadowConnectionResult
 from ldraw._connection_sources import _resolve_across_libraries
-from ldraw.connection_metadata import LDCadShadowLibrary, ShadowConnectionResult
+from ldraw.connection_metadata import LDCadShadowLibrary
 from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionProvenance,

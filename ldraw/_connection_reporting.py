@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ldraw.connection_metadata import (
+from ldraw._connection_results import (
     ConnectionMetadataCoverage,
     ConnectionMetadataReport,
     ShadowConnectionResult,

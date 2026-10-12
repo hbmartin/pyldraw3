@@ -63,13 +63,14 @@ def iter_duplicate_issues(
     """Warn about exact duplicate placements within one model section."""
     seen: dict[tuple[object, ...], int | None] = {}
     for piece in model.pieces:
+        position, matrix = piece._transformed()  # noqa: SLF001 - section-local group transform
         key = (
             normalize_ref(piece.reference),
             piece.colour,
-            piece.position.x,
-            piece.position.y,
-            piece.position.z,
-            *piece.matrix.flatten(),
+            position.x,
+            position.y,
+            position.z,
+            *matrix.flatten(),
         )
         number = model.source_line_for(piece)
         if key in seen:
