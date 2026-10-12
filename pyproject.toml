@@ -135,7 +135,7 @@ package = true
 exclude = '\.git|\.nox|noxfile.py'
 
 [tool.deptry]
-extend_exclude = ["benchmarks"]
+extend_exclude = ["benchmarks", "scripts/check_function_budget.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

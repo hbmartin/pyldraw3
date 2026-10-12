@@ -17,6 +17,8 @@ Coverage is configured only in `pyproject.toml`: production `ldraw` source, bran
 
 Default pytest discovery selects `tests/`. Integration tests require `--integration`; benchmarks require an explicit `benchmarks/` path. The integration matrix retains both the 2018-02 and complete libraries across all supported Python versions.
 
+Production functions have an 80-NLOC budget, measured by Lizard. `scripts/function_budget.json` records existing exceptions and their current ceilings. New exceptions and growth are rejected; remove an exception as soon as its function is within budget. Run `uv run python scripts/check_function_budget.py` alongside the existing complexity check.
+
 ## Connection regression corpus
 
 The fixed manifest in `tests/snapshots/connections-2018-02-manifest.json` selects 200 parts across categories, including connector/socket regressions. Snapshots include feature identities, kinds, roles, transforms, profiles, confidence, and provenance; library roots are normalized. Numbers compare with relative tolerance `1e-9` and absolute tolerance `1e-7`, while other fields compare exactly.
@@ -35,4 +37,3 @@ uv run python scripts/connection_snapshots.py --parts-list /path/to/2018-02/ldra
 ```
 
 Pass `--archive /path/to/retained/archive.zip` if a checksum receipt is unavailable. `--select` deliberately recreates the manifest and archive identity; use it only when intentionally replacing the pinned corpus.
-

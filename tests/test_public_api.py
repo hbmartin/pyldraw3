@@ -322,6 +322,9 @@ def test_part_geometry_modules_import_in_either_order() -> None:
     for command in (
         "import ldraw.parts; import ldraw.part_geometry",
         "import ldraw.part_geometry; import ldraw.parts",
+        "import ldraw._connection_parser; import ldraw.connection_metadata",
+        "import ldraw._connection_sources; import ldraw.connection_metadata",
+        "import ldraw._connection_features; import ldraw._connection_reporting",
     ):
         try:
             subprocess.run(

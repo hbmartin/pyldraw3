@@ -47,6 +47,7 @@ jobs:
       if: matrix.python-version == '3.12'
       run: |
         uv run lizard --languages python ldraw tests
+        uv run python scripts/check_function_budget.py
     - name: Run package metadata checks
       if: matrix.python-version == '3.12'
       run: uv run pyroma --min 10 .

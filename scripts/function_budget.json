@@ -1,0 +1,13 @@
+{
+  "ldraw/cli/_inspect.py:_inspection_data": 97,
+  "ldraw/cli/_parts.py:parts_geometry_command": 81,
+  "ldraw/inspection.py:inspect_model": 81,
+  "ldraw/library_setup.py:plan_download": 104,
+  "ldraw/model.py:parse_model_result": 116,
+  "ldraw/part_geometry.py:_fold_child": 102,
+  "ldraw/parts.py:inspect_part": 101,
+  "ldraw/rendering.py:_render_uncached": 99,
+  "ldraw/rendering.py:render_preview": 93,
+  "ldraw/session.py:ensure_library": 81,
+  "ldraw/session.py:prepare_catalog": 121
+}

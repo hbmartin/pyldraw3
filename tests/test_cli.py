@@ -67,7 +67,7 @@ def test_version_prints_package_version(capsys: pytest.CaptureFixture[str]) -> N
     assert capsys.readouterr().out.strip() == package_version("pyldraw3")
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_config_prints_yaml(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -87,8 +87,8 @@ def test_config_prints_yaml(
     assert "secret" not in out
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", return_value="2024-01")
+@patch("ldraw.cli._download.Config")
+@patch("ldraw.cli._download.do_download", return_value="2024-01")
 def test_download_default_version(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -104,8 +104,8 @@ def test_download_default_version(
     assert "2024-01" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", return_value="2018-02")
+@patch("ldraw.cli._download.Config")
+@patch("ldraw.cli._download.do_download", return_value="2018-02")
 def test_download_explicit_version(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -118,8 +118,8 @@ def test_download_explicit_version(
     config.write.assert_called_once()
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", return_value="2018-02")
+@patch("ldraw.cli._download.Config")
+@patch("ldraw.cli._download.do_download", return_value="2018-02")
 def test_download_config_write_failure_returns_one(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -133,8 +133,8 @@ def test_download_config_write_failure_returns_one(
     assert "Could not update configuration: read-only" in capsys.readouterr().err
 
 
-@patch("ldraw.cli._confirm", return_value=False)
-@patch("ldraw.cli.do_download")
+@patch("ldraw.cli._download._confirm", return_value=False)
+@patch("ldraw.cli._download.do_download")
 def test_download_declined(
     do_download_mock: MagicMock,
     confirm_mock: MagicMock,
@@ -146,8 +146,8 @@ def test_download_declined(
     assert "Aborted." in capsys.readouterr().out
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", side_effect=requests.HTTPError("not found"))
+@patch("ldraw.cli._download.Config")
+@patch("ldraw.cli._download.do_download", side_effect=requests.HTTPError("not found"))
 def test_download_failure_returns_one(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -160,8 +160,8 @@ def test_download_failure_returns_one(
     assert "Download failed: not found" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load")
-@patch("ldraw.cli.do_generate")
+@patch("ldraw.cli._common.Config.load")
+@patch("ldraw.cli._generate.do_generate")
 def test_generate(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -174,8 +174,8 @@ def test_generate(
     )
 
 
-@patch("ldraw.cli.Config.load")
-@patch("ldraw.cli.do_generate")
+@patch("ldraw.cli._common.Config.load")
+@patch("ldraw.cli._generate.do_generate")
 def test_generate_force(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -188,8 +188,8 @@ def test_generate_force(
     )
 
 
-@patch("ldraw.cli.Config.load")
-@patch("ldraw.cli.do_generate", side_effect=UnwritableOutputError("/gen"))
+@patch("ldraw.cli._common.Config.load")
+@patch("ldraw.cli._generate.do_generate", side_effect=UnwritableOutputError("/gen"))
 def test_generate_unwritable_returns_one(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -202,9 +202,9 @@ def test_generate_unwritable_returns_one(
     assert "unwritable" in capsys.readouterr().err
 
 
-@patch("ldraw.cli._confirm", return_value=False)
-@patch("ldraw.cli.Config.load")
-@patch("ldraw.cli.do_generate")
+@patch("ldraw.cli._generate._confirm", return_value=False)
+@patch("ldraw.cli._common.Config.load")
+@patch("ldraw.cli._generate.do_generate")
 def test_generate_declined(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -247,7 +247,7 @@ def test_confirm_tty_prompts(
     assert _confirm("Continue?", yes=False) is expected
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_search_finds_fixture_brick(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -259,7 +259,7 @@ def test_parts_search_finds_fixture_brick(
     assert "Brick  2 x  4" in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_search_no_match_returns_one(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -269,7 +269,7 @@ def test_parts_search_no_match_returns_one(
     assert "No parts found matching" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_search_truncates_at_limit(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -279,7 +279,7 @@ def test_parts_search_truncates_at_limit(
     assert "... and 1 more (use --limit)." in capsys.readouterr().out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_info_shows_details_and_import(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -293,7 +293,7 @@ def test_parts_info_shows_details_and_import(
     assert "import: from ldraw.library.parts.bricks import Brick2X4" in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_info_unknown_code_returns_one(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -303,7 +303,7 @@ def test_parts_info_unknown_code_returns_one(
     assert "No part with code '9999'." in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_parts_commands_without_library_return_one(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -348,7 +348,7 @@ def test_suggested_import_other_category_is_none() -> None:
     assert _suggested_import(entry) is None
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_clean_file(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -362,7 +362,7 @@ def test_validate_clean_file(
     assert "OK" in capsys.readouterr().out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_reports_issues_with_line_numbers(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -382,7 +382,7 @@ def test_validate_reports_issues_with_line_numbers(
     assert "3 error(s), 0 warning(s)" in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_skips_submodel_references(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -403,7 +403,7 @@ def test_validate_skips_submodel_references(
     assert "OK" in capsys.readouterr().out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_missing_file_returns_one(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -413,7 +413,7 @@ def test_validate_missing_file_returns_one(
     assert "not found" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_validate_without_library_is_syntax_only(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -433,7 +433,7 @@ def test_validate_without_library_is_syntax_only(
     assert "OK" in captured.out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_warnings_pass_without_strict(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -449,7 +449,7 @@ def test_validate_warnings_pass_without_strict(
     assert "0 error(s), 1 warning(s)" in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_strict_fails_on_warnings(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -464,7 +464,7 @@ def test_validate_strict_fails_on_warnings(
     assert "warning: unknown meta-command !FOOBAR" in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_reports_unknown_colours(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -508,7 +508,7 @@ def test_build_parser_validate() -> None:
     assert args.file == Path("model.ldr")
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_table_output(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -531,7 +531,7 @@ def test_bom_table_output(
     assert "    2  " in out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_csv_stdout_is_machine_clean(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -549,7 +549,7 @@ def test_bom_csv_stdout_is_machine_clean(
     )
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_json_output(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -572,7 +572,7 @@ def test_bom_json_output(
     ]
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_writes_output_file(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -588,7 +588,7 @@ def test_bom_writes_output_file(
     assert out_file.read_text().startswith("part,description,")
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_empty_model_prints_no_pieces(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -602,7 +602,7 @@ def test_bom_empty_model_prints_no_pieces(
     assert "no pieces" in capsys.readouterr().out
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_missing_file_returns_one(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -612,7 +612,7 @@ def test_bom_missing_file_returns_one(
     assert "not found" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_malformed_file_returns_one(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -626,7 +626,7 @@ def test_bom_malformed_file_returns_one(
     assert "Unknown command (9)" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_bom_without_library_notes_on_stderr(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -662,7 +662,7 @@ def test_build_parser_stubs_defaults() -> None:
     assert args.out == Path()
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_stubs_writes_package(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -684,7 +684,7 @@ def test_stubs_writes_package(
     assert (out_dir / "ldraw-stubs" / "py.typed").read_text() == "partial\n"
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_stubs_without_generated_library_returns_one(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -714,7 +714,7 @@ def test_build_parser_generate_defaults() -> None:
     assert args.force is False
 
 
-@patch("ldraw.cli.package_version", side_effect=PackageNotFoundError)
+@patch("ldraw.cli._version.package_version", side_effect=PackageNotFoundError)
 def test_version_handles_missing_package(
     package_version_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -725,8 +725,8 @@ def test_version_handles_missing_package(
     assert capsys.readouterr().out.strip() == "unknown (not installed)"
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
-@patch("ldraw.cli.do_generate", side_effect=FileNotFoundError)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._generate.do_generate", side_effect=FileNotFoundError)
 def test_generate_before_download_hints(
     do_generate_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -737,8 +737,10 @@ def test_generate_before_download_hints(
     assert "run `ldraw download` first" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", side_effect=CouldNotDetermineLatestVersionError)
+@patch("ldraw.cli._download.Config")
+@patch(
+    "ldraw.cli._download.do_download", side_effect=CouldNotDetermineLatestVersionError
+)
 def test_download_reports_latest_version_failure(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -749,8 +751,8 @@ def test_download_reports_latest_version_failure(
     assert "Download failed" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config")
-@patch("ldraw.cli.do_download", side_effect=OSError("disk full"))
+@patch("ldraw.cli._download.Config")
+@patch("ldraw.cli._download.do_download", side_effect=OSError("disk full"))
 def test_download_reports_oserror(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
@@ -761,7 +763,7 @@ def test_download_reports_oserror(
     assert "Download failed: disk full" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_validate_non_utf8_file_reports_error(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -775,7 +777,7 @@ def test_validate_non_utf8_file_reports_error(
     assert "not valid UTF-8" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_non_utf8_file_reports_error(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -789,7 +791,7 @@ def test_bom_non_utf8_file_reports_error(
     assert "codec" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_bom_output_write_failure_returns_one(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -804,8 +806,8 @@ def test_bom_output_write_failure_returns_one(
     assert "Could not write" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
-@patch("ldraw.cli.write_stub_package", side_effect=OSError("denied"))
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._stubs.write_stub_package", side_effect=OSError("denied"))
 def test_stubs_write_failure_returns_one(
     write_stub_mock: MagicMock,
     config_load_mock: MagicMock,
@@ -816,7 +818,7 @@ def test_stubs_write_failure_returns_one(
     assert "Could not write stubs" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_search_normalizes_whitespace(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -848,7 +850,7 @@ def _successful_render(  # noqa: PLR0913 - mirrors render_preview
     )
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_parts_geometry_reports_modern_table_and_json(
     config_load_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -889,7 +891,7 @@ def test_parts_geometry_reports_modern_table_and_json(
     assert "not found" in capsys.readouterr().err.casefold()
 
 
-@patch("ldraw.cli._load_parts")
+@patch("ldraw.cli._common._load_parts")
 def test_parts_geometry_returns_report_for_incomplete_geometry(
     load_parts_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
@@ -972,7 +974,7 @@ def test_build_parser_connection_metadata_sources_default_to_empty() -> None:
     assert inspection.studio_metadata == []
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_missing_connection_sources_fail_before_parts_loading(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -993,7 +995,7 @@ def test_missing_connection_sources_fail_before_parts_loading(
             assert captured.out == ""
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_wrong_kind_connection_sources_fail_before_parts_loading(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -1059,7 +1061,7 @@ def test_connection_source_load_failure_is_reported_without_traceback(
     studio = tmp_path / "studio.json"
     studio.write_text("{}", encoding="utf-8")
 
-    with patch("ldraw.cli._load_parts", side_effect=error) as load_parts_mock:
+    with patch("ldraw.cli._common._load_parts", side_effect=error) as load_parts_mock:
         assert (
             main(
                 [
@@ -1078,7 +1080,7 @@ def test_connection_source_load_failure_is_reported_without_traceback(
     load_parts_mock.assert_called_once()
 
 
-@patch("ldraw.cli._load_parts")
+@patch("ldraw.cli._common._load_parts")
 def test_lazy_connection_source_failures_are_reported_without_traceback(
     load_parts_mock: MagicMock,
     tmp_path: Path,
@@ -1112,7 +1114,7 @@ def test_lazy_connection_source_failures_are_reported_without_traceback(
     assert captured.out == ""
 
     with patch(
-        "ldraw.cli.inspect_model",
+        "ldraw.cli._inspect.inspect_model",
         side_effect=OSError("shadow directory became unreadable"),
     ):
         assert (
@@ -1179,7 +1181,7 @@ def _scout_library_config(tmp_path: Path) -> Config:
     )
 
 
-@patch("ldraw.cli.Config.load")
+@patch("ldraw.cli._common.Config.load")
 def test_inspect_json_reports_connection_graph_edge_payloads(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -1250,7 +1252,7 @@ def test_inspect_json_reports_connection_graph_edge_payloads(
     )
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -1307,7 +1309,7 @@ def test_inspect_json_reports_bounds_pages_contacts_and_diagnostics(
     assert "chronological" in rendered
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_inspect_emits_partial_report_and_fails_on_load_errors(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -1328,7 +1330,7 @@ def test_inspect_emits_partial_report_and_fails_on_load_errors(
     assert payload["diagnostics"][0]["severity"] == "error"
 
 
-@patch("ldraw.cli.Config.load", return_value=FIXTURE_CONFIG)
+@patch("ldraw.cli._common.Config.load", return_value=FIXTURE_CONFIG)
 def test_inspect_rejects_invalid_inputs_and_output_errors(
     config_load_mock: MagicMock,
     tmp_path: Path,
@@ -1350,7 +1352,7 @@ def test_inspect_rejects_invalid_inputs_and_output_errors(
     assert "Could not write" in capsys.readouterr().err
 
 
-@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+@patch("ldraw.cli._render.render_preview", side_effect=_successful_render)
 def test_render_writes_named_views_with_current_backend_options(
     render_mock: MagicMock,
     tmp_path: Path,
@@ -1399,7 +1401,7 @@ def test_render_writes_named_views_with_current_backend_options(
     assert "RENDERED:" in capsys.readouterr().out
 
 
-@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+@patch("ldraw.cli._render.render_preview", side_effect=_successful_render)
 def test_render_defaults_to_all_standard_views(
     render_mock: MagicMock,
     tmp_path: Path,
@@ -1458,7 +1460,7 @@ def test_render_promotes_and_reports_cached_results(
             cached=True,
         )
 
-    monkeypatch.setattr("ldraw.cli.render_preview", cached_render)
+    monkeypatch.setattr("ldraw.cli._render.render_preview", cached_render)
 
     assert main(["render", str(model), "--view", "front"]) == 0
 
@@ -1467,7 +1469,7 @@ def test_render_promotes_and_reports_cached_results(
     assert capsys.readouterr().out == f"CACHED: {output}\n"
 
 
-@patch("ldraw.cli.render_preview", side_effect=_successful_render)
+@patch("ldraw.cli._render.render_preview", side_effect=_successful_render)
 def test_render_preflights_conflicts_and_validates_request(
     render_mock: MagicMock,
     tmp_path: Path,
@@ -1548,7 +1550,7 @@ def test_render_failure_preserves_all_existing_outputs(
             refresh=refresh,
         )
 
-    monkeypatch.setattr("ldraw.cli.render_preview", fail_top)
+    monkeypatch.setattr("ldraw.cli._render.render_preview", fail_top)
 
     assert (
         main(
@@ -1583,7 +1585,7 @@ def test_render_promotion_failure_rolls_back_overwritten_outputs(
     top = tmp_path / "proof.top.png"
     front.write_text("old front", encoding="utf-8")
     top.write_text("old top", encoding="utf-8")
-    monkeypatch.setattr("ldraw.cli.render_preview", _successful_render)
+    monkeypatch.setattr("ldraw.cli._render.render_preview", _successful_render)
     original_replace = Path.replace
 
     def fail_top_promotion(self: Path, target: str | Path) -> Path:
@@ -1622,7 +1624,7 @@ def test_render_promotion_failure_rolls_back_overwritten_outputs(
 
 
 @patch(
-    "ldraw.cli.Config.load",
+    "ldraw.cli._common.Config.load",
     side_effect=ConfigLoadError(path="/c.yml", reason="boom"),
 )
 def test_config_load_error_exits_one(
