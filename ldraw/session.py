@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Self
 from zipfile import BadZipFile
 
-import requests
+import httpx2
 
 from ldraw.catalog import (
     CATALOG_SCHEMA_VERSION,
@@ -757,7 +757,7 @@ def ensure_library(  # noqa: PLR0913 - public setup helper mirrors setup choices
                 cancellation=cancellation,
             )
         except (
-            requests.RequestException,
+            httpx2.HTTPError,
             ValueError,
             BadZipFile,
             CouldNotDetermineLatestVersionError,

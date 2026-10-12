@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from zipfile import BadZipFile
 
+import httpx2
 import pytest
-import requests
 
 from ldraw.cli import _confirm, _suggested_import, build_parser, main
 from ldraw.config import Config
@@ -147,17 +147,31 @@ def test_download_declined(
 
 
 @patch("ldraw.cli._download.Config")
-@patch("ldraw.cli._download.do_download", side_effect=requests.HTTPError("not found"))
+@patch("ldraw.cli._download.do_download")
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx2.HTTPStatusError(
+            "not found",
+            request=httpx2.Request(method="GET", url="https://example.test/x.zip"),
+            response=httpx2.Response(status_code=404),
+        ),
+        httpx2.ReadError("dropped"),
+        httpx2.ReadTimeout("stalled"),
+    ],
+)
 def test_download_failure_returns_one(
     do_download_mock: MagicMock,
     config_mock: MagicMock,
     capsys: pytest.CaptureFixture[str],
+    error: httpx2.HTTPError,
 ) -> None:
+    do_download_mock.side_effect = error
     assert main(["download", "--yes"]) == 1
 
     do_download_mock.assert_called_once()
     config_mock.load.assert_not_called()
-    assert "Download failed: not found" in capsys.readouterr().err
+    assert f"Download failed: {error}" in capsys.readouterr().err
 
 
 @patch("ldraw.cli._common.Config.load")

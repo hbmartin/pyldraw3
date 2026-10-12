@@ -38,7 +38,7 @@ The package uses cached PEP 562 exports with typing declarations and `__dir__`.
 The import hook still registers immediately; the lightweight legacy
 `ldraw.generate` module is preloaded so later module imports cannot replace the
 public generation function. Bare imports and help are checked in fresh
-processes for absence of NumPy and requests, without fragile timing assertions.
+processes for absence of NumPy and HTTPX2, without fragile timing assertions.
 
 Reproduce the synthetic measurements with:
 

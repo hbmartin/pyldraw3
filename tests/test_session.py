@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx2
 import pytest
 from pytest import MonkeyPatch
 
@@ -397,6 +398,27 @@ def test_ensure_library_wraps_oserror(tmp_path: Path, monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="disk full"):
         ensure_library(config)
+
+
+@pytest.mark.parametrize("error_type", [httpx2.ConnectError, httpx2.ReadTimeout])
+def test_ensure_library_wraps_http_errors(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    error_type: type[httpx2.HTTPError],
+) -> None:
+    config = Config(
+        ldraw_library_path=str(tmp_path / "missing"),
+        generated_path=str(tmp_path / "generated"),
+    )
+    error = error_type("offline")
+
+    def failing_download(**_kwargs: object) -> str:
+        raise error
+
+    monkeypatch.setattr("ldraw.session.download_library", failing_download)
+    with pytest.raises(RuntimeError, match="Could not download") as exc_info:
+        ensure_library(config)
+    assert exc_info.value.__cause__ is error
 
 
 def test_prepare_catalog_reports_missing_library_and_empty_capabilities(

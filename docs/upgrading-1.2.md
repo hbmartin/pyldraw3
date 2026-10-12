@@ -90,7 +90,7 @@ Its keyword arguments mirror the choices the CLI makes:
 - `on_progress=` — a callback receiving `ProgressEvent`s (see below).
 
 Setup failures are normalized to `RuntimeError` with a readable message
-(wrapping the underlying `requests`/zip/`UnwritableOutputError` cause).
+(wrapping the underlying `httpx2`/zip/`UnwritableOutputError` cause).
 
 `LDrawSession` is the lower-level handle when you want to inspect or
 control the steps individually:
