@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Example script for part lookup operations."""
 
-from ldraw.parts import Parts
+from ldraw import LDrawSession
 
-parts = Parts()
+parts = LDrawSession().load()
 part = parts.part(code="93055")
 print(part.category)
 print(part.description)

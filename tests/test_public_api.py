@@ -64,6 +64,8 @@ EXPECTED_ALL = [
     "InstructionIssue",
     "InstructionSection",
     "InstructionStep",
+    "InventoryComparison",
+    "InventoryDifference",
     "LDCadShadowLibrary",
     "LDrawCapability",
     "LDrawPaths",
@@ -128,6 +130,7 @@ EXPECTED_ALL = [
     "angular_alignment_within",
     "bill_of_materials",
     "bounds_gap",
+    "compare_inventory",
     "connection_residual",
     "connections_compatible",
     "discover_libraries",
@@ -144,6 +147,7 @@ EXPECTED_ALL = [
     "parse_model_result",
     "plan_download",
     "prepare_catalog",
+    "read_inventory",
     "read_model",
     "render_capabilities",
     "render_preview",
@@ -162,6 +166,10 @@ def test_every_exported_name_resolves() -> None:
 
 
 EXPORT_ORIGINS: dict[str, str] = {
+    "InventoryComparison": "bom",
+    "InventoryDifference": "bom",
+    "compare_inventory": "bom",
+    "read_inventory": "bom",
     "ALL_CATALOG_SEARCH_FIELDS": "parts",
     "AnnularProfile": "connection_types",
     "BfcCertification": "part_metadata",

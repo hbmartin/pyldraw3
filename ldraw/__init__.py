@@ -21,7 +21,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import sys
 
 from ldraw.analysis import ModelAnalysis, analyze_model
-from ldraw.bom import BomRow, bill_of_materials
+from ldraw.bom import (
+    BomRow,
+    InventoryComparison,
+    InventoryDifference,
+    bill_of_materials,
+    compare_inventory,
+    read_inventory,
+)
 from ldraw.colour import Colour
 from ldraw.connection_metadata import (
     ConnectionMetadataCoverage,
@@ -203,6 +210,8 @@ __all__ = [
     "InstructionIssue",
     "InstructionSection",
     "InstructionStep",
+    "InventoryComparison",
+    "InventoryDifference",
     "LDCadShadowLibrary",
     "LDrawCapability",
     "LDrawPaths",
@@ -267,6 +276,7 @@ __all__ = [
     "angular_alignment_within",
     "bill_of_materials",
     "bounds_gap",
+    "compare_inventory",
     "connection_residual",
     "connections_compatible",
     "discover_libraries",
@@ -283,6 +293,7 @@ __all__ = [
     "parse_model_result",
     "plan_download",
     "prepare_catalog",
+    "read_inventory",
     "read_model",
     "render_capabilities",
     "render_preview",

@@ -5,6 +5,8 @@ ldraw.library Python modules, query geometry, validate and inspect LDraw
 files, render previews, show the configuration, and print the version.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import sys
@@ -14,16 +16,23 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, TypedDict, cast
 from zipfile import BadZipFile, is_zipfile
 
 import requests
 import yaml
 
 from ldraw import generate as do_generate
-from ldraw.bom import BomRow, rows_to_csv, rows_to_json
+from ldraw.bom import (
+    BomRow,
+    compare_inventory,
+    comparison_to_csv,
+    read_inventory,
+    rows_to_csv,
+    rows_to_json,
+)
 from ldraw.catalog import catalog_db_path, load_parts
 from ldraw.config import Config
-from ldraw.connection_metadata import ConnectionMetadataReport
 from ldraw.connection_types import (
     AnnularProfile,
     ConnectionFeature,
@@ -41,7 +50,6 @@ from ldraw.errors import (
     PartError,
 )
 from ldraw.generation.exceptions import UnwritableOutputError
-from ldraw.geometry import Vector
 from ldraw.inspection import (
     DEFAULT_PAGE_MARKER_PREFIX,
     ConnectionContact,
@@ -64,12 +72,16 @@ from ldraw.instructions import (
     iter_instruction_issues,
 )
 from ldraw.model import load_model, read_model
-from ldraw.part_geometry_types import BoundingBox
-from ldraw.parts import CatalogEntry, Parts
 from ldraw.rendering import RenderBackend, RenderResult, RenderView, render_preview
 from ldraw.snippets import suggested_import
 from ldraw.stubs import write_stub_package
 from ldraw.validation import Severity, iter_ldr_issues
+
+if TYPE_CHECKING:
+    from ldraw.connection_metadata import ConnectionMetadataReport
+    from ldraw.geometry import Vector
+    from ldraw.part_geometry_types import BoundingBox
+    from ldraw.parts import CatalogEntry, Parts
 
 PACKAGE_NAME = "pyldraw3"
 DEFAULT_SEARCH_LIMIT = 25
@@ -228,6 +240,15 @@ def build_parser() -> ArgumentParser:  # noqa: PLR0915 - CLI options stay explic
         type=Path,
         default=None,
         help="Write output to a file instead of stdout.",
+    )
+
+    bom_parser.add_argument(
+        "--compare", type=Path, help="Compare counts against inventory CSV."
+    )
+    bom_parser.add_argument(
+        "--inventory-mapping",
+        type=Path,
+        help="JSON column, alias, and colour mappings.",
     )
 
     model_inspect_parser = subparsers.add_parser(
@@ -1545,8 +1566,23 @@ def _format_bom(rows: list[BomRow], *, output_format: str) -> str:
             return _format_bom_table(rows)
 
 
-def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
+def bom_command(
+    *,
+    file: Path,
+    output_format: str,
+    out: Path | None,
+    compare: Path | None = None,
+    inventory_mapping: Path | None = None,
+) -> int:
     """Print or write a bill of materials for an LDraw model file."""
+    if compare is not None or inventory_mapping is not None:
+        return _compare_inventory_command(
+            file=file,
+            inventory=compare,
+            mapping=inventory_mapping,
+            output_format=output_format,
+            out=out,
+        )
     if not file.is_file():
         print(f"{file}: not found", file=sys.stderr)
         return 1
@@ -1575,6 +1611,97 @@ def bom_command(*, file: Path, output_format: str, out: Path | None) -> int:
     else:
         print(text, end="")
     return 0
+
+
+class _InventoryMapping(TypedDict, total=False):
+    columns: dict[str, str]
+    part_aliases: dict[str, str]
+    colour_map: dict[str, str | int]
+
+
+def _read_inventory_mapping(path: Path | None) -> _InventoryMapping:
+    if path is None:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or set(data) - {
+        "columns",
+        "part_aliases",
+        "colour_map",
+    }:
+        message = (
+            "mapping must contain only columns, part_aliases, and colour_map objects"
+        )
+        raise ValueError(message)
+    for name, values in data.items():
+        if not isinstance(values, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(value, (str, int))
+            or isinstance(value, bool)
+            or (name != "colour_map" and not isinstance(value, str))
+            for key, value in values.items()
+        ):
+            msg = f"invalid {name} mapping"
+            raise ValueError(msg)
+    return cast("_InventoryMapping", data)
+
+
+def _compare_inventory_command(
+    *,
+    file: Path,
+    inventory: Path | None,
+    mapping: Path | None,
+    output_format: str,
+    out: Path | None,
+) -> int:
+    try:
+        if inventory is None:
+            message = "--inventory-mapping requires --compare"
+            raise ValueError(message)  # noqa: TRY301 - input failures share exit status 2
+        options = _read_inventory_mapping(mapping)
+        loaded = load_model(file)
+        if (
+            loaded.model is None
+            or not loaded.complete
+            or any(item.severity is Severity.ERROR for item in loaded.diagnostics)
+        ):
+            message = "model counts are incomplete; fix model errors before comparing"
+            raise ValueError(message)  # noqa: TRY301 - input failures share exit status 2
+        expected = read_inventory(
+            inventory,
+            columns=options.get("columns"),
+            colour_map=options.get("colour_map"),
+        )
+        comparison = compare_inventory(
+            loaded.model, expected, part_aliases=options.get("part_aliases")
+        )
+        match output_format:
+            case "json":
+                text = json.dumps(comparison.to_dict(), indent=2)
+            case "csv":
+                text = comparison_to_csv(comparison)
+            case _:
+                text = (
+                    "Inventory matches."
+                    if comparison.matched
+                    else "\n".join(
+                        [
+                            "Part Colour Expected Actual Missing Extra",
+                            *(
+                                f"{row.part} {row.colour} {row.expected} {row.actual} "
+                                f"{row.missing} {row.extra}"
+                                for row in comparison.differences
+                            ),
+                        ]
+                    )
+                )
+        if out is None:
+            print(text.rstrip("\n"))
+        else:
+            out.write_text(f"{text.rstrip(chr(10))}\n", encoding="utf-8")
+    except (OSError, ValueError, PartError, TypeError) as exc:
+        print(f"inventory comparison failed: {exc}", file=sys.stderr)
+        return 2
+    return int(not comparison.matched)
 
 
 def stubs_command(*, out: Path) -> int:
@@ -1817,6 +1944,8 @@ def _dispatch(  # noqa: C901, PLR0911 - one branch per subcommand
                 file=args.file,
                 output_format=args.format,
                 out=args.output,
+                compare=args.compare,
+                inventory_mapping=args.inventory_mapping,
             )
         case "inspect":
             return inspect_command(

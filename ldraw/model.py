@@ -960,7 +960,10 @@ def _validation_diagnostics(
     parts: Parts | None,
     path: Path | None,
 ) -> list[Diagnostic]:
-    from ldraw.validation import iter_object_issues  # noqa: PLC0415
+    from ldraw.validation import (  # noqa: PLC0415
+        iter_duplicate_issues,
+        iter_object_issues,
+    )
 
     submodels = {normalize_ref(root.name), *root.submodels}
     structural = _model_structure_diagnostics(root, path=path)
@@ -971,6 +974,7 @@ def _validation_diagnostics(
     }
     diagnostics: list[Diagnostic] = []
     for section_model in (root, *root.submodels.values()):
+        diagnostics.extend(iter_duplicate_issues(section_model, path=path))
         for obj in section_model.objects:
             number = section_model.source_line_for(obj)
             if number is None:
