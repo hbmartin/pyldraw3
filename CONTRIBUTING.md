@@ -43,3 +43,4 @@ Pass `--archive /path/to/retained/archive.zip` if a checksum receipt is unavaila
 Download 2018-02, then run `uv run pytest benchmarks/ --benchmark-only --benchmark-json=benchmark-results.json`. The synthetic workload expands six submodels, placed three times each, to 360 pieces, using twelve common parts and deterministic rotations. Geometry, inspection, and analysis distinguish cold recursive caches from warm caches. CI uses the pinned release; local Scout assets remain outside the repository.
 
 Geometry changes require repeated measurements showing at least 20% end-to-end improvement and at most 5% regression elsewhere. See [performance measurements](docs/performance.md). Startup checks assert which dependencies are loaded, without wall-clock limits.
+

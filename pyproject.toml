@@ -24,6 +24,7 @@ classifiers = [
   "Topic :: Artistic Software",
   "Topic :: Multimedia :: Graphics :: 3D Modeling",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
 ]
 dependencies = [
     "platformdirs>=4.3.8",
@@ -62,7 +63,7 @@ dev = [
     "lizard>=1.23.0",
     "memory-profiler>=0.61.0",
     "psutil>=7.0.0",
-    "pyroma>=5.0.1",
+    "pyroma621==6.1.0",  # Pin while evaluating this newer checker.
 ]
 docs = [
     "mkdocstrings-python>=2.0.5",

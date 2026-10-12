@@ -76,7 +76,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for integration tests, snapshot regenerat
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](COPYING) file for details.
+This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](https://github.com/hbmartin/pyldraw3/blob/main/COPYING) file for details.
 
 ```
 pyldraw, a Python package for creating LDraw format files.
