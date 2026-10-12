@@ -42,8 +42,19 @@ jobs:
         uv run pyrefly check ldraw
     - name: Run complexity checks
       run: uv run lizard --languages python ldraw tests
-    - name: Run package metadata checks
-      run: uv run pyroma --min 10 .
+    - name: Run package metadata checks (pyroma621)
+      id: package-metadata
+      shell: bash
+      timeout-minutes: 5
+      # Keep new rules advisory during evaluation; do not enable --strict.
+      run: uv run --locked pyroma --min 10 --format json . | tee pyroma621-report.json
+    - name: Upload package metadata report
+      if: always() && steps.package-metadata.outcome != 'skipped'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: pyroma621-report-python-${{ matrix.python-version }}
+        path: pyroma621-report.json
+        retention-days: 30
     - run: uv run deptry .
     - name: Run tests with coverage
       run: uv run pytest --cov=ldraw --cov-report=lcov --cov-report=html
