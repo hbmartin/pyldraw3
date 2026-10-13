@@ -764,14 +764,14 @@ def _reachable_instruction_models(root: Model) -> list[Model]:
             if key not in seen:
                 seen.add(key)
                 pending.append(target)
-    return [
-        root,
-        *(
-            model
-            for model in root.submodels.values()
-            if normalize_ref(model.name) in seen and _is_instruction_model(model)
-        ),
-    ]
+    result = [root]
+    emitted = {normalize_ref(root.name)}
+    for model in (*root.submodels.values(), *pending[1:]):
+        key = normalize_ref(model.name)
+        if key in seen and key not in emitted and _is_instruction_model(model):
+            emitted.add(key)
+            result.append(model)
+    return result
 
 
 def _references(root: Model, model: Model) -> tuple[str, ...]:

@@ -47,8 +47,8 @@ class ModelSummary:
     def from_model(cls, model: Model, parts: Parts | None) -> ModelSummary:
         """Build a summary for ``model`` using geometry from ``parts``.
 
-        Cyclic submodel references (possible in tolerantly-loaded models)
-        are skipped rather than raising.
+        Built-in expansion and custom overrides delegating to it skip cyclic
+        references. Other custom exceptions propagate.
         """
         from ldraw.model import _iter_occurrences_skip_cycles  # noqa: PLC0415
 

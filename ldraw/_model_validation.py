@@ -9,6 +9,8 @@ from ldraw._model_views import _resolution_root, _selected_model
 from ldraw.utils import normalize_ref, split_ldraw_reference
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ldraw.geometry import Matrix, Vector
     from ldraw.model import Model
     from ldraw.pieces import Piece
@@ -27,6 +29,9 @@ class ModelValidationContext:
         default_factory=dict, init=False, repr=False
     )
     _builtin_resolver: bool = field(default=False, init=False, repr=False)
+    _completed_sections: dict[tuple[int, bool], frozenset[int]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def bind(self, root: Model) -> None:
         """Keep cached references scoped to one resolution root."""
@@ -44,21 +49,42 @@ class ModelValidationContext:
 
     def mark_validated(self, *, root: Model, reachable_only: bool) -> None:
         """Record successful source validation for this invocation's scope."""
+        for section in self.sections(root=root, reachable_only=reachable_only):
+            self.validated_sections.add(id(section))
+
+    def sections(self, *, root: Model, reachable_only: bool) -> Iterator[Model]:
+        """Discover a scope once, validating cycle-closing targets before stopping."""
         self.bind(root)
-        pending = [_selected_model(root)]
+        selected = _selected_model(root)
+        scope = id(selected), reachable_only
+        completed = self._completed_sections.get(scope)
+        if completed is not None and completed <= self.validated_sections:
+            return
+        pending = [(selected, frozenset[str]())]
         visited: set[int] = set()
+        explored: set[tuple[int, frozenset[str]]] = set()
         while pending:
-            section = _selected_model(pending.pop())
-            if (key := id(section)) in visited:
+            target, visiting = pending.pop()
+            section = _selected_model(target)
+            if (key := id(section)) not in visited:
+                visited.add(key)
+                yield section
+            route = key, visiting
+            if route in explored:
                 continue
-            visited.add(key)
-            self.validated_sections.add(key)
+            explored.add(route)
             if reachable_only:
-                pending.extend(
+                name = normalize_ref(section.name)
+                if name in visiting:
+                    continue
+                targets = [
                     target for _, target in self.edges(root=root, section=section)
-                )
+                ]
+                visiting = visiting | {name}
             else:
-                pending.extend(section.submodels.values())
+                targets = list(section.submodels.values())
+            pending.extend((target, visiting) for target in reversed(targets))
+        self._completed_sections[scope] = frozenset(visited)
 
     def ensure_validated(self, *, root: Model, reachable_only: bool) -> None:
         """Complete partial source analysis before using cached placements."""
@@ -126,12 +152,8 @@ class ModelValidationContext:
 
     def resolve(self, *, root: Model, piece: Piece) -> Model | None:
         """Resolve a source reference once against this operation's root table."""
-        root = _resolution_root(root)
-        if self._root is None:
+        if _resolution_root(root) is not self._root:
             self.bind(root)
-        elif self._root is not root:
-            message = "model validation context belongs to a different resolution root"
-            raise ValueError(message)
         if piece not in self.targets:
             self.targets[piece] = _optional_reference(root=root, piece=piece)
         return self.targets[piece]

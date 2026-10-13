@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import replace
 from types import MethodType
-from typing import Never
+from typing import Never, TypedDict, Unpack
 from unittest.mock import patch
 
 import numpy as np
@@ -22,9 +22,22 @@ from ldraw.model import (
     _iter_occurrences_skip_cycles,
     parse_model,
 )
-from ldraw.part import parse_ldraw_line
+from ldraw.part import ParsedObject, parse_ldraw_line
 from ldraw.pieces import Piece
 from ldraw.validation import _piece_analysis
+
+
+class _ModelOptions(TypedDict, total=False):
+    name: str
+    objects: list[ParsedObject]
+    submodels: dict[str, Model]
+    _source_lines: dict[Piece, int]
+    _object_source_lines: dict[int, int]
+
+
+class _OccurrenceOptions(TypedDict, total=False):
+    expand_submodels: bool
+    include_steps: bool
 
 
 class RelabeledModel(Model):
@@ -32,7 +45,7 @@ class RelabeledModel(Model):
 
     __slots__ = ("part_code", "resolver_cache")
 
-    def __init__(self, *, part_code: str, **kwargs) -> None:
+    def __init__(self, *, part_code: str, **kwargs: Unpack[_ModelOptions]) -> None:
         super().__init__(**kwargs)
         self.part_code = part_code
         self.resolver_cache = {}
@@ -136,14 +149,22 @@ def test_view_forwards_added_attributes_deletion_and_instance_methods() -> None:
     del view.extra
     assert not hasattr(selected, "extra")
 
-    def occurrences(self, **kwargs) -> Iterator[ModelOccurrence]:
+    def occurrences(
+        self: Model, **kwargs: Unpack[_OccurrenceOptions]
+    ) -> Iterator[ModelOccurrence]:
         for occurrence in Model.iter_occurrences(self, **kwargs):
             yield replace(occurrence, part_code="instance-override")
 
     selected.iter_occurrences = MethodType(occurrences, selected)
     assert next(view.iter_occurrences()).part_code == "instance-override"
     assert compare_inventory(view, view.bill_of_materials()).matched
-    selected.iter_occurrences = lambda **_kwargs: iter(())
+
+    def empty_occurrences(
+        **_kwargs: Unpack[_OccurrenceOptions],
+    ) -> Iterator[ModelOccurrence]:
+        return iter(())
+
+    selected.iter_occurrences = empty_occurrences
     assert view.bill_of_materials() == []
     assert compare_inventory(view, []).matched
 
@@ -183,7 +204,7 @@ def test_view_class_factories_construct_the_original_class() -> None:
 
 def test_custom_exceptions_are_not_suppressed_and_cycle_policy_is_reset() -> None:
     class FailingModel(Model):
-        def iter_occurrences(self, **_kwargs) -> Never:
+        def iter_occurrences(self, **_kwargs: Unpack[_OccurrenceOptions]) -> Never:
             name = "custom failure"
             raise SubmodelCycleError(name)
 
@@ -197,7 +218,9 @@ def test_custom_exceptions_are_not_suppressed_and_cycle_policy_is_reset() -> Non
 class DynamicModel(Model):
     """Resolve references from a separate mapping with lookup-style misses."""
 
-    def __init__(self, *, targets: dict[str, Model], **kwargs) -> None:
+    def __init__(
+        self, *, targets: dict[str, Model], **kwargs: Unpack[_ModelOptions]
+    ) -> None:
         super().__init__(**kwargs)
         self.targets = targets
 
@@ -264,7 +287,9 @@ def test_custom_resolver_lookup_misses_do_not_break_authoritative_providers(
         def submodel_for(self, _piece: Piece) -> Never:
             raise KeyError(key)
 
-        def iter_occurrences(self, **kwargs) -> Iterator[ModelOccurrence]:
+        def iter_occurrences(
+            self, **kwargs: Unpack[_OccurrenceOptions]
+        ) -> Iterator[ModelOccurrence]:
             return known.iter_occurrences(**kwargs)
 
     assert compare_inventory(
@@ -337,7 +362,9 @@ def test_cached_edge_lookup_rejects_another_resolution_root() -> None:
 class FilteredModel(Model):
     """Filter part leaves while preserving ordinary submodel expansion."""
 
-    def iter_occurrences(self, **kwargs) -> Iterator[ModelOccurrence]:
+    def iter_occurrences(
+        self, **kwargs: Unpack[_OccurrenceOptions]
+    ) -> Iterator[ModelOccurrence]:
         """Omit the part whose composed transform can overflow."""
         for occurrence in super().iter_occurrences(**kwargs):
             if occurrence.part_code != "3001":
@@ -389,7 +416,9 @@ def test_edge_audit_discovers_sections_once_and_never_composes_part_leaves() -> 
             resolutions[piece] += 1
             return super().submodel_for(piece)
 
-        def iter_occurrences(self, **kwargs) -> Iterator[ModelOccurrence]:
+        def iter_occurrences(
+            self, **kwargs: Unpack[_OccurrenceOptions]
+        ) -> Iterator[ModelOccurrence]:
             traversals["provider"] += 1
             return known.iter_occurrences(**kwargs)
 

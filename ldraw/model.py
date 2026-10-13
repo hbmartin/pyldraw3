@@ -436,6 +436,9 @@ class Model:
         the selected model; references resolve through the original root.
         The private adapter inherits the selected class, preserving
         ``isinstance`` and custom traversal without copying subclass state.
+        Descriptors bind to the view, with isolated cached properties.
+        Shallow copies keep these bindings; deep copies and pickle preserve
+        them in their copied graphs. View creation skips user subclass hooks.
 
         Raises ``UnknownSubmodelError`` for a name that is neither this
         model's nor one of its submodels'.
@@ -539,15 +542,8 @@ class Model:
         include_steps: bool = True,
     ) -> Iterator[ModelOccurrence]:
         """Yield placed part occurrences with transform and source context."""
-        return _iter_model_occurrences(
-            root=_resolution_root(self),
-            model=_selected_model(self),
-            position=Vector(0, 0, 0),
-            matrix=Identity(),
-            inherited_colour=None,
-            visiting=frozenset(),
-            inherited_step=None,
-            path=(),
+        return _occurrences_at_origin(
+            model=self,
             expand_submodels=expand_submodels,
             include_steps=include_steps,
             on_cycle=_cycle_callback(self),
@@ -560,8 +556,9 @@ class Model:
         colour the submodel was placed with. As with ``iter_pieces``,
         submodel references only resolve against this model's own submodel
         table; to count a single submodel of a larger model, call this on
-        ``root.submodel_view(name)``. Cyclic submodel references (possible
-        in tolerantly-loaded models) are skipped instead of raising.
+        ``root.submodel_view(name)``. Built-in expansion skips cyclic references;
+        custom overrides delegating to ``super()`` inherit that tolerance.
+        Other custom exceptions propagate.
         """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
@@ -656,8 +653,9 @@ def _iter_occurrences_skip_cycles(
 ) -> Iterator[ModelOccurrence]:
     """Yield occurrences, skipping re-entry into in-progress submodels.
 
-    Used by analysis, summary, and BOM paths so tolerantly-loaded cyclic
-    models do not raise. Each skipped cyclic reference appends an
+    Used by analysis, summary, and BOM paths for built-in expansion and
+    custom overrides delegating to it. Other custom exceptions propagate.
+    Each skipped cyclic reference appends an
     ``MPD_CYCLE`` diagnostic to ``diagnostics`` when a list is given.
     """
 
@@ -677,15 +675,8 @@ def _iter_occurrences_skip_cycles(
         )
 
     if _uses_builtin_occurrences(model):
-        return _iter_model_occurrences(
-            root=_resolution_root(model),
-            model=_selected_model(model),
-            position=Vector(0, 0, 0),
-            matrix=Identity(),
-            inherited_colour=None,
-            visiting=frozenset(),
-            inherited_step=None,
-            path=(),
+        return _occurrences_at_origin(
+            model=model,
             expand_submodels=expand_submodels,
             include_steps=include_steps,
             on_cycle=record,
@@ -695,6 +686,29 @@ def _iter_occurrences_skip_cycles(
         expand_submodels=expand_submodels,
         include_steps=include_steps,
         on_cycle=record,
+    )
+
+
+def _occurrences_at_origin(
+    *,
+    model: Model,
+    expand_submodels: bool,
+    include_steps: bool,
+    on_cycle: Callable[[Model, Piece, Model], None] | None,
+) -> Iterator[ModelOccurrence]:
+    """Share public and cycle-tolerant expansion's identity-origin setup."""
+    return _iter_model_occurrences(
+        root=_resolution_root(model),
+        model=_selected_model(model),
+        position=Vector(0, 0, 0),
+        matrix=Identity(),
+        inherited_colour=None,
+        visiting=frozenset(),
+        inherited_step=None,
+        path=(),
+        expand_submodels=expand_submodels,
+        include_steps=include_steps,
+        on_cycle=on_cycle,
     )
 
 
