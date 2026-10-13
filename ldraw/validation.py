@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary
 
 from ldraw._model_validation import _resolve_reference
+from ldraw._model_views import _selected_model
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.parts import CatalogSearchField
@@ -102,8 +103,7 @@ def _placement_analysis(position: Vector, matrix: Matrix) -> _NumericAnalysis:
 def _object_analysis(parsed: ParsedObject) -> _NumericAnalysis:
     match parsed:
         case Piece():
-            position, matrix = parsed._transformed()  # noqa: SLF001 - effective placement
-            return _placement_analysis(position=position, matrix=matrix)
+            return _piece_analysis(parsed)[1]
         case Line() | Triangle() | Quadrilateral() | OptionalLine():
             invalid = tuple(
                 (f"point{index}.{axis}", value)
@@ -116,12 +116,18 @@ def _object_analysis(parsed: ParsedObject) -> _NumericAnalysis:
             return _NumericAnalysis(())
 
 
+def _piece_analysis(piece: Piece) -> tuple[tuple[Vector, Matrix], _NumericAnalysis]:
+    """Return effective source coordinates with their single numeric analysis."""
+    position, matrix = piece._transformed()  # noqa: SLF001 - effective placement
+    return (position, matrix), _placement_analysis(position=position, matrix=matrix)
+
+
 def iter_duplicate_issues(
     model: Model, *, path: Path | None = None
 ) -> Iterator[ValidationIssue]:
     """Warn about placements equal at serialization precision in one section."""
     yield from _iter_duplicate_issues(
-        ((piece, _object_analysis(piece)) for piece in model.pieces),
+        ((piece, _piece_analysis(piece)[1]) for piece in model.pieces),
         model=model,
         path=path,
     )
@@ -201,46 +207,58 @@ def _iter_model_numeric_issues(
     context: ModelValidationContext | None = None,
 ) -> Iterator[ValidationIssue]:
     """Check geometry in the explicitly selected declared or reachable scope."""
-    pending = [model]
+    pending = [_selected_model(model)]
     visited: set[int] = set()
     while pending:
-        section = pending.pop()
+        section = _selected_model(pending.pop())
         if id(section) in visited:
             continue
         visited.add(id(section))
+        yield from _iter_section_numeric_issues(section=section, context=context)
         if reachable_only:
-            targets = [
-                target
-                for piece in section.pieces
-                if (
-                    target := _resolve_reference(
-                        root=model, piece=piece, context=context
+            targets = (
+                [target for _, target in context.edges(root=model, section=section)]
+                if context is not None
+                else [
+                    target
+                    for piece in section.pieces
+                    if (
+                        target := _resolve_reference(
+                            root=model, piece=piece, context=None
+                        )
                     )
-                )
-                is not None
-            ]
+                    is not None
+                ]
+            )
         else:
             targets = list(section.submodels.values())
         pending.extend(reversed(targets))
-        for obj in section.objects:
-            if (
-                isinstance(obj, Piece)
-                and context is not None
-                and obj in context.placements
-            ):
-                continue
-            analysis = _object_analysis(obj)
-            if isinstance(obj, Piece) and context is not None:
-                context.record(piece=obj, analysis=analysis)
-            if analysis.invalid and (
-                issue := _numeric_issue(
-                    analysis,
-                    number=section.source_line_for(obj),
-                    path=None,
-                    section=section.name or None,
-                )
-            ):
-                yield issue
+
+
+def _iter_section_numeric_issues(
+    *, section: Model, context: ModelValidationContext | None
+) -> Iterator[ValidationIssue]:
+    if context is not None and id(section) in context.validated_sections:
+        return
+    invalid = False
+    for obj in section.objects:
+        if isinstance(obj, Piece) and context is not None and obj in context.placements:
+            continue
+        analysis = _object_analysis(obj)
+        if isinstance(obj, Piece) and context is not None:
+            context.record(piece=obj, analysis=analysis)
+        if analysis.invalid and (
+            issue := _numeric_issue(
+                analysis,
+                number=section.source_line_for(obj),
+                path=None,
+                section=section.name or None,
+            )
+        ):
+            invalid = True
+            yield issue
+    if context is not None and not invalid:
+        context.validated_sections.add(id(section))
 
 
 def _reject_numeric_issue(issue: Diagnostic) -> None:
@@ -249,6 +267,21 @@ def _reject_numeric_issue(issue: Diagnostic) -> None:
         location = f"{location}:{issue.line_number}"
     message = f"{issue.code}: {location}: {issue.message}"
     raise ValueError(message)
+
+
+def _check_composed_placement(
+    *, model: Model, piece: Piece, position: Vector, matrix: Matrix
+) -> None:
+    analysis = _placement_analysis(position=position, matrix=matrix)
+    if analysis.invalid and (
+        issue := _numeric_issue(
+            analysis,
+            number=model.source_line_for(piece),
+            path=None,
+            section=model.name or None,
+        )
+    ):
+        _reject_numeric_issue(issue)
 
 
 _candidate_codes_cache: WeakKeyDictionary[Parts, tuple[int, tuple[str, ...]]] = (

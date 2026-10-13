@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from copy import copy
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
+from ldraw._model_cycles import _cycle_callback, _iter_cycle_tolerant_occurrences
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
+from ldraw._model_views import _model_view, _resolution_root, _selected_model
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import (
     DuplicateSubmodelError,
@@ -430,21 +432,23 @@ class Model:
         submodels as leaf pieces. The returned model shares this root's
         submodel table instead, making ``iter_pieces``,
         ``bill_of_materials``, and ``find_pieces(recursive=True)`` expand
-        nested references correctly. It is a live view — its objects and
-        submodel table are shared with this model, not copied.
+        nested references correctly. State reads and writes are forwarded to
+        the selected model; references resolve through the original root.
+        The private adapter inherits the selected class, preserving
+        ``isinstance`` and custom traversal without copying subclass state.
 
         Raises ``UnknownSubmodelError`` for a name that is neither this
         model's nor one of its submodels'.
         """
         key = normalize_ref(name)
+        root = _resolution_root(self)
         if key == normalize_ref(self.name):
-            submodel = self
-        elif (submodel := self.submodels.get(key)) is None:
+            submodel = _selected_model(self)
+        elif key == normalize_ref(root.name):
+            submodel = root
+        elif (submodel := root.submodels.get(key)) is None:
             raise UnknownSubmodelError(name)
-        view = copy(submodel)
-        view.submodels = self.submodels
-        view._is_submodel_view = True  # noqa: SLF001 - same class, copied instance
-        return view
+        return _model_view(selected=submodel, root=root)
 
     def add_step(self) -> None:
         """Append a ``0 STEP`` marker ending the current building step."""
@@ -522,7 +526,11 @@ class Model:
         were leaf pieces — inspect a submodel through
         ``root.submodel_view(name)`` instead.
         """
-        return _iter_model_pieces(root=self, model=self, visiting=frozenset())
+        return _iter_model_pieces(
+            root=_resolution_root(self),
+            model=_selected_model(self),
+            visiting=frozenset(),
+        )
 
     def iter_occurrences(
         self,
@@ -532,8 +540,8 @@ class Model:
     ) -> Iterator[ModelOccurrence]:
         """Yield placed part occurrences with transform and source context."""
         return _iter_model_occurrences(
-            root=self,
-            model=self,
+            root=_resolution_root(self),
+            model=_selected_model(self),
             position=Vector(0, 0, 0),
             matrix=Identity(),
             inherited_colour=None,
@@ -542,6 +550,7 @@ class Model:
             path=(),
             expand_submodels=expand_submodels,
             include_steps=include_steps,
+            on_cycle=_cycle_callback(self),
         )
 
     def bill_of_materials(self, *, parts: Parts | None = None) -> list[BomRow]:
@@ -556,8 +565,7 @@ class Model:
         """
         from ldraw.bom import bill_of_materials  # noqa: PLC0415
 
-        occurrences = _iter_occurrences_skip_cycles(self, include_steps=False)
-        return bill_of_materials(parts=parts, occurrences=occurrences)
+        return bill_of_materials(self, parts=parts)
 
     def find_pieces(
         self,
@@ -632,7 +640,7 @@ def _iter_model_pieces(
         raise SubmodelCycleError(model.name)
     visiting = visiting | {key}
     for piece in model.pieces:
-        target = root.submodel_for(piece)
+        target = _resolve_reference(root=root, piece=piece, context=None)
         if target is None:
             yield piece
         else:
@@ -668,19 +676,31 @@ def _iter_occurrences_skip_cycles(
             ),
         )
 
-    return _iter_model_occurrences(
-        root=model,
+    if _uses_builtin_occurrences(model):
+        return _iter_model_occurrences(
+            root=_resolution_root(model),
+            model=_selected_model(model),
+            position=Vector(0, 0, 0),
+            matrix=Identity(),
+            inherited_colour=None,
+            visiting=frozenset(),
+            inherited_step=None,
+            path=(),
+            expand_submodels=expand_submodels,
+            include_steps=include_steps,
+            on_cycle=record,
+        )
+    return _iter_cycle_tolerant_occurrences(
         model=model,
-        position=Vector(0, 0, 0),
-        matrix=Identity(),
-        inherited_colour=None,
-        visiting=frozenset(),
-        inherited_step=None,
-        path=(),
         expand_submodels=expand_submodels,
         include_steps=include_steps,
         on_cycle=record,
     )
+
+
+def _uses_builtin_occurrences(model: Model) -> bool:
+    """Keep legacy public override compatibility dispatch in one place."""
+    return getattr(model.iter_occurrences, "__func__", None) is Model.iter_occurrences
 
 
 def _iter_inventory_occurrences(
@@ -691,10 +711,11 @@ def _iter_inventory_occurrences(
         root=model,
         reachable_only=model._is_submodel_view,  # noqa: SLF001
     )
+    section = _selected_model(model)
     return _iter_occurrences_at_placements(
-        root=model,
-        model=model,
-        placements=_iter_root_placements(model, context=context),
+        root=_resolution_root(model),
+        model=section,
+        placements=_iter_root_placements(section, context=context),
         inherited_colour=None,
         visiting=frozenset(),
         inherited_step=None,
@@ -711,20 +732,14 @@ def _iter_root_placements(
     """Read validated world placements at the comparison's identity origin."""
     for piece in model.objects:
         if isinstance(piece, Piece):
-            effective = context.placements.get(piece)
-            if effective is None:
-                effective = context.placement(model=model, piece=piece)
-            yield piece, None, *effective
+            yield piece, None, *context.placement(model=model, piece=piece)
 
 
 def _audit_inventory_transforms(
     model: Model, *, context: ModelValidationContext
 ) -> None:
     """Audit source compositions without replacing a custom traversal's leaves."""
-    if (
-        not model.submodels
-        and getattr(model.submodel_for, "__func__", None) is Model.submodel_for
-    ):
+    if not model.submodels and not context.has_external_resolution():
         # Source validation already checks root placements. The built-in resolver
         # can only re-enter this root, where the numeric audit stops the cycle.
         return
@@ -732,29 +747,48 @@ def _audit_inventory_transforms(
     def walk(
         *,
         section: Model,
-        placements: Iterable[tuple[Piece, int | None, Vector, Matrix]],
+        position: Vector,
+        matrix: Matrix,
+        at_origin: bool,
         visiting: frozenset[str],
     ) -> None:
         visiting = visiting | {normalize_ref(section.name)}
-        for piece, _, position, matrix in placements:
-            target = _resolve_reference(root=model, piece=piece, context=context)
-            if target is None or normalize_ref(target.name) in visiting:
+        for piece, resolved in context.edges(root=model, section=section):
+            effective = context.placement(model=section, piece=piece)
+            world_position, world_matrix = (
+                effective
+                if at_origin
+                else _compose_placement(
+                    model=section,
+                    piece=piece,
+                    position=position,
+                    matrix=matrix,
+                    effective=effective,
+                    context=context,
+                )
+            )
+            target = _cycle_target(
+                source=section,
+                piece=piece,
+                target=resolved,
+                visiting=visiting,
+                on_cycle=_ignore_cycle,
+            )
+            if target is None:
                 continue
             walk(
                 section=target,
-                placements=_iter_composed_placements(
-                    model=target,
-                    position=position,
-                    matrix=matrix,
-                    include_steps=False,
-                    context=context,
-                ),
+                position=world_position,
+                matrix=world_matrix,
+                at_origin=False,
                 visiting=visiting,
             )
 
     walk(
-        section=model,
-        placements=_iter_root_placements(model, context=context),
+        section=_selected_model(model),
+        position=Vector(0, 0, 0),
+        matrix=Identity(),
+        at_origin=True,
         visiting=frozenset(),
     )
 
@@ -805,32 +839,75 @@ def _iter_composed_placements(
     context: ModelValidationContext | None,
 ) -> Iterator[tuple[Piece, int | None, Vector, Matrix]]:
     """Compose each source placement, checking world values for comparison."""
-    if context is not None:
-        from ldraw.validation import (  # noqa: PLC0415 - checked traversal only
-            _numeric_issue,
-            _placement_analysis,
-            _reject_numeric_issue,
+    for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
+        effective = (
+            context.placement(model=model, piece=piece)
+            if context is not None
+            else piece._transformed()  # noqa: SLF001
+        )
+        yield (
+            piece,
+            source_step,
+            *_compose_placement(
+                model=model,
+                piece=piece,
+                position=position,
+                matrix=matrix,
+                effective=effective,
+                context=context,
+            ),
         )
 
-    for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
-        effective = context.placements.get(piece) if context is not None else None
-        piece_position, piece_matrix = (
-            effective if effective is not None else piece._transformed()  # noqa: SLF001
+
+def _compose_placement(  # noqa: PLR0913 - explicit transform context
+    *,
+    model: Model,
+    piece: Piece,
+    position: Vector,
+    matrix: Matrix,
+    effective: tuple[Vector, Matrix],
+    context: ModelValidationContext | None,
+) -> tuple[Vector, Matrix]:
+    piece_position, piece_matrix = effective
+    world_position = position + matrix * piece_position
+    world_matrix = matrix * piece_matrix
+    if context is not None:
+        _composition_check()(
+            model=model,
+            piece=piece,
+            position=world_position,
+            matrix=world_matrix,
         )
-        world_position = position + matrix * piece_position
-        world_matrix = matrix * piece_matrix
-        if context is not None:
-            analysis = _placement_analysis(position=world_position, matrix=world_matrix)
-            if analysis.invalid and (
-                issue := _numeric_issue(
-                    analysis,
-                    number=model.source_line_for(piece),
-                    path=None,
-                    section=model.name or None,
-                )
-            ):
-                _reject_numeric_issue(issue)
-        yield piece, source_step, world_position, world_matrix
+    return world_position, world_matrix
+
+
+@cache
+def _composition_check() -> Callable[..., None]:
+    """Load the cycle-safe numeric checker once, only for checked traversal."""
+    from ldraw.validation import _check_composed_placement  # noqa: PLC0415
+
+    return _check_composed_placement
+
+
+def _ignore_cycle(source: Model, piece: Piece, target: Model) -> None:
+    """Stop cyclic audit re-entry without classifying source structure."""
+
+
+def _cycle_target(
+    *,
+    source: Model,
+    piece: Piece,
+    target: Model,
+    visiting: frozenset[str],
+    on_cycle: Callable[[Model, Piece, Model], None] | None,
+) -> Model | None:
+    """Share cycle handling between occurrence expansion and numeric audits."""
+    if normalize_ref(target.name) not in visiting:
+        return target
+    if on_cycle is None:
+        raise SubmodelCycleError(target.name)
+    on_cycle(source, piece, target)
+    return None
 
 
 def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
@@ -867,10 +944,14 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
         if expand_submodels:
             target = _resolve_reference(root=root, piece=piece, context=context)
         if target is not None:
-            if normalize_ref(target.name) in visiting:
-                if on_cycle is None:
-                    raise SubmodelCycleError(target.name)
-                on_cycle(model, piece, target)
+            target = _cycle_target(
+                source=model,
+                piece=piece,
+                target=target,
+                visiting=visiting,
+                on_cycle=on_cycle,
+            )
+            if target is None:
                 continue
             yield from _iter_model_occurrences(
                 root=root,

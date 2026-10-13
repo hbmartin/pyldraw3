@@ -155,23 +155,21 @@ def _prepare_model_inventory(
         Model,
         _audit_inventory_transforms,
         _iter_inventory_occurrences,
+        _uses_builtin_occurrences,
     )
 
     match model:
         case Model():
             context = context if context is not None else ModelValidationContext()
-            context.ensure_validated(
-                root=model,
-                reachable_only=model._is_submodel_view,  # noqa: SLF001
-            )
-            if (
-                getattr(model.iter_occurrences, "__func__", None)
-                is Model.iter_occurrences
-            ):
+            if _uses_builtin_occurrences(model):
                 return _prepare_inventory_occurrences(
                     _iter_inventory_occurrences(model, context=context),
                     transforms_validated=True,
                 )
+            context.ensure_validated(
+                root=model,
+                reachable_only=model._is_submodel_view,  # noqa: SLF001
+            )
             _audit_inventory_transforms(model, context=context)
         case _:
             pass
@@ -230,6 +228,9 @@ def bill_of_materials(
     the first occurrence's spelling. ``ModelOccurrence.part_code`` is
     authoritative, including caller-provided overrides. Parsed part identities
     retain dotted names and omit their terminal .dat suffix.
+
+    Custom occurrence traversals are authoritative. Concrete Model overrides
+    delegating to super() retain the BOM's cycle-skipping behavior.
     """
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"
@@ -466,6 +467,8 @@ def compare_inventory(
     from any occurrence provider, raises ValueError before comparing counts.
     Submodel views check their selected section and reachable sections rather
     than unrelated siblings in their shared resolution table.
+    Custom traversals audit reachable submodel placement transforms separately;
+    part placement transforms are checked when their occurrences are emitted.
     """
     return _compare_inventory_occurrences(
         occurrences=_prepare_model_inventory(model),

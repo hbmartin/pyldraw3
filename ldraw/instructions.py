@@ -10,12 +10,13 @@ from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from ldraw._model_validation import _resolve_reference
 from ldraw.bom import BomRow, bill_of_materials
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import Comment, MetaCommand
 from ldraw.pieces import Piece
 from ldraw.serialization import format_ldraw_number
-from ldraw.utils import SUBMODEL_SUFFIXES, normalize_ref
+from ldraw.utils import SUBMODEL_SUFFIXES, normalize_ref, split_reference
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
@@ -756,7 +757,7 @@ def _reachable_instruction_models(root: Model) -> list[Model]:
         current = pending[index]
         index += 1
         for piece in current.pieces:
-            target = root.submodel_for(piece)
+            target = _resolve_reference(root=root, piece=piece, context=None)
             if target is None or not _is_instruction_model(target):
                 continue
             key = normalize_ref(target.name)
@@ -776,7 +777,7 @@ def _reachable_instruction_models(root: Model) -> list[Model]:
 def _references(root: Model, model: Model) -> tuple[str, ...]:
     refs: list[str] = []
     for piece in model.pieces:
-        target = root.submodel_for(piece)
+        target = _resolve_reference(root=root, piece=piece, context=None)
         if target is not None and _is_instruction_model(target):
             refs.append(target.name)
     return tuple(dict.fromkeys(refs))
@@ -1406,9 +1407,9 @@ def _reference_issues(
     root: Model,
 ) -> Iterator[InstructionIssue]:
     for piece in section.model.pieces:
-        if piece.suffix.casefold() not in SUBMODEL_SUFFIXES:
+        if split_reference(piece.reference)[1].casefold() not in SUBMODEL_SUFFIXES:
             continue
-        if root.submodel_for(piece) is None:
+        if _resolve_reference(root=root, piece=piece, context=None) is None:
             yield InstructionIssue(
                 section.name,
                 section.model.source_line_for(piece),
@@ -1442,7 +1443,7 @@ def _cycle_issues(document: InstructionDocument) -> Iterator[InstructionIssue]:
         visited.add(key)
         active.add(key)
         for piece in model.pieces:
-            target = root.submodel_for(piece)
+            target = _resolve_reference(root=root, piece=piece, context=None)
             if target is None or not _is_instruction_model(target):
                 continue
             target_key = normalize_ref(target.name)
