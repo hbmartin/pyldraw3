@@ -44,6 +44,14 @@ def split_reference(ref: str) -> tuple[str, str]:
     return stem, f".{ext}"
 
 
+def split_ldraw_reference(ref: str) -> tuple[str, str]:
+    """Separate only recognized LDraw suffixes, preserving dotted identifiers."""
+    stem, suffix = split_reference(ref)
+    return (
+        (stem, suffix) if suffix.casefold() in {".dat", ".ldr", ".mpd"} else (ref, "")
+    )
+
+
 def ldraw_file_name(line: str) -> str | None:
     """Return the section name if the line is a ``0 FILE <name>`` command."""
     match line.split(maxsplit=2):

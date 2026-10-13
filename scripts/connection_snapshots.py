@@ -10,14 +10,14 @@ import re
 from collections import defaultdict, deque
 from dataclasses import fields, is_dataclass
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ldraw._library_content import (
     archive_library_content_sha256,
     library_content_sha256,
 )
-from ldraw.connection_types import ConnectionFeature
+from ldraw.connection_types import ConnectionFeature, ConnectionProvenance
 from ldraw.dirs import get_cache_dir
 from ldraw.geometry import Matrix
 from ldraw.part_geometry import part_connections
@@ -77,14 +77,16 @@ def normalized(value: Any, *, library_root: Path) -> Any:  # noqa: ANN401, PLR09
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Path):
-        return value.relative_to(library_root).as_posix().lower()
+        return _canonical_path(value, library_root=library_root)
     if isinstance(value, ConnectionFeature):
         return _normalized_feature(value, library_root=library_root)
     if is_dataclass(value) and not isinstance(value, type):
         return {
             item.name: (
-                getattr(value, item.name)
-                if item.name == "command"
+                _canonical_member(member)
+                if isinstance(value, ConnectionProvenance)
+                and item.name == "archive_member"
+                and (member := getattr(value, item.name)) is not None
                 else normalized(getattr(value, item.name), library_root=library_root)
             )
             for item in fields(value)
@@ -97,9 +99,44 @@ def normalized(value: Any, *, library_root: Path) -> Any:  # noqa: ANN401, PLR09
     if isinstance(value, tuple | list | frozenset):
         result = [normalized(item, library_root=library_root) for item in value]
         return sorted(result) if isinstance(value, frozenset) else result
-    if isinstance(value, str):
-        return value.replace(str(library_root), "<library>")
     return value
+
+
+def _canonical_path(path: Path, *, library_root: Path) -> str:
+    return path.resolve().relative_to(library_root.resolve()).as_posix().lower()
+
+
+def _canonical_member(member: str) -> str:
+    return PurePosixPath(member.replace("\\", "/")).as_posix().lower()
+
+
+def _normalized_source_text(
+    text: str, *, provenance: ConnectionProvenance, library_root: Path
+) -> str:
+    """Rewrite a known source prefix without touching descriptive text."""
+    prefix = text.split(":", maxsplit=1)[0].split(" via ", maxsplit=1)[0]
+    if provenance.archive_member is not None:
+        member = _canonical_member(provenance.archive_member)
+        return (
+            f"{member}{text[len(prefix) :]}"
+            if _canonical_member(prefix) == member
+            else text
+        )
+    if provenance.path is None:
+        return text
+    source = str(provenance.path)
+    canonical = _canonical_path(provenance.path, library_root=library_root)
+    if text == source or text.startswith((f"{source}:", f"{source} via ")):
+        prefix = source
+    elif not Path(prefix).is_absolute():
+        return text
+    else:
+        try:
+            if _canonical_path(Path(prefix), library_root=library_root) != canonical:
+                return text
+        except ValueError:
+            return text
+    return f"<library>/{canonical}{text[len(prefix) :]}"
 
 
 def _normalized_feature(
@@ -109,13 +146,13 @@ def _normalized_feature(
         item.name: normalized(getattr(feature, item.name), library_root=library_root)
         for item in fields(feature)
     }
-    if (
-        feature.connection_provenance is not None
-        and (path := feature.connection_provenance.path) is not None
-    ):
-        canonical = f"<library>/{path.relative_to(library_root).as_posix().lower()}"
+    if feature.connection_provenance is not None:
         result["provenance"] = [
-            item.replace(str(path), canonical).replace(str(library_root), "<library>")
+            _normalized_source_text(
+                item,
+                provenance=feature.connection_provenance,
+                library_root=library_root,
+            )
             for item in feature.provenance
         ]
     return result
@@ -147,8 +184,20 @@ def main() -> None:
         help="Explicitly replace the fixed part selection and content digest.",
     )
     args = parser.parse_args()
+    manifest: dict[str, Any] = {}
+    if not args.select:
+        manifest = json.loads(MANIFEST.read_text())
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != 2:
+            message = "unsupported corpus manifest schema; migrate to content identity"
+            raise ValueError(message)
     parts = Parts(args.parts_list)
     digest = library_content_sha256(parts.library_root)
+    if not args.select and digest != manifest["library_content_sha256"]:
+        message = (
+            "2018-02 library content differs; inspect the extracted files "
+            "before explicitly reselecting"
+        )
+        raise ValueError(message)
     archive_digest: str | None = None
     if args.archive is not None:
         if archive_library_content_sha256(args.archive) != digest:
@@ -162,17 +211,6 @@ def main() -> None:
             "library_content_sha256": digest,
             "part_codes": select_codes(parts),
         }
-    else:
-        manifest = json.loads(MANIFEST.read_text())
-        if manifest.get("schema_version") != 2:
-            message = "unsupported corpus manifest schema; migrate to content identity"
-            raise ValueError(message)
-        if digest != manifest["library_content_sha256"]:
-            message = (
-                "2018-02 library content differs; inspect the extracted files "
-                "before explicitly reselecting"
-            )
-            raise ValueError(message)
     if archive_digest is not None:
         manifest["archive_sha256"] = archive_digest
     result = snapshot(parts, manifest["part_codes"])

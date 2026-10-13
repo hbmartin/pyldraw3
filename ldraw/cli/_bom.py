@@ -11,6 +11,7 @@ from ldraw.bom import (
     BomRow,
     _compare_inventory_occurrences,
     _prepare_inventory_occurrences,
+    _validate_inventory_submodels,
     comparison_to_csv,
     read_inventory,
     rows_to_csv,
@@ -133,6 +134,7 @@ def _read_inventory_mapping(path: Path | None) -> _InventoryMapping:
 
 def _inventory_parts(occurrences: tuple[_BomLeaf, ...]) -> PartsListing | None:
     """Load only the listing, and only when a leaf needs classification."""
+    _validate_inventory_submodels(occurrences)
     if not any(item.requires_listing for item in occurrences):
         return None
     parts_lst = _parts_lst_path()

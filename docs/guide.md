@@ -484,6 +484,12 @@ listed identifiers case-insensitively, including dotted identifiers. The
 whole reference must be listed, even if its stem names a known part.
 Ordinary BOMs use the same full identifiers, stripping only a terminal `.dat`
 suffix. Dotted identifiers remain distinct, and a model matches its own BOM.
+Parsing and piece construction preserve these dotted part identities in
+`Piece.part` and leaf `ModelOccurrence.part_code`, so model summaries and BOMs
+agree. Serialized reference spelling and suffix case remain unchanged.
+When supplying occurrences directly, their `part_code` values are authoritative,
+including caller-provided replacements. BOM rows preserve the first identifier's
+case and separators while aggregating equivalent spellings.
 Unresolved `.ldr`/`.mpd` references always fail; ambiguous references fail
 before aliases are applied. Explicit `.dat` references do not require a
 catalog, and resolved submodels expand normally.
@@ -507,9 +513,20 @@ coordinates or matrices, including type-2–5 vertices. If every source object
 parsed, `complete` remains true while `valid` is false. Duplicate checks skip
 these placements, inventory comparison refuses the invalid model, and
 serialization raises a clear `ValueError` until the values are repaired.
+Geometry representations remain readable for inspection, including `repr()` of
+objects containing NaN or Infinity. The Python `compare_inventory` API rejects
+non-finite geometry in every declared Model section, including type-2–5 objects;
+occurrence-only providers are checked for non-finite expanded transforms.
+Parsing-completeness checks additionally belong to the CLI's report-oriented
+loading, since a raw Model does not retain a discarded source line's history.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that
 collide after normalization are rejected. Archive content is verified before
 selection or output writes. Snapshot source paths and embedded provenance paths
 use lowercase POSIX library-relative names, consistent with content identity.
+Symlink aliases resolve against the library root, and archive-member names use
+the same case and separator normalization. Descriptive text, identifiers, include
+markers, and metadata command text are preserved. Filesystem provenance must
+resolve inside the library root. Existing manifest checks precede archive reads;
+the raw archive checksum is recorded only after archive content verification.

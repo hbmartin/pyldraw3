@@ -11,7 +11,10 @@ from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from ldraw._parts_listing import DOT_DAT, iter_parts_listing
+from ldraw._parts_listing import iter_parts_listing, listing_description
+from ldraw._parts_listing import normalized_index as _normalized_index
+from ldraw._parts_listing import reference_code as _normalized_reference_code
+from ldraw._parts_listing import reference_key as _reference_key
 from ldraw.colour import Colour
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import PartError, PartNotFoundError
@@ -43,19 +46,6 @@ if TYPE_CHECKING:
     from ldraw.part_metadata import PartMetadata
 
 logger = logging.getLogger(__name__)
-
-
-def _normalized_reference_code(code: str) -> str:
-    return code.replace("\\", "/")
-
-
-def _reference_key(code: str) -> str:
-    return _normalized_reference_code(code).casefold()
-
-
-def _normalized_index(mapping: dict[str, str]) -> dict[str, str]:
-    """Index ``mapping`` by normalized reference key for O(1) casefold lookups."""
-    return {_reference_key(code): value for code, value in mapping.items()}
 
 
 class PartCategory(StrEnum):
@@ -1023,9 +1013,9 @@ class Parts:
         Prefer exact casing, then normalize casing and reference separators
         without parsing or categorizing parts.
         """
-        if (description := self.by_code.get(code)) is not None:
-            return description
-        return self._by_code_normalized.get(_reference_key(code))
+        return listing_description(
+            code, by_code=self.by_code, normalized=self._by_code_normalized
+        )
 
     def part(
         self,
@@ -1628,20 +1618,6 @@ class Parts:
             self.colours_by_code[code] = colour
 
     def _load_primitives(self, path: Path) -> None:
-        with path.open(mode="r", encoding="utf-8") as part_path:
-            for line_number, line in enumerate(part_path, start=1):
-                if not line.strip():
-                    continue
-                pieces = DOT_DAT.split(line, maxsplit=1)
-                if len(pieces) != 2:
-                    logger.warning(
-                        "skipping malformed line %d in %s: %r",
-                        line_number,
-                        path,
-                        line.strip(),
-                    )
-                    continue
-                code = pieces[0]
-                description = pieces[1].strip()
-                self.primitives_by_name[description] = code
-                self.primitives_by_code[code] = description
+        for code, description in iter_parts_listing(path):
+            self.primitives_by_name[description] = code
+            self.primitives_by_code[code] = description
