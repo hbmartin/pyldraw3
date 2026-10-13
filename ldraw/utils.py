@@ -6,6 +6,9 @@ import keyword
 import re
 from pathlib import Path
 
+SUBMODEL_SUFFIXES = frozenset({".ldr", ".mpd"})
+LDRAW_SUFFIXES = SUBMODEL_SUFFIXES | {".dat"}
+
 
 def clean(input_string: str) -> str:
     """Clean a description string."""
@@ -47,9 +50,7 @@ def split_reference(ref: str) -> tuple[str, str]:
 def split_ldraw_reference(ref: str) -> tuple[str, str]:
     """Separate only recognized LDraw suffixes, preserving dotted identifiers."""
     stem, suffix = split_reference(ref)
-    return (
-        (stem, suffix) if suffix.casefold() in {".dat", ".ldr", ".mpd"} else (ref, "")
-    )
+    return (stem, suffix) if suffix.casefold() in LDRAW_SUFFIXES else (ref, "")
 
 
 def ldraw_file_name(line: str) -> str | None:

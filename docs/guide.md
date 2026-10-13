@@ -489,6 +489,9 @@ Parsing and piece construction preserve these dotted part identities in
 use the same dotted identities. Summaries count raw `part_code` spellings
 separately; BOMs additionally aggregate case and separator variants.
 Serialized reference spelling and suffix case remain unchanged.
+`Piece.place("custom.v1")` uses the default reference `custom.v1.dat`, matching
+the constructor. Recognized `.dat`, `.ldr`, and `.mpd` endings retain their
+existing spelling; an explicit empty suffix keeps a reference suffix-free.
 When supplying occurrences directly, their `part_code` values are authoritative,
 including caller-provided replacements. BOM rows preserve the first identifier's
 case and separators while aggregating equivalent spellings.
@@ -523,7 +526,8 @@ non-finite geometry in every declared Model section, including type-2–5 object
 occurrence-only providers are checked for non-finite expanded transforms.
 For `root.submodel_view(name)`, comparison checks the selected section and its
 reachable submodels, ignoring unrelated siblings in the shared resolution table.
-Composed transforms are checked too, including overflow from finite inputs.
+Every composed placement is checked too, including overflow from finite inputs
+into empty submodels or submodels containing geometry without leaf parts.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 
@@ -537,3 +541,7 @@ the same case and separator normalization. Descriptive text, identifiers, includ
 markers, and metadata command text are preserved. Filesystem provenance must
 resolve inside the library root. Existing manifest checks precede archive reads;
 the raw archive checksum is recorded only after archive content verification.
+Empty archive-member strings remain empty and use the filesystem or other
+origin for display. Ambiguous secondary attribution is preserved; relative
+source entries containing whitespace require structured provenance for
+normalization.

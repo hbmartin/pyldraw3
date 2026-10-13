@@ -10,21 +10,24 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from ldraw._model_validation import ModelValidationContext
 from ldraw._parts_listing import reference_key
 from ldraw.colour import Colour
 from ldraw.errors import PartError
 from ldraw.part import colour_from_str
-from ldraw.utils import normalize_ref, split_reference
+from ldraw.utils import (
+    LDRAW_SUFFIXES,
+    SUBMODEL_SUFFIXES,
+    normalize_ref,
+    split_reference,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
 
     from ldraw._parts_listing import PartDescriptionSource
-    from ldraw.diagnostics import Diagnostic
-    from ldraw.geometry import Matrix, Vector
     from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
-    from ldraw.pieces import Piece
 
 BOM_FIELDS: tuple[str, ...] = (
     "part",
@@ -107,26 +110,25 @@ def _bom_leaf(occurrence: ModelOccurrence) -> _BomLeaf:
         reference=occurrence.reference,
         part=occurrence.part_code,
         colour=occurrence.colour,
-        requires_listing=suffix not in {".dat", ".ldr", ".mpd"},
-        unresolved_submodel=suffix in {".ldr", ".mpd"},
+        requires_listing=suffix not in LDRAW_SUFFIXES,
+        unresolved_submodel=suffix in SUBMODEL_SUFFIXES,
     )
 
 
 def _prepare_inventory_occurrences(
     occurrences: Iterable[ModelOccurrence],
     *,
-    validated_placements: dict[Piece, tuple[Vector, Matrix]] | None = None,
+    transforms_validated: bool = False,
 ) -> tuple[_BomLeaf, ...]:
-    from ldraw.validation import _numeric_issue, _placement_analysis  # noqa: PLC0415
+    from ldraw.validation import (  # noqa: PLC0415
+        _numeric_issue,
+        _placement_analysis,
+        _reject_numeric_issue,
+    )
 
     leaves: list[_BomLeaf] = []
     for occurrence in occurrences:
-        source_validated = (
-            validated_placements is not None
-            and len(occurrence.path) == 1
-            and occurrence.piece in validated_placements
-        )
-        if not source_validated and (
+        if not transforms_validated and (
             issue := _numeric_issue(
                 _placement_analysis(
                     position=occurrence.position, matrix=occurrence.matrix
@@ -137,34 +139,47 @@ def _prepare_inventory_occurrences(
             )
         ):
             _reject_numeric_issue(issue)
-        leaves.append(_bom_leaf(occurrence))
-    result = tuple(leaves)
-    _validate_inventory_submodels(result)
-    return result
+        leaf = _bom_leaf(occurrence)
+        if leaf.unresolved_submodel:
+            message = f"model contains unresolved submodel reference {leaf.reference!r}"
+            raise ValueError(message)
+        leaves.append(leaf)
+    return tuple(leaves)
 
 
-def _prepare_model_inventory(model: _ModelLike) -> tuple[_BomLeaf, ...]:
+def _prepare_model_inventory(
+    model: _ModelLike, *, context: ModelValidationContext | None = None
+) -> tuple[_BomLeaf, ...]:
+    """Prepare counts, optionally reusing analysis from immediate report loading."""
     from ldraw.model import Model, _iter_inventory_occurrences  # noqa: PLC0415
-    from ldraw.validation import _iter_model_numeric_issues  # noqa: PLC0415
+    from ldraw.validation import (  # noqa: PLC0415
+        _iter_model_numeric_issues,
+        _reject_numeric_issue,
+    )
 
-    placements = {} if type(model) is Model else None
-    if isinstance(model, Model):
-        for issue in _iter_model_numeric_issues(model, placements=placements):
-            _reject_numeric_issue(issue)
-        if placements is not None:
+    match model:
+        case Model() if type(model) is Model:
+            if context is None:
+                context = ModelValidationContext()
+                for issue in _iter_model_numeric_issues(
+                    model,
+                    reachable_only=model._is_submodel_view,  # noqa: SLF001
+                    context=context,
+                ):
+                    _reject_numeric_issue(issue)
             return _prepare_inventory_occurrences(
-                _iter_inventory_occurrences(model, placements=placements),
-                validated_placements=placements,
+                _iter_inventory_occurrences(model, context=context),
+                transforms_validated=True,
             )
+        case Model():
+            for issue in _iter_model_numeric_issues(
+                model,
+                reachable_only=model._is_submodel_view,  # noqa: SLF001
+            ):
+                _reject_numeric_issue(issue)
+        case _:
+            pass
     return _prepare_inventory_occurrences(model.iter_occurrences(include_steps=False))
-
-
-def _reject_numeric_issue(issue: Diagnostic) -> None:
-    location = issue.section or "model"
-    if issue.line_number is not None:
-        location = f"{location}:{issue.line_number}"
-    message = f"{issue.code}: {location}: {issue.message}"
-    raise ValueError(message)
 
 
 def _bom_rows(leaves: Iterable[_BomLeaf], *, parts: Parts | None) -> list[BomRow]:
@@ -418,16 +433,6 @@ def _inventory_counts(
             raise AssertionError
         counts[(_canonical_part(row.part, aliases), colour)] += row.quantity
     return counts
-
-
-def _validate_inventory_submodels(occurrences: tuple[_BomLeaf, ...]) -> None:
-    """Reject structural reference failures before consulting a listing."""
-    for occurrence in occurrences:
-        if occurrence.unresolved_submodel:
-            message = (
-                f"model contains unresolved submodel reference {occurrence.reference!r}"
-            )
-            raise ValueError(message)
 
 
 def _validate_inventory_reference(

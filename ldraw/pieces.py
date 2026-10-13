@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.serialization import format_ldraw_colour, format_ldraw_number
-from ldraw.utils import split_ldraw_reference
+from ldraw.utils import LDRAW_SUFFIXES, SUBMODEL_SUFFIXES, split_ldraw_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -74,7 +74,11 @@ class Piece:
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
         _, dot, ending = part.rpartition(".")
-        if dot and suffix.casefold() in {DEFAULT_SUFFIX, f".{ending}".casefold()}:
+        existing = f".{ending}".casefold()
+        if dot and (
+            suffix.casefold() == existing
+            or (suffix.casefold() == DEFAULT_SUFFIX and existing in LDRAW_SUFFIXES)
+        ):
             suffix = ""
         return cls(
             colour=colour,
@@ -112,6 +116,13 @@ class Piece:
             f"Piece(colour={self.colour!r}, position={self.position!r}, "
             f"matrix={self.matrix!r}, part={self.part!r}, suffix={self.suffix!r})"
         )
+
+
+def _default_leaf_identity(piece: Piece) -> str:
+    """Keep submodel references distinct from same-named part codes."""
+    return (
+        piece.reference if piece.suffix.casefold() in SUBMODEL_SUFFIXES else piece.part
+    )
 
 
 @dataclass(slots=True, eq=False)

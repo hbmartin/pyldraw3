@@ -9,17 +9,88 @@ import pytest
 
 from ldraw._library_content import library_content_sha256
 from ldraw.config import Config
-from ldraw.connection_types import ConnectionProvenance, ConnectionSource
+from ldraw.connection_types import (
+    ConnectionProvenance,
+    ConnectionSource,
+    _format_provenance,
+)
 from ldraw.parts import Parts
 from scripts import connection_snapshots
 from scripts.connection_snapshots import (
     MANIFEST,
     SEEDS,
     SNAPSHOT,
+    _normalized_source_text,
     normalized,
     select_codes,
     snapshot,
 )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Studio Origin From Vendor/Custom.DAT",
+        "Studio Origin From Vendor\\Custom.DAT:3",
+        "Vendor/Custom.DAT",
+        "MiXeD descriptive text about parts/Custom.DAT via IncludeID",
+        "parts/My Part.DAT:3",
+        "OtherID:I0",
+    ],
+)
+def test_secondary_provenance_preserves_ambiguous_descriptive_text(
+    tmp_path: Path, text: str
+) -> None:
+    assert _normalized_source_text(text, provenance=None, library_root=tmp_path) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("PARTS/Custom.DAT", "parts/custom.dat"),
+        ("P\\48\\Custom.DAT", "p/48/custom.dat"),
+        ("MODELS/Custom.LDR", "models/custom.ldr"),
+        ("Vendor/Custom.DAT:37 via MiXeD:I0", "vendor/custom.dat:37 via MiXeD:I0"),
+        ("Custom.JSON: Studio connection 4", "custom.json: Studio connection 4"),
+        ("<library>/PARTS/Custom.DAT:3", "<library>/parts/custom.dat:3"),
+    ],
+)
+def test_secondary_provenance_normalizes_explicit_source_formats(
+    tmp_path: Path, text: str, expected: str
+) -> None:
+    assert (
+        _normalized_source_text(text, provenance=None, library_root=tmp_path)
+        == expected
+    )
+
+
+@pytest.mark.parametrize("with_path", [False, True])
+def test_empty_archive_member_uses_fallback_origin_and_remains_empty(
+    tmp_path: Path, *, with_path: bool
+) -> None:
+    root = tmp_path / "Library: With Spaces"
+    source = root / "PARTS" / "Custom.DAT" if with_path else None
+    provenance = ConnectionProvenance(
+        source=ConnectionSource.LDCAD_SHADOW,
+        path=source,
+        archive_member="",
+        line_number=3,
+        include_chain=("MiXeD:I0",),
+    )
+    result = normalized(provenance, library_root=root)
+    assert result["archive_member"] == ""
+    assert result["path"] == ("parts/custom.dat" if with_path else None)
+    expected = (
+        "<library>/parts/custom.dat:3 via MiXeD:I0"
+        if with_path
+        else "ldcad_shadow:3 via MiXeD:I0"
+    )
+    assert (
+        _normalized_source_text(
+            _format_provenance(provenance), provenance=provenance, library_root=root
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize("count", [199, 200, 201])

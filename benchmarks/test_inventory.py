@@ -1,11 +1,13 @@
 """Comparison costs for large flat, grouped, and repeated nested inventories."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 import pytest
 
-from ldraw.bom import bill_of_materials, compare_inventory
+from ldraw.bom import bill_of_materials, compare_inventory, rows_to_csv
+from ldraw.cli import main
 from ldraw.geometry import Matrix, Vector
 from ldraw.model import Model
 from ldraw.pieces import Group, Piece
@@ -31,6 +33,9 @@ def comparison_model(workload: str) -> Model:
             for index in range(1_000 if workload == "nested" else 100_000)
         ],
     )
+    if workload == "view":
+        root = Model(name="main.ldr", submodels={"leaf.ldr": leaf})
+        return root.submodel_view(leaf.name)
     if workload != "nested":
         return leaf
     middle = Model(name="middle.ldr")
@@ -41,7 +46,7 @@ def comparison_model(workload: str) -> Model:
     return root
 
 
-@pytest.mark.parametrize("workload", ["flat", "grouped", "nested"])
+@pytest.mark.parametrize("workload", ["flat", "grouped", "nested", "view"])
 def test_inventory_comparison(benchmark: _Benchmark, workload: str) -> None:
     """Measure complete comparison without imposing CI timing thresholds."""
     model = comparison_model(workload)
@@ -52,3 +57,26 @@ def test_inventory_comparison(benchmark: _Benchmark, workload: str) -> None:
     benchmark.pedantic(
         lambda: compare_inventory(model, expected), rounds=5, iterations=1
     )
+
+
+def test_inventory_cli_comparison(benchmark: _Benchmark, tmp_path: Path) -> None:
+    """Measure report loading plus comparison of 100,000 flat placements."""
+    model = comparison_model("flat")
+    source = tmp_path / "model.ldr"
+    source.write_text(model.to_ldraw(), encoding="utf-8")
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text(rows_to_csv(bill_of_materials(model)), encoding="utf-8")
+    output = tmp_path / "comparison.json"
+    arguments = [
+        "bom",
+        str(source),
+        "--compare",
+        str(inventory),
+        "--format",
+        "json",
+        "-o",
+        str(output),
+    ]
+    if benchmark.pedantic(lambda: main(arguments), rounds=5, iterations=1) != 0:
+        message = "CLI comparison benchmark must match its exported inventory"
+        raise ValueError(message)
