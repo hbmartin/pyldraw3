@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import cached_property
 from types import GetSetDescriptorType, MemberDescriptorType, MethodType
@@ -15,7 +16,6 @@ _MISSING = object()
 _VIEW_BINDINGS = frozenset({"_view_selected", "_view_root", "_view_cache"})
 _VIEW_PROTOCOLS = frozenset(
     {
-        "__class__",
         "__copy__",
         "__deepcopy__",
         "__reduce__",
@@ -26,6 +26,9 @@ _VIEW_PROTOCOLS = frozenset(
 )
 _VIEW_CLASSES: WeakKeyDictionary[type[Model], ReferenceType[type[Model]]] = (
     WeakKeyDictionary()
+)
+_DESCRIPTOR_WRITE: ContextVar[tuple[object, str] | None] = ContextVar(
+    "ldraw_view_descriptor_write", default=None
 )
 
 
@@ -41,25 +44,37 @@ def _storage_descriptor(descriptor: object) -> bool:
 
 
 def _view_attribute(*, view: _ModelViewMixin, selected: Model, name: str) -> Any:  # noqa: ANN401 - descriptor values
-    descriptor = _class_descriptor(selected, name)
+    descriptor = _class_descriptor(model=selected, name=name)
     if isinstance(descriptor, cached_property):
         return object.__getattribute__(view, name)
     if _storage_descriptor(descriptor) or not hasattr(type(descriptor), "__get__"):
         return getattr(selected, name)
-    if not (
+    non_data = not (
         hasattr(type(descriptor), "__set__") or hasattr(type(descriptor), "__delete__")
-    ) and name in (state := getattr(selected, "__dict__", {})):
+    )
+    cache = object.__getattribute__(view, "_view_cache")
+    if non_data and name in cache:
+        return cache[name]
+    if non_data and name in (state := getattr(selected, "__dict__", {})):
         value = state[name]
         return (
             MethodType(value.__func__, view)
             if isinstance(value, MethodType) and value.__self__ is selected
             else value
         )
-    return (
-        getattr(selected, name)
-        if isinstance(descriptor, classmethod)
-        else object.__getattribute__(view, name)
-    )
+    if isinstance(descriptor, classmethod):
+        return getattr(selected, name)
+    return _bound_descriptor(view=view, name=name, non_data=non_data)
+
+
+def _bound_descriptor(*, view: _ModelViewMixin, name: str, non_data: bool) -> Any:  # noqa: ANN401 - descriptor values
+    if not non_data:
+        return object.__getattribute__(view, name)
+    token = _DESCRIPTOR_WRITE.set((view, name))
+    try:
+        return object.__getattribute__(view, name)
+    finally:
+        _DESCRIPTOR_WRITE.reset(token)
 
 
 class _ModelViewMixin:
@@ -80,6 +95,8 @@ class _ModelViewMixin:
             return object.__getattribute__(self, "_view_cache")
         selected = object.__getattribute__(self, "_view_selected")
         match name:
+            case "__class__":
+                return type(selected)
             case "submodels" | "submodel_for":
                 return getattr(object.__getattribute__(self, "_view_root"), name)
             case "_is_submodel_view":
@@ -89,7 +106,11 @@ class _ModelViewMixin:
         return _view_attribute(view=self, selected=selected, name=name)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name in _VIEW_BINDINGS or name == "_is_submodel_view":
+        if name in _VIEW_BINDINGS or name in {
+            "__class__",
+            "__dict__",
+            "_is_submodel_view",
+        }:
             message = (
                 "a live model view always has selected-section scope"
                 if name == "_is_submodel_view"
@@ -99,8 +120,17 @@ class _ModelViewMixin:
         if name == "submodels":
             setattr(self._view_root, name, value)
             return
-        descriptor = _class_descriptor(self._view_selected, name)
-        if isinstance(descriptor, cached_property):
+        descriptor = _class_descriptor(model=self._view_selected, name=name)
+        caching = _DESCRIPTOR_WRITE.get()
+        non_data = not (
+            hasattr(type(descriptor), "__set__")
+            or hasattr(type(descriptor), "__delete__")
+        )
+        if (
+            isinstance(descriptor, cached_property)
+            or (caching is not None and caching[0] is self and caching[1] == name)
+            or (non_data and name in self._view_cache)
+        ):
             self._view_cache[name] = value
         elif not _storage_descriptor(descriptor) and hasattr(
             type(descriptor), "__set__"
@@ -110,11 +140,21 @@ class _ModelViewMixin:
             setattr(self._view_selected, name, value)
 
     def __delattr__(self, name: str) -> None:
-        if name in _VIEW_BINDINGS or name == "_is_submodel_view":
+        if name in _VIEW_BINDINGS or name in {
+            "__class__",
+            "__dict__",
+            "_is_submodel_view",
+        }:
             message = "cannot delete a live model view binding"
             raise AttributeError(message)
-        descriptor = _class_descriptor(self._view_selected, name)
-        if isinstance(descriptor, cached_property):
+        descriptor = _class_descriptor(model=self._view_selected, name=name)
+        non_data = not (
+            hasattr(type(descriptor), "__set__")
+            or hasattr(type(descriptor), "__delete__")
+        )
+        if isinstance(descriptor, cached_property) or (
+            non_data and name in self._view_cache
+        ):
             if name not in self._view_cache:
                 raise AttributeError(name)
             del self._view_cache[name]
@@ -144,6 +184,13 @@ class _ModelViewMixin:
         return self._view_selected, self._view_root
 
     def __setstate__(self, state: tuple[Model, Model]) -> None:
+        try:
+            object.__getattribute__(self, "_view_selected")
+        except AttributeError:
+            pass
+        else:
+            message = "cannot change a live model view binding"
+            raise AttributeError(message)
         _initialize_view(view=cast("Model", self), selected=state[0], root=state[1])
 
     def __reduce_ex__(self, _protocol: SupportsIndex) -> tuple[object, ...]:
@@ -161,7 +208,8 @@ def _view_class(selected_class: type[Model]) -> type[Model]:
         return view_class
     view_class = cast(
         "type[Model]",
-        type(
+        type.__new__(
+            type(selected_class),
             f"_Live{selected_class.__name__}View",
             (_ModelViewMixin, selected_class),
             {

@@ -535,9 +535,11 @@ to the selected model, including scalar subclass attributes and replacement
 object lists or source mappings. They resolve references through the original
 root's resolver, including when creating further views. View creation invokes
 neither instance constructors, copying/state hooks, nor the selected class's
-`__init_subclass__` hook. A private adapter inherits the selected class, so
-`isinstance(view, SelectedClass)` and `super()` work, while `type(view)` can differ
-from `type(selected)`.
+`__init_subclass__` hook or custom metaclass creation hooks. A private adapter
+inherits the selected class, so `isinstance(view, SelectedClass)` and `super()`
+work, while `type(view)` can differ from `type(selected)`. `view.__class__`
+reports the selected class, allowing ordinary construction through
+`self.__class__`, `dataclasses.replace`, and familiar representations.
 
 Inherited descriptors bind to the view, including cached methods,
 `singledispatchmethod`, `partialmethod`, and custom descriptors. Class factories
@@ -546,7 +548,14 @@ cache: pre-existing values on the selected model are ignored, and assigning or
 deleting a cached property affects only that view. They follow normal explicit
 cache invalidation; delete a cached property when its inputs change. A view's
 `__dict__` exposes this descriptor cache, while ordinary attributes and slot
-state continue forwarding to the selected model.
+state continue forwarding to the selected model. Custom non-data descriptors
+that cache their value under their own attribute name through `setattr` or
+`__dict__` also cache on the view. Later assignment and deletion affect that
+view-owned value. Existing selected-model instance overrides remain authoritative
+for custom descriptors; `cached_property` alone ignores selected cache entries.
+Class-level descriptor changes are looked up live, without a persistent binding
+cache. Assignment or deletion of `__class__` or `__dict__` is rejected, and an
+initialized view cannot be rebound through `__setstate__`.
 
 `copy.copy(view)` produces another live view of the same selected model and
 resolution root. `copy.deepcopy(view)` copies both in one graph, preserving
@@ -577,7 +586,9 @@ geometry is validated before occurrence preparation.
 Reachable source discovery stops active reference-name cycles even when a
 custom resolver creates fresh section objects on every call. Newly encountered
 cycle-closing sections still receive numeric checks. Distinct acyclic sections
-sharing a name are checked separately. Built-in comparison retains its normal
+sharing a name are checked separately. Shared acyclic sections are expanded
+once during source discovery; cycle-closing encounters remain deferred so a
+later acyclic route can expose their descendants. Built-in comparison retains its normal
 cycle error, while custom source audits stop cyclic re-entry without replacing
 the override's occurrences.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
@@ -587,8 +598,10 @@ Both `bill_of_materials(model)` and `model.bill_of_materials()` honor custom
 occurrence traversal, including relabelling and filtering. Analysis uses the
 same authoritative occurrences; summaries keep their raw identity aggregation.
 BOM generation, analysis, summaries, and comparison accept overrides returning
-iterables such as lists or tuples. Overrides accepting only `include_steps`
-remain supported for default expansion; an explicit unsupported
+iterables such as lists or tuples. Traversal flags are adapted independently to
+override signatures, including positional-only parameters and intervening
+defaults. Unsupported `include_steps` is omitted, preserving provider metadata;
+unsupported default expansion is omitted too. An explicit unsupported
 `expand_submodels=False` request raises `TypeError`. Exceptions from an override
 are propagated without retrying its body.
 BOM generation, analysis, and summaries skip built-in expansion cycles and
@@ -597,8 +610,15 @@ The cycle policy applies only while creating or advancing that model's iterator,
 resets before yielding, and does not affect ordinary public iteration.
 
 Instruction documents include each reachable section once, including when
-built from a view. Snapshot dependencies omit the section already being rendered,
-so self-references do not produce duplicate `0 FILE` blocks.
+built from a view. Documents retain their own resolved reference targets, so
+sections, step inventories, manifests, and snapshots use the objects selected
+by a custom resolver even when the declared table holds a stale object with the
+same name. Declared section order is retained and external targets follow in
+discovery order; build a new document to discover changed resolver results.
+Snapshot dependencies omit the section already being rendered, so self-references
+do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
+recursive references; public paired snapshot export rejects cycles and leaves
+no partially published output.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that

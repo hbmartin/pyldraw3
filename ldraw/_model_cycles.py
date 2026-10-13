@@ -36,25 +36,50 @@ def _custom_occurrences(
     """Adapt legacy narrower overrides without retrying failures in their bodies."""
     provider = model.iter_occurrences
     try:
-        parameters = signature(provider).parameters.values()
+        parameters = signature(provider).parameters
     except (TypeError, ValueError):
         # An opaque callable retains the public method's keyword contract.
         return provider(expand_submodels=expand_submodels, include_steps=include_steps)
-    accepts_expansion = any(
-        parameter.kind is Parameter.VAR_KEYWORD
+    variadic = any(
+        parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+    if "expand_submodels" not in parameters and not variadic and not expand_submodels:
+        message = "custom iter_occurrences does not support expand_submodels=False"
+        raise TypeError(message)
+    values = {"expand_submodels": expand_submodels, "include_steps": include_steps}
+    positional = [
+        parameter
+        for parameter in parameters.values()
+        if parameter.kind is Parameter.POSITIONAL_ONLY
+    ]
+    last = max(
+        (
+            index
+            for index, parameter in enumerate(positional)
+            if parameter.name in values
+        ),
+        default=-1,
+    )
+    arguments: list[object] = []
+    for parameter in positional[: last + 1]:
+        if parameter.name in values:
+            arguments.append(values[parameter.name])
+        elif parameter.default is not Parameter.empty:
+            arguments.append(parameter.default)
+        else:
+            message = f"custom iter_occurrences requires argument {parameter.name!r}"
+            raise TypeError(message)
+    keywords = {
+        name: value
+        for name, value in values.items()
+        if ((parameter := parameters.get(name)) is None and variadic)
         or (
-            parameter.name == "expand_submodels"
+            parameter is not None
             and parameter.kind
             in {Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY}
         )
-        for parameter in parameters
-    )
-    if accepts_expansion:
-        return provider(expand_submodels=expand_submodels, include_steps=include_steps)
-    if not expand_submodels:
-        message = "custom iter_occurrences does not support expand_submodels=False"
-        raise TypeError(message)
-    return provider(include_steps=include_steps)
+    }
+    return provider(*arguments, **keywords)
 
 
 def _iter_cycle_tolerant_occurrences(

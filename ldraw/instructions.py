@@ -10,7 +10,8 @@ from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from ldraw._model_validation import _resolve_reference
+from ldraw._instruction_resolution import InstructionResolution
+from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.bom import BomRow, bill_of_materials
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import Comment, MetaCommand
@@ -195,6 +196,9 @@ class InstructionStep:
     _ignored_bom: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_pli: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_bom: frozenset[int] = field(repr=False, compare=False)
+    _resolution: InstructionResolution | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @property
     def cumulative_pieces(self) -> tuple[Piece, ...]:
@@ -272,12 +276,18 @@ class InstructionStep:
     ) -> tuple[ModelOccurrence, ...]:
         from ldraw.model import Model  # noqa: PLC0415
 
-        view = Model(
-            name=self._model.name,
-            objects=list(objects),
-            submodels=_expandable_submodels(self._root, expand=expand_submodels),
-            _source_lines=self._model._source_lines,  # noqa: SLF001
-            _object_source_lines=self._model._object_source_lines,  # noqa: SLF001
+        view = (
+            self._resolution.expansion(
+                source=self._model, objects=objects, expand=expand_submodels
+            )
+            if self._resolution is not None
+            else Model(
+                name=self._model.name,
+                objects=list(objects),
+                submodels=_expandable_submodels(self._root, expand=expand_submodels),
+                _source_lines=self._model._source_lines,  # noqa: SLF001
+                _object_source_lines=self._model._object_source_lines,  # noqa: SLF001
+            )
         )
         return tuple(
             view.iter_occurrences(
@@ -299,10 +309,16 @@ class InstructionStep:
         included: list[ParsedObject] = [
             piece for piece in objects if id(piece) not in ignored
         ]
-        view = Model(
-            name=self._model.name,
-            objects=included,
-            submodels=_expandable_submodels(self._root, expand=expand_submodels),
+        view = (
+            self._resolution.expansion(
+                source=self._model, objects=included, expand=expand_submodels
+            )
+            if self._resolution is not None
+            else Model(
+                name=self._model.name,
+                objects=included,
+                submodels=_expandable_submodels(self._root, expand=expand_submodels),
+            )
         )
         return bill_of_materials(view, parts=parts)
 
@@ -328,6 +344,9 @@ class InstructionDocument:
     orphan_sections: tuple[InstructionSection, ...]
     model: Model = field(repr=False, compare=False)
     parts: Parts | None = field(default=None, repr=False, compare=False)
+    _resolution: InstructionResolution | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @classmethod
     def from_model(
@@ -337,30 +356,42 @@ class InstructionDocument:
         parts: Parts | None = None,
     ) -> InstructionDocument:
         """Build a semantic instruction document from ``model``."""
-        reachable_models = _reachable_instruction_models(model)
+        resolution = InstructionResolution(root=model)
+        reachable_models = _reachable_instruction_models(
+            root=model, resolution=resolution
+        )
         sections = tuple(
             _build_section(
                 root=model,
                 model=section_model,
                 is_root=index == 0,
                 reachable=True,
+                resolution=resolution,
             )
             for index, section_model in enumerate(reachable_models)
         )
         reachable_keys = {normalize_ref(item.name) for item in reachable_models}
         orphan_sections = tuple(
-            _build_section(root=model, model=item, is_root=False, reachable=False)
+            _build_section(
+                root=model,
+                model=item,
+                is_root=False,
+                reachable=False,
+                resolution=resolution,
+            )
             for item in model.submodels.values()
             if _is_instruction_model(item)
             and normalize_ref(item.name) not in reachable_keys
         )
-        return cls(
+        document = cls(
             root=sections[0],
             sections=sections,
             orphan_sections=orphan_sections,
             model=model,
             parts=parts,
         )
+        object.__setattr__(document, "_resolution", resolution)
+        return document
 
     def section(self, name: str) -> InstructionSection:
         """Return a reachable section by case-insensitive reference name."""
@@ -370,6 +401,9 @@ class InstructionDocument:
                 return section
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
+
+    def _resolution_context(self) -> ModelValidationContext | None:
+        return self._resolution.context if self._resolution is not None else None
 
 
 def _rotation_matrix(angles: tuple[float, float, float]) -> Matrix:
@@ -749,35 +783,37 @@ def _expandable_submodels(root: Model, *, expand: bool) -> dict[str, Model]:
     }
 
 
-def _reachable_instruction_models(root: Model) -> list[Model]:
+def _reachable_instruction_models(
+    root: Model, *, resolution: InstructionResolution
+) -> list[Model]:
     pending = [root]
-    seen = {normalize_ref(root.name)}
+    discovered = {normalize_ref(root.name): root}
     index = 0
     while index < len(pending):
         current = pending[index]
         index += 1
         for piece in current.pieces:
-            target = _resolve_reference(root=root, piece=piece, context=None)
+            target = resolution.resolve(piece)
             if target is None or not _is_instruction_model(target):
                 continue
             key = normalize_ref(target.name)
-            if key not in seen:
-                seen.add(key)
+            if key not in discovered:
+                discovered[key] = target
                 pending.append(target)
-    result = [root]
-    emitted = {normalize_ref(root.name)}
-    for model in (*root.submodels.values(), *pending[1:]):
-        key = normalize_ref(model.name)
-        if key in seen and key not in emitted and _is_instruction_model(model):
-            emitted.add(key)
-            result.append(model)
-    return result
+    ordered = dict.fromkeys(
+        (
+            normalize_ref(root.name),
+            *(normalize_ref(model.name) for model in root.submodels.values()),
+            *discovered,
+        )
+    )
+    return [discovered[key] for key in ordered if key in discovered]
 
 
-def _references(root: Model, model: Model) -> tuple[str, ...]:
+def _references(model: Model, *, resolution: InstructionResolution) -> tuple[str, ...]:
     refs: list[str] = []
     for piece in model.pieces:
-        target = _resolve_reference(root=root, piece=piece, context=None)
+        target = resolution.resolve(piece)
         if target is not None and _is_instruction_model(target):
             refs.append(target.name)
     return tuple(dict.fromkeys(refs))
@@ -809,6 +845,7 @@ class _SectionMachine:
     model: Model
     is_root: bool
     reachable: bool
+    resolution: InstructionResolution
     steps: list[InstructionStep] = field(default_factory=list)
     state: _StepState = field(default_factory=_StepState)
     cumulative: list[ParsedObject] = field(default_factory=list)
@@ -836,7 +873,7 @@ class _SectionMachine:
             name=self.model.name,
             is_root=self.is_root,
             reachable=self.reachable,
-            references=_references(self.root, self.model),
+            references=_references(model=self.model, resolution=self.resolution),
             steps=tuple(self.steps),
             model=self.model,
         )
@@ -908,6 +945,7 @@ class _SectionMachine:
                 _cumulative_ignored_bom=frozenset(self.cumulative_bom),
             )
         )
+        object.__setattr__(self.steps[-1], "_resolution", self.resolution)
         self.state = _StepState()
 
     def _add_object(
@@ -986,12 +1024,14 @@ def _build_section(
     model: Model,
     is_root: bool,
     reachable: bool,
+    resolution: InstructionResolution,
 ) -> InstructionSection:
     return _SectionMachine(
         root=root,
         model=model,
         is_root=is_root,
         reachable=reachable,
+        resolution=resolution,
     ).build()
 
 
@@ -1280,6 +1320,7 @@ def _section_issues(  # noqa: C901 - validation rule coordinator
             if not _resolvable_callout_references(
                 callout.references,
                 root=document.model,
+                context=document._resolution_context(),  # noqa: SLF001
             ):
                 yield InstructionIssue(
                     section.name,
@@ -1302,7 +1343,7 @@ def _section_issues(  # noqa: C901 - validation rule coordinator
             "model has multiple placements but no explicit STEP or ROTSTEP boundary",
             Severity.WARNING,
         )
-    yield from _reference_issues(section, document.model)
+    yield from _reference_issues(section, document=document)
     yield from _highlight_issues(section)
 
 
@@ -1404,12 +1445,20 @@ def _camera_issues(section: str, step: InstructionStep) -> Iterator[InstructionI
 
 def _reference_issues(
     section: InstructionSection,
-    root: Model,
+    *,
+    document: InstructionDocument,
 ) -> Iterator[InstructionIssue]:
     for piece in section.model.pieces:
         if split_reference(piece.reference)[1].casefold() not in SUBMODEL_SUFFIXES:
             continue
-        if _resolve_reference(root=root, piece=piece, context=None) is None:
+        if (
+            _resolve_reference(
+                root=document.model,
+                piece=piece,
+                context=document._resolution_context(),  # noqa: SLF001
+            )
+            is None
+        ):
             yield InstructionIssue(
                 section.name,
                 section.model.source_line_for(piece),
@@ -1422,11 +1471,23 @@ def _resolvable_callout_references(
     references: tuple[str, ...],
     *,
     root: Model,
+    context: ModelValidationContext | None = None,
 ) -> bool:
     root_key = normalize_ref(root.name)
     for reference in references:
         key = normalize_ref(reference)
         target = root if key == root_key else root.submodels.get(key)
+        if context is not None and key != root_key:
+            target = next(
+                (
+                    target
+                    for piece, target in context.targets.items()
+                    if target is not None
+                    and key
+                    in {normalize_ref(piece.reference), normalize_ref(target.name)}
+                ),
+                None,
+            )
         if target is not None and _is_instruction_model(target):
             return True
     return False
@@ -1443,7 +1504,11 @@ def _cycle_issues(document: InstructionDocument) -> Iterator[InstructionIssue]:
         visited.add(key)
         active.add(key)
         for piece in model.pieces:
-            target = _resolve_reference(root=root, piece=piece, context=None)
+            target = _resolve_reference(
+                root=root,
+                piece=piece,
+                context=document._resolution_context(),  # noqa: SLF001
+            )
             if target is None or not _is_instruction_model(target):
                 continue
             target_key = normalize_ref(target.name)
