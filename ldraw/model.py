@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
-from ldraw._model_validation import ModelValidationContext
+from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import (
     DuplicateSubmodelError,
@@ -440,14 +441,9 @@ class Model:
             submodel = self
         elif (submodel := self.submodels.get(key)) is None:
             raise UnknownSubmodelError(name)
-        view = Model(
-            name=submodel.name,
-            objects=submodel.objects,
-            submodels=self.submodels,
-            _source_lines=submodel._source_lines,  # noqa: SLF001 - same class
-            _object_source_lines=submodel._object_source_lines,  # noqa: SLF001
-        )
-        view._is_submodel_view = True
+        view = copy(submodel)
+        view.submodels = self.submodels
+        view._is_submodel_view = True  # noqa: SLF001 - same class, copied instance
         return view
 
     def add_step(self) -> None:
@@ -691,15 +687,14 @@ def _iter_inventory_occurrences(
     model: Model, *, context: ModelValidationContext
 ) -> Iterator[ModelOccurrence]:
     """Use validated root placements as world coordinates at the identity origin."""
-    placements = (
-        (piece, None, *context.placements[piece])
-        for piece in model.objects
-        if isinstance(piece, Piece)
+    context.ensure_validated(
+        root=model,
+        reachable_only=model._is_submodel_view,  # noqa: SLF001
     )
     return _iter_occurrences_at_placements(
         root=model,
         model=model,
-        placements=placements,
+        placements=_iter_root_placements(model, context=context),
         inherited_colour=None,
         visiting=frozenset(),
         inherited_step=None,
@@ -707,6 +702,60 @@ def _iter_inventory_occurrences(
         expand_submodels=True,
         include_steps=False,
         context=context,
+    )
+
+
+def _iter_root_placements(
+    model: Model, *, context: ModelValidationContext
+) -> Iterator[tuple[Piece, int | None, Vector, Matrix]]:
+    """Read validated world placements at the comparison's identity origin."""
+    for piece in model.objects:
+        if isinstance(piece, Piece):
+            effective = context.placements.get(piece)
+            if effective is None:
+                effective = context.placement(model=model, piece=piece)
+            yield piece, None, *effective
+
+
+def _audit_inventory_transforms(
+    model: Model, *, context: ModelValidationContext
+) -> None:
+    """Audit source compositions without replacing a custom traversal's leaves."""
+    if (
+        not model.submodels
+        and getattr(model.submodel_for, "__func__", None) is Model.submodel_for
+    ):
+        # Source validation already checks root placements. The built-in resolver
+        # can only re-enter this root, where the numeric audit stops the cycle.
+        return
+
+    def walk(
+        *,
+        section: Model,
+        placements: Iterable[tuple[Piece, int | None, Vector, Matrix]],
+        visiting: frozenset[str],
+    ) -> None:
+        visiting = visiting | {normalize_ref(section.name)}
+        for piece, _, position, matrix in placements:
+            target = _resolve_reference(root=model, piece=piece, context=context)
+            if target is None or normalize_ref(target.name) in visiting:
+                continue
+            walk(
+                section=target,
+                placements=_iter_composed_placements(
+                    model=target,
+                    position=position,
+                    matrix=matrix,
+                    include_steps=False,
+                    context=context,
+                ),
+                visiting=visiting,
+            )
+
+    walk(
+        section=model,
+        placements=_iter_root_placements(model, context=context),
+        visiting=frozenset(),
     )
 
 
@@ -756,11 +805,12 @@ def _iter_composed_placements(
     context: ModelValidationContext | None,
 ) -> Iterator[tuple[Piece, int | None, Vector, Matrix]]:
     """Compose each source placement, checking world values for comparison."""
-    from ldraw.validation import (  # noqa: PLC0415
-        _numeric_issue,
-        _placement_analysis,
-        _reject_numeric_issue,
-    )
+    if context is not None:
+        from ldraw.validation import (  # noqa: PLC0415 - checked traversal only
+            _numeric_issue,
+            _placement_analysis,
+            _reject_numeric_issue,
+        )
 
     for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
         effective = context.placements.get(piece) if context is not None else None
@@ -815,11 +865,7 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
         )
         target = None
         if expand_submodels:
-            target = (
-                context.resolve(root=root, piece=piece)
-                if context is not None
-                else root.submodel_for(piece)
-            )
+            target = _resolve_reference(root=root, piece=piece, context=context)
         if target is not None:
             if normalize_ref(target.name) in visiting:
                 if on_cycle is None:
@@ -1021,11 +1067,7 @@ def _model_structure_diagnostics(
         key = normalize_ref(model.name)
         next_visiting = (*visiting, key)
         for piece in model.pieces:
-            target = (
-                context.resolve(root=root, piece=piece)
-                if context is not None
-                else root.submodel_for(piece)
-            )
+            target = _resolve_reference(root=root, piece=piece, context=context)
             line_number = model.source_line_for(piece)
             if target is None:
                 _, suffix = split_reference(piece.reference)
@@ -1322,7 +1364,10 @@ def _load_inventory_model(
 ) -> tuple[ModelLoadResult, ModelValidationContext]:
     """Load a report and source analysis for immediate inventory preparation."""
     context = ModelValidationContext()
-    return _load_model(path, parts=None, tolerant=True, context=context), context
+    report = _load_model(path, parts=None, tolerant=True, context=context)
+    if report.model is not None and report.complete and report.valid:
+        context.mark_validated(root=report.model, reachable_only=False)
+    return report, context
 
 
 def _load_model(

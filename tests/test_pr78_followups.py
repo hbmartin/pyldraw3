@@ -180,9 +180,9 @@ def test_comparison_reuses_view_discovery_resolutions_and_repeated_targets() -> 
 
     def resolve(model: Model, piece: Piece) -> Model | None:
         calls[piece] += 1
-        return original(model, piece)
+        return original(self=model, piece=piece)
 
-    with patch.object(Model, "submodel_for", resolve):
+    with patch.object(target=Model, attribute="submodel_for", new=resolve):
         assert compare_inventory(view, expected).matched
     assert calls == Counter(dict.fromkeys([*selected.pieces, *leaf.pieces], 1))
 

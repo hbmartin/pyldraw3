@@ -35,6 +35,9 @@ from scripts.connection_snapshots import (
         "Vendor/Custom.DAT",
         "MiXeD descriptive text about parts/Custom.DAT via IncludeID",
         "parts/My Part.DAT:3",
+        "LDRAW/PARTS/My Part.DAT",
+        "Studio Origin From LDRAW/PARTS/Custom.DAT:3",
+        "Vendor/LDRAW/PARTS/Custom.DAT",
         "OtherID:I0",
     ],
 )
@@ -53,6 +56,15 @@ def test_secondary_provenance_preserves_ambiguous_descriptive_text(
         ("Vendor/Custom.DAT:37 via MiXeD:I0", "vendor/custom.dat:37 via MiXeD:I0"),
         ("Custom.JSON: Studio connection 4", "custom.json: Studio connection 4"),
         ("<library>/PARTS/Custom.DAT:3", "<library>/parts/custom.dat:3"),
+        ("LDRAW/PARTS/Custom.DAT", "ldraw/parts/custom.dat"),
+        ("LDRAW\\P\\48\\Custom.DAT", "ldraw/p/48/custom.dat"),
+        ("LDRAW/MODELS/Custom.LDR", "ldraw/models/custom.ldr"),
+        ("LDRAW/TEXTURES/Custom.JSON", "ldraw/textures/custom.json"),
+        ("LDRAW/PARTS/Custom.DAT:3", "ldraw/parts/custom.dat:3"),
+        (
+            "LDRAW/PARTS/Custom.DAT:3 via MiXeD:I0",
+            "ldraw/parts/custom.dat:3 via MiXeD:I0",
+        ),
     ],
 )
 def test_secondary_provenance_normalizes_explicit_source_formats(

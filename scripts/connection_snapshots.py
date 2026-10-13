@@ -159,7 +159,18 @@ def _normalized_source_text(
         tail
         or source.replace("\\", "/")
         .casefold()
-        .startswith(("parts/", "p/", "models/", "textures/"))
+        .startswith(
+            (
+                "parts/",
+                "p/",
+                "models/",
+                "textures/",
+                "ldraw/parts/",
+                "ldraw/p/",
+                "ldraw/models/",
+                "ldraw/textures/",
+            )
+        )
     ):
         canonical = _canonical_member(source)
     else:

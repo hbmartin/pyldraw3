@@ -15,11 +15,11 @@ from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import Comment, MetaCommand
 from ldraw.pieces import Piece
 from ldraw.serialization import format_ldraw_number
-from ldraw.utils import normalize_ref
+from ldraw.utils import SUBMODEL_SUFFIXES, normalize_ref
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from ldraw.model import Model, ModelOccurrence
     from ldraw.part import ParsedObject
@@ -1141,7 +1141,7 @@ class InstructionBuilder:
         self,
         *,
         mode: CalloutMode = CalloutMode.ASSEMBLED,
-    ) -> Iterator[None]:
+    ) -> Generator[None, None, None]:
         """Write a balanced LPub3D callout range."""
         with self._range(
             key="CALLOUT",
@@ -1151,7 +1151,7 @@ class InstructionBuilder:
             yield
 
     @contextmanager
-    def multi_step(self) -> Iterator[None]:
+    def multi_step(self) -> Generator[None, None, None]:
         """Write a balanced LPub3D multi-step range."""
         with self._range(
             key="MULTI_STEP",
@@ -1161,7 +1161,7 @@ class InstructionBuilder:
             yield
 
     @contextmanager
-    def ignore(self, target: InventoryTarget) -> Iterator[None]:
+    def ignore(self, target: InventoryTarget) -> Generator[None, None, None]:
         """Write a balanced LPub3D inventory-ignore range."""
         key = f"IGNORE:{target.value}"
         with self._range(
@@ -1172,7 +1172,7 @@ class InstructionBuilder:
             yield
 
     @contextmanager
-    def _range(self, *, key: str, begin: str, end: str) -> Iterator[None]:
+    def _range(self, *, key: str, begin: str, end: str) -> Generator[None, None, None]:
         if key in self._scopes:
             msg = f"Cannot nest {key} inside itself"
             raise ValueError(msg)
@@ -1406,7 +1406,7 @@ def _reference_issues(
     root: Model,
 ) -> Iterator[InstructionIssue]:
     for piece in section.model.pieces:
-        if not piece.reference.casefold().endswith(".ldr"):
+        if piece.suffix.casefold() not in SUBMODEL_SUFFIXES:
             continue
         if root.submodel_for(piece) is None:
             yield InstructionIssue(

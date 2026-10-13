@@ -19,7 +19,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from typing import BinaryIO
 
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -319,7 +319,7 @@ def _preview_cache_prune_is_due(marker: Path) -> bool:
 
 
 @contextlib.contextmanager
-def _preview_cache_prune_claim(cache_root: Path) -> Iterator[bool]:
+def _preview_cache_prune_claim(cache_root: Path) -> Generator[bool, None, None]:
     """Yield whether this process owns the cache's non-blocking prune claim."""
     try:
         lock_file = (cache_root / _CACHE_PRUNE_LOCK).open("a+b")
@@ -342,7 +342,7 @@ def _try_lock_preview_cache_file(lock_file: BinaryIO) -> bool:
 
 
 @contextlib.contextmanager
-def _preview_cache_write_claim(cache_root: Path) -> Iterator[None]:
+def _preview_cache_write_claim(cache_root: Path) -> Generator[None, None, None]:
     """Serialize cache publication with cross-process pruning."""
     with (cache_root / _CACHE_PRUNE_LOCK).open("a+b") as lock_file:
         _lock_preview_cache_file(lock_file, blocking=True)

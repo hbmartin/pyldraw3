@@ -1,6 +1,6 @@
 """Comparison costs for large flat, grouped, and repeated nested inventories."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -9,7 +9,7 @@ import pytest
 from ldraw.bom import bill_of_materials, compare_inventory, rows_to_csv
 from ldraw.cli import main
 from ldraw.geometry import Matrix, Vector
-from ldraw.model import Model
+from ldraw.model import Model, ModelOccurrence
 from ldraw.pieces import Group, Piece
 
 
@@ -19,34 +19,59 @@ class _Benchmark(Protocol):
     ) -> object: ...
 
 
+class _InheritedModel(Model):
+    """Exercise the optimized inherited traversal."""
+
+
+class _CustomTraversalModel(Model):
+    """Exercise the source audit plus authoritative custom occurrence checks."""
+
+    def iter_occurrences(
+        self, *, expand_submodels: bool = True, include_steps: bool = True
+    ) -> Iterator[ModelOccurrence]:
+        """Emit unchanged occurrences through a custom entry point."""
+        return super().iter_occurrences(
+            expand_submodels=expand_submodels, include_steps=include_steps
+        )
+
+
 def comparison_model(workload: str) -> Model:
     """Build 100,000 occurrences, keeping setup outside benchmark timing."""
+    nested = workload in {"nested", "custom_nested"}
     group = (
         Group(position=Vector(20, 40, 60), matrix=Matrix.rotation(x=17, y=31, z=23))
         if workload == "grouped"
         else None
     )
-    leaf = Model(
+    model_type = {
+        "inherited": _InheritedModel,
+        "custom": _CustomTraversalModel,
+    }.get(workload, Model)
+    leaf = model_type(
         name="leaf.ldr",
         objects=[
             Piece.place("3001", colour=4, position=Vector(index, 0, 0), group=group)
-            for index in range(1_000 if workload == "nested" else 100_000)
+            for index in range(1_000 if nested else 100_000)
         ],
     )
     if workload == "view":
         root = Model(name="main.ldr", submodels={"leaf.ldr": leaf})
         return root.submodel_view(leaf.name)
-    if workload != "nested":
+    if not nested:
         return leaf
     middle = Model(name="middle.ldr")
     middle.add_submodel(leaf)
-    root = Model(name="main.ldr")
+    root_type = _CustomTraversalModel if workload == "custom_nested" else Model
+    root = root_type(name="main.ldr")
     for index in range(100):
         root.add_submodel(middle, position=Vector(index * 1_000, 0, 0))
     return root
 
 
-@pytest.mark.parametrize("workload", ["flat", "grouped", "nested", "view"])
+@pytest.mark.parametrize(
+    "workload",
+    ["flat", "grouped", "nested", "view", "inherited", "custom", "custom_nested"],
+)
 def test_inventory_comparison(benchmark: _Benchmark, workload: str) -> None:
     """Measure complete comparison without imposing CI timing thresholds."""
     model = comparison_model(workload)
