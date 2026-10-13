@@ -525,25 +525,44 @@ these placements, inventory comparison refuses the invalid model, and
 serialization raises a clear `ValueError` until the values are repaired.
 Geometry representations remain readable for inspection, including `repr()` of
 objects containing NaN or Infinity. The Python `compare_inventory` API rejects
-non-finite geometry in every declared Model section, including type-2–5 objects;
+non-finite geometry in every declared Model section, including type-2–5 objects,
+and in additional sections reached through a custom resolver;
 occurrence-only providers are checked for non-finite expanded transforms.
 For `root.submodel_view(name)`, comparison checks the selected section and its
 reachable submodels, ignoring unrelated siblings in the shared resolution table.
-This includes a view of the root's own name. Views preserve the selected model's
-subclass, custom state, and overridden traversal while sharing its live content.
-Every composed placement is checked too, including overflow from finite inputs
-into empty submodels or submodels containing geometry without leaf parts.
+This includes a view of the root's own name. Views forward state reads and writes
+to the selected model, including scalar subclass attributes and replacement
+object lists or source mappings. They resolve references through the original
+root's resolver, including when creating further views. No constructors or
+copying hooks run. A private adapter inherits the selected class, so
+`isinstance(view, SelectedClass)` and `super()` work, while `type(view)` can differ
+from `type(selected)`.
+Built-in traversal checks every composed placement, including overflow from
+finite inputs into empty submodels or submodels containing geometry without
+leaf parts.
 Subclasses inheriting `Model.iter_occurrences` use the same validated traversal.
 Custom traversal overrides keep their emitted occurrences authoritative; their
-reachable concrete source placements are separately audited for overflow, and
-their emitted transforms receive full numeric checks. The source audit stops
-cyclic re-entry and does not classify unresolved source leaves. Occurrence-only
+reachable submodel placements are separately audited for overflow, and their
+emitted part transforms receive full numeric checks. Thus a filtered part-only
+transform can overflow without failing comparison, while overflow into a
+filtered empty submodel still fails. The source audit stops cyclic re-entry and
+does not classify unresolved source leaves. Resolver `KeyError`s naming the
+requested reference or stem are treated as mapping-style misses; unrelated
+resolver errors propagate. Explicit `.dat` references can still resolve to
+embedded or dynamically supplied submodels. Occurrence-only
 providers can be checked only through the transforms they emit.
 Unresolved emitted references fail immediately during preparation, so a later
 invalid provider transform does not replace that error. Concrete model source
 geometry is validated before occurrence preparation.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
+
+Both `bill_of_materials(model)` and `model.bill_of_materials()` honor custom
+occurrence traversal, including relabelling and filtering. Analysis uses the
+same authoritative occurrences; summaries keep their raw identity aggregation.
+BOM generation and analysis skip cycles when an override delegates to `super()`.
+The cycle policy applies only while advancing that model's iterator and does
+not affect ordinary public iteration or suppress explicit custom failures.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that

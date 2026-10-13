@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from ldraw._model_validation import _resolve_reference
 from ldraw.errors import PartError, SubmodelCycleError
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import (
@@ -396,7 +397,7 @@ def _dependency_closure(
     pending = [obj for obj in objects if isinstance(obj, Piece)]
     while pending:
         piece = pending.pop(0)
-        target = root.submodel_for(piece)
+        target = _resolve_reference(root=root, piece=piece, context=None)
         if target is None or target is root:
             continue
         key = normalize_ref(target.name)
@@ -485,7 +486,7 @@ def _embedded_dependency_closure(
     while pending:
         model = pending.pop(0)
         for piece in model.pieces:
-            target = root.submodel_for(piece)
+            target = _resolve_reference(root=root, piece=piece, context=None)
             if target is None or not target.name.casefold().endswith(".dat"):
                 continue
             key = normalize_ref(target.name)
@@ -518,7 +519,7 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
             world_position = position + matrix * piece_position
             world_matrix = matrix * piece_matrix
             colour = _effective_colour(obj.colour, inherited_colour)
-            target = root.submodel_for(obj)
+            target = _resolve_reference(root=root, piece=obj, context=None)
             if target is not None and not target.name.casefold().endswith(".dat"):
                 yield from _flatten_objects(
                     root=root,
