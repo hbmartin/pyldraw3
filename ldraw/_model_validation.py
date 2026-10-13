@@ -81,14 +81,10 @@ class ModelValidationContext:
             if key not in visited:
                 visited.add(key)
                 yield section
-            if key in expanded:
-                blockers = deferred.get(key, frozenset())
-                if (
-                    blockers <= visiting
-                    or (retry := (key, blockers & visiting)) in retried
-                ):
-                    continue
-                retried.add(retry)
+            if key in expanded and not _retry_deferred(
+                key=key, visiting=visiting, deferred=deferred, retried=retried
+            ):
+                continue
             if reachable_only:
                 name = normalize_ref(section.name)
                 if name in visiting:
@@ -182,6 +178,21 @@ class ModelValidationContext:
         if piece not in self.targets:
             self.targets[piece] = _optional_reference(root=root, piece=piece)
         return self.targets[piece]
+
+
+def _retry_deferred(
+    *,
+    key: int,
+    visiting: frozenset[str],
+    deferred: dict[int, frozenset[str]],
+    retried: set[tuple[int, frozenset[str]]],
+) -> bool:
+    """Revisit only newly unblocked cycle-sensitive routes, never ordinary paths."""
+    blockers = deferred.get(key, frozenset())
+    if blockers <= visiting or (retry := (key, blockers & visiting)) in retried:
+        return False
+    retried.add(retry)
+    return True
 
 
 def _optional_reference(*, root: Model, piece: Piece) -> Model | None:

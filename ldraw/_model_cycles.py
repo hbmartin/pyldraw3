@@ -8,7 +8,7 @@ from inspect import Parameter, signature
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from ldraw.model import Model, ModelOccurrence
     from ldraw.pieces import Piece
@@ -47,6 +47,18 @@ def _custom_occurrences(
         message = "custom iter_occurrences does not support expand_submodels=False"
         raise TypeError(message)
     values = {"expand_submodels": expand_submodels, "include_steps": include_steps}
+    return provider(
+        *_positional_occurrence_flags(parameters=parameters, values=values),
+        **_keyword_occurrence_flags(
+            parameters=parameters, values=values, variadic=variadic
+        ),
+    )
+
+
+def _positional_occurrence_flags(
+    *, parameters: Mapping[str, Parameter], values: dict[str, bool]
+) -> list[object]:
+    """Fill positional-only options and any defaults preceding them."""
     positional = [
         parameter
         for parameter in parameters.values()
@@ -69,7 +81,14 @@ def _custom_occurrences(
         else:
             message = f"custom iter_occurrences requires argument {parameter.name!r}"
             raise TypeError(message)
-    keywords = {
+    return arguments
+
+
+def _keyword_occurrence_flags(
+    *, parameters: Mapping[str, Parameter], values: dict[str, bool], variadic: bool
+) -> dict[str, bool]:
+    """Pass supported keyword options without duplicating positional-only ones."""
+    return {
         name: value
         for name, value in values.items()
         if ((parameter := parameters.get(name)) is None and variadic)
@@ -79,7 +98,6 @@ def _custom_occurrences(
             in {Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY}
         )
     }
-    return provider(*arguments, **keywords)
 
 
 def _iter_cycle_tolerant_occurrences(
