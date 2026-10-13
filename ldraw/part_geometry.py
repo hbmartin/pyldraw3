@@ -30,7 +30,7 @@ from ldraw.connection_metadata import metadata_report, parse_ldcad_text
 from ldraw.connection_types import (
     METADATA_SOURCES as _METADATA_SOURCES,
 )
-from ldraw.connection_types import ConnectionSource
+from ldraw.connection_types import ConnectionSource, _format_provenance
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
@@ -1170,16 +1170,7 @@ def _connection_origin(feature: ConnectionFeature) -> str:
     provenance = feature.connection_provenance
     if provenance is None:
         return ", ".join(feature.provenance) or feature.source.value
-    location = provenance.archive_member or (
-        str(provenance.path)
-        if provenance.path is not None
-        else provenance.command or provenance.source.value
-    )
-    if provenance.line_number is not None:
-        location = f"{location}:{provenance.line_number}"
-    if provenance.include_chain:
-        location = f"{location} via {' > '.join(provenance.include_chain)}"
-    return location
+    return _format_provenance(provenance)
 
 
 class _BoxAccumulator:

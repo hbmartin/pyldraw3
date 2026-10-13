@@ -292,6 +292,27 @@ class ConnectionProvenance:
     include_chain: tuple[str, ...] = ()
 
 
+def _provenance_location(provenance: ConnectionProvenance) -> str:
+    return provenance.archive_member or (
+        str(provenance.path)
+        if provenance.path is not None
+        else provenance.command or provenance.source.value
+    )
+
+
+def _format_provenance(
+    provenance: ConnectionProvenance, *, location: str | None = None
+) -> str:
+    """Render an origin consistently, optionally with a canonical source location."""
+    if location is None:
+        location = _provenance_location(provenance)
+    if provenance.line_number is not None:
+        location = f"{location}:{provenance.line_number}"
+    if provenance.include_chain:
+        location = f"{location} via {' > '.join(provenance.include_chain)}"
+    return location
+
+
 @dataclass(frozen=True, slots=True)
 class _TransformScales:
     """Scale and distortion measurements for one non-singular placement."""
@@ -360,17 +381,9 @@ class ConnectionFeature:
 
     def __post_init__(self) -> None:
         if self.connection_provenance is not None and not self.provenance:
-            provenance = self.connection_provenance
-            location = provenance.archive_member or (
-                str(provenance.path)
-                if provenance.path is not None
-                else provenance.command or provenance.source.value
+            object.__setattr__(
+                self, "provenance", (_format_provenance(self.connection_provenance),)
             )
-            if provenance.line_number is not None:
-                location = f"{location}:{provenance.line_number}"
-            if provenance.include_chain:
-                location = f"{location} via {' > '.join(provenance.include_chain)}"
-            object.__setattr__(self, "provenance", (location,))
 
     @property
     def axis(self) -> Vector:

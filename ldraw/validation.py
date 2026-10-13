@@ -97,7 +97,7 @@ def _object_analysis(parsed: ParsedObject) -> _NumericAnalysis:
     match parsed:
         case Piece():
             position, matrix = parsed._transformed()  # noqa: SLF001 - effective placement
-            return _placement_analysis(position, matrix)
+            return _placement_analysis(position=position, matrix=matrix)
         case Line() | Triangle() | Quadrilateral() | OptionalLine():
             invalid = tuple(
                 (f"point{index}.{axis}", value)
@@ -188,8 +188,10 @@ def _numeric_issue(
     )
 
 
-def _iter_model_numeric_issues(model: Model) -> Iterator[ValidationIssue]:
-    """Check all declared geometry, including objects without source lines."""
+def _iter_model_numeric_issues(
+    model: Model, *, placements: dict[Piece, tuple[Vector, Matrix]] | None = None
+) -> Iterator[ValidationIssue]:
+    """Check declared geometry, or only reachable sections for a submodel view."""
     pending = [model]
     visited: set[int] = set()
     while pending:
@@ -197,10 +199,27 @@ def _iter_model_numeric_issues(model: Model) -> Iterator[ValidationIssue]:
         if id(section) in visited:
             continue
         visited.add(id(section))
-        pending.extend(reversed(tuple(section.submodels.values())))
+        if model._is_submodel_view:  # noqa: SLF001 - comparison validation scope
+            targets = [
+                target
+                for piece in section.pieces
+                if (target := model.submodel_for(piece)) is not None
+            ]
+        else:
+            targets = list(section.submodels.values())
+        pending.extend(reversed(targets))
         for obj in section.objects:
+            if isinstance(obj, Piece) and placements is not None:
+                if obj in placements:
+                    continue
+                position, matrix = obj._transformed()  # noqa: SLF001 - effective placement
+                analysis = _placement_analysis(position=position, matrix=matrix)
+                if not analysis.invalid:
+                    placements[obj] = position, matrix
+            else:
+                analysis = _object_analysis(obj)
             if issue := _numeric_issue(
-                _object_analysis(obj),
+                analysis,
                 number=section.source_line_for(obj),
                 path=None,
                 section=section.name or None,
@@ -396,16 +415,15 @@ def _iter_object_issues(  # noqa: PLR0913 - shared parsed-object analysis and co
         return
     if (
         not analysis.matrix_invalid
-        and (
-            matrix_issue := _matrix_issue(
-                parsed,
-                number,
-                path=path,
-                section=section,
-            )
+        or all(isfinite(value) for value in parsed.matrix.flatten())
+    ) and (
+        matrix_issue := _matrix_issue(
+            parsed,
+            number,
+            path=path,
+            section=section,
         )
-        is not None
-    ):
+    ) is not None:
         yield matrix_issue
     if (
         parts is not None
@@ -431,8 +449,11 @@ def _iter_section_issues(
 
     def placements() -> Iterator[tuple[Piece, _NumericAnalysis]]:
         for obj in model.objects:
+            number = model.source_line_for(obj)
+            if number is None and not isinstance(obj, Piece):
+                continue
             analysis = _object_analysis(obj)
-            if (number := model.source_line_for(obj)) is not None:
+            if number is not None:
                 object_issues.extend(
                     _iter_object_issues(
                         obj,

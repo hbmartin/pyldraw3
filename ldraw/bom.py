@@ -21,8 +21,10 @@ if TYPE_CHECKING:
 
     from ldraw._parts_listing import PartDescriptionSource
     from ldraw.diagnostics import Diagnostic
+    from ldraw.geometry import Matrix, Vector
     from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
+    from ldraw.pieces import Piece
 
 BOM_FIELDS: tuple[str, ...] = (
     "part",
@@ -112,20 +114,49 @@ def _bom_leaf(occurrence: ModelOccurrence) -> _BomLeaf:
 
 def _prepare_inventory_occurrences(
     occurrences: Iterable[ModelOccurrence],
+    *,
+    validated_placements: dict[Piece, tuple[Vector, Matrix]] | None = None,
 ) -> tuple[_BomLeaf, ...]:
     from ldraw.validation import _numeric_issue, _placement_analysis  # noqa: PLC0415
 
     leaves: list[_BomLeaf] = []
     for occurrence in occurrences:
-        if issue := _numeric_issue(
-            _placement_analysis(occurrence.position, occurrence.matrix),
-            number=occurrence.source_line,
-            path=None,
-            section=occurrence.source_model.name or None,
+        source_validated = (
+            validated_placements is not None
+            and len(occurrence.path) == 1
+            and occurrence.piece in validated_placements
+        )
+        if not source_validated and (
+            issue := _numeric_issue(
+                _placement_analysis(
+                    position=occurrence.position, matrix=occurrence.matrix
+                ),
+                number=occurrence.source_line,
+                path=None,
+                section=occurrence.source_model.name or None,
+            )
         ):
             _reject_numeric_issue(issue)
         leaves.append(_bom_leaf(occurrence))
-    return tuple(leaves)
+    result = tuple(leaves)
+    _validate_inventory_submodels(result)
+    return result
+
+
+def _prepare_model_inventory(model: _ModelLike) -> tuple[_BomLeaf, ...]:
+    from ldraw.model import Model, _iter_inventory_occurrences  # noqa: PLC0415
+    from ldraw.validation import _iter_model_numeric_issues  # noqa: PLC0415
+
+    placements = {} if type(model) is Model else None
+    if isinstance(model, Model):
+        for issue in _iter_model_numeric_issues(model, placements=placements):
+            _reject_numeric_issue(issue)
+        if placements is not None:
+            return _prepare_inventory_occurrences(
+                _iter_inventory_occurrences(model, placements=placements),
+                validated_placements=placements,
+            )
+    return _prepare_inventory_occurrences(model.iter_occurrences(include_steps=False))
 
 
 def _reject_numeric_issue(issue: Diagnostic) -> None:
@@ -155,7 +186,7 @@ def _bom_rows(leaves: Iterable[_BomLeaf], *, parts: Parts | None) -> list[BomRow
     ]
     rows.sort(
         key=lambda row: (
-            row.part.casefold(),
+            reference_key(row.part),
             row.colour_code is None,
             row.colour_code or 0,
             row.colour_name or "",
@@ -432,17 +463,11 @@ def compare_inventory(
 
     Non-finite geometry in a concrete Model, or non-finite expanded transforms
     from any occurrence provider, raises ValueError before comparing counts.
+    Submodel views check their selected section and reachable sections rather
+    than unrelated siblings in their shared resolution table.
     """
-    from ldraw.model import Model  # noqa: PLC0415
-    from ldraw.validation import _iter_model_numeric_issues  # noqa: PLC0415
-
-    if isinstance(model, Model):
-        for issue in _iter_model_numeric_issues(model):
-            _reject_numeric_issue(issue)
     return _compare_inventory_occurrences(
-        occurrences=_prepare_inventory_occurrences(
-            model.iter_occurrences(include_steps=False)
-        ),
+        occurrences=_prepare_model_inventory(model),
         expected=expected,
         part_aliases=part_aliases,
         parts=parts,
@@ -456,8 +481,7 @@ def _compare_inventory_occurrences(
     part_aliases: Mapping[str, str] | None = None,
     parts: PartDescriptionSource | None = None,
 ) -> InventoryComparison:
-    """Compare already-expanded leaves without traversing the model again."""
-    _validate_inventory_submodels(occurrences)
+    """Compare prepared, structurally validated leaves without another traversal."""
     aliases = {
         normalize_ref(key).removesuffix(".dat"): normalize_ref(value).removesuffix(
             ".dat"

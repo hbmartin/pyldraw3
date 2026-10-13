@@ -17,7 +17,12 @@ from ldraw._library_content import (
     archive_library_content_sha256,
     library_content_sha256,
 )
-from ldraw.connection_types import ConnectionFeature, ConnectionProvenance
+from ldraw.connection_types import (
+    ConnectionFeature,
+    ConnectionProvenance,
+    _format_provenance,
+    _provenance_location,
+)
 from ldraw.dirs import get_cache_dir
 from ldraw.geometry import Matrix
 from ldraw.part_geometry import part_connections
@@ -110,33 +115,55 @@ def _canonical_member(member: str) -> str:
     return PurePosixPath(member.replace("\\", "/")).as_posix().lower()
 
 
-def _normalized_source_text(
-    text: str, *, provenance: ConnectionProvenance, library_root: Path
-) -> str:
-    """Rewrite a known source prefix without touching descriptive text."""
-    prefix = text.split(":", maxsplit=1)[0].split(" via ", maxsplit=1)[0]
+_SOURCE_ENTRY = re.compile(
+    r"(?P<source>.+?\.(?:dat|ldr|mpd|zip|json|xml|conn))"
+    r"(?P<tail>(?::\d+|: Studio connection \d+)?(?: via .*)?)",
+    flags=re.IGNORECASE,
+)
+
+
+def _canonical_source(
+    provenance: ConnectionProvenance, *, library_root: Path
+) -> str | None:
     if provenance.archive_member is not None:
-        member = _canonical_member(provenance.archive_member)
-        return (
-            f"{member}{text[len(prefix) :]}"
-            if _canonical_member(prefix) == member
-            else text
-        )
-    if provenance.path is None:
+        return _canonical_member(provenance.archive_member)
+    if provenance.path is not None:
+        relative = _canonical_path(provenance.path, library_root=library_root)
+        return f"<library>/{relative}"
+    return None
+
+
+def _normalized_source_text(
+    text: str, *, provenance: ConnectionProvenance | None, library_root: Path
+) -> str:
+    """Rebuild structured origins and recognize legacy secondary source entries."""
+    if (
+        provenance is not None
+        and (canonical := _canonical_source(provenance, library_root=library_root))
+        is not None
+    ):
+        if text == _format_provenance(provenance):
+            return _format_provenance(provenance, location=canonical)
+        source = _provenance_location(provenance)
+        if text == source or text.startswith((f"{source}:", f"{source} via ")):
+            return f"{canonical}{text[len(source) :]}"
+    if (entry := _SOURCE_ENTRY.fullmatch(text)) is None:
         return text
-    source = str(provenance.path)
-    canonical = _canonical_path(provenance.path, library_root=library_root)
-    if text == source or text.startswith((f"{source}:", f"{source} via ")):
-        prefix = source
-    elif not Path(prefix).is_absolute():
-        return text
+    source, tail = entry.group("source", "tail")
+    if Path(source).is_absolute():
+        relative = _canonical_path(Path(source), library_root=library_root)
+        canonical = f"<library>/{relative}"
+    elif source.startswith("<library>/"):
+        canonical = f"<library>/{_canonical_member(source[len('<library>/') :])}"
+    elif (
+        "/" in source
+        or "\\" in source
+        or (tail and not any(c.isspace() for c in source))
+    ):
+        canonical = _canonical_member(source)
     else:
-        try:
-            if _canonical_path(Path(prefix), library_root=library_root) != canonical:
-                return text
-        except ValueError:
-            return text
-    return f"<library>/{canonical}{text[len(prefix) :]}"
+        return text
+    return f"{canonical}{tail}"
 
 
 def _normalized_feature(
@@ -146,15 +173,14 @@ def _normalized_feature(
         item.name: normalized(getattr(feature, item.name), library_root=library_root)
         for item in fields(feature)
     }
-    if feature.connection_provenance is not None:
-        result["provenance"] = [
-            _normalized_source_text(
-                item,
-                provenance=feature.connection_provenance,
-                library_root=library_root,
-            )
-            for item in feature.provenance
-        ]
+    result["provenance"] = [
+        _normalized_source_text(
+            item,
+            provenance=feature.connection_provenance,
+            library_root=library_root,
+        )
+        for item in feature.provenance
+    ]
     return result
 
 
