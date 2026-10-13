@@ -173,6 +173,11 @@ def test_regeneration_rejects_unverified_provenance_without_writing_outputs(
         "snapshot",
         lambda parts, codes: pytest.fail("snapshot before verification"),
     )
+    monkeypatch.setattr(
+        connection_snapshots,
+        "archive_checksum",
+        lambda archive: pytest.fail("raw checksum before content verification"),
+    )
     monkeypatch.setattr("sys.argv", arguments)
     with pytest.raises((ValueError, BadZipFile)):
         connection_snapshots.main()
@@ -255,6 +260,131 @@ def test_snapshot_preserves_metadata_command_text(tmp_path: Path) -> None:
     result = normalized(provenance, library_root=tmp_path)
     assert result["path"] == "parts/custom.dat"
     assert result["command"] == command
+
+
+def test_snapshot_canonicalizes_symlinked_paths_and_source_prefixes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "library"
+    source = root / "PARTS" / "3001.DAT"
+    source.parent.mkdir(parents=True)
+    source.write_text("0 Brick\n0 !LDCAD SNAP_CYL [id=PiN] [gender=M] [secs=R 6 4]\n")
+    listing = root / "parts.lst"
+    listing.write_text("3001.dat  Brick\n")
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    feature = Parts(parts_lst=listing).connections("3001")[0]
+    assert feature.connection_provenance is not None
+    descriptive = f"{root}/MiXeD descriptive text"
+    changed = replace(feature, provenance=(f"{alias}/PARTS/3001.DAT:2", descriptive))
+    result = normalized(changed, library_root=alias)
+    assert result["provenance"] == ["<library>/parts/3001.dat:2", descriptive]
+    assert result["connection_provenance"]["path"] == "parts/3001.dat"
+    alternate = replace(
+        changed,
+        connection_provenance=replace(
+            feature.connection_provenance, path=alias / "PARTS" / "3001.DAT"
+        ),
+    )
+    assert normalized(alternate, library_root=root) == result
+    outside = replace(feature.connection_provenance, path=tmp_path / "outside.dat")
+    with pytest.raises(ValueError):
+        normalized(outside, library_root=root)
+
+
+@pytest.mark.parametrize(
+    "member", ["PARTS/3001.DAT", "parts/3001.dat", "PARTS\\3001.DAT"]
+)
+def test_snapshot_normalizes_archive_members_preserving_attribution(
+    tmp_path: Path, member: str
+) -> None:
+    root = tmp_path / "library"
+    source = root / "parts" / "3001.dat"
+    source.parent.mkdir(parents=True)
+    command = "0 !LDCAD SNAP_CYL [id=PiN] [gender=M] [secs=R 6 4]"
+    source.write_text(f"0 Brick\n{command}\n")
+    listing = root / "parts.lst"
+    listing.write_text("3001.dat  Brick\n")
+    feature = Parts(parts_lst=listing).connections("3001")[0]
+    provenance = ConnectionProvenance(
+        source=ConnectionSource.LDCAD_SHADOW,
+        path=root / "SHADOW.ZIP",
+        archive_member=member,
+        line_number=2,
+        command=command,
+        include_chain=("MyID:I0", "parts/target"),
+    )
+    feature = replace(feature, connection_provenance=provenance, provenance=())
+    result = normalized(feature, library_root=root)
+    assert result["provenance"] == ["parts/3001.dat:2 via MyID:I0 > parts/target"]
+    assert result["connection_provenance"]["path"] == "shadow.zip"
+    assert result["connection_provenance"]["archive_member"] == "parts/3001.dat"
+    assert result["connection_provenance"]["include_chain"] == [
+        "MyID:I0",
+        "parts/target",
+    ]
+    assert result["connection_provenance"]["command"] == command
+    assert result["metadata_id"] == "PiN"
+    unrelated = replace(feature, provenance=("MiXeD descriptive text",))
+    assert normalized(unrelated, library_root=root)["provenance"] == [
+        "MiXeD descriptive text"
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing", "malformed", "non-object", "schema", "content"]
+)
+def test_manifest_failures_precede_archive_reads_and_output_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regeneration_inputs: tuple[Path, Path, Path],
+    failure: str,
+) -> None:
+    root, manifest, output = regeneration_inputs
+    match failure:
+        case "missing":
+            manifest.unlink()
+        case "malformed":
+            manifest.write_text("invalid json")
+        case "non-object":
+            manifest.write_text("[]")
+        case "schema":
+            data = json.loads(manifest.read_text())
+            data["schema_version"] = 1
+            manifest.write_text(json.dumps(data))
+        case "content":
+            (root / "parts" / "3001.dat").write_text("0 Changed\n")
+    original_manifest = manifest.read_bytes() if manifest.exists() else None
+    original_output = output.read_bytes()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "connection_snapshots",
+            "--parts-list",
+            str(root / "parts.lst"),
+            "--archive",
+            str(tmp_path / "absent.zip"),
+        ],
+    )
+    monkeypatch.setattr(
+        connection_snapshots,
+        "archive_library_content_sha256",
+        lambda path: pytest.fail("archive content read"),
+    )
+    monkeypatch.setattr(
+        connection_snapshots,
+        "archive_checksum",
+        lambda path: pytest.fail("archive checksum read"),
+    )
+    monkeypatch.setattr(
+        connection_snapshots,
+        "snapshot",
+        lambda parts, codes: pytest.fail("snapshot generated"),
+    )
+    with pytest.raises((ValueError, FileNotFoundError)):
+        connection_snapshots.main()
+    assert (manifest.read_bytes() if manifest.exists() else None) == original_manifest
+    assert output.read_bytes() == original_output
 
 
 def assert_snapshot_equal(actual: object, expected: object, path: str = "root") -> None:

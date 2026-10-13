@@ -17,6 +17,11 @@ Number = int | float
 MatrixRows = list[list[Number]]
 
 
+def _repr_number(value: Number) -> str:
+    """Keep compact finite representations while allowing invalid inspection."""
+    return format_ldraw_number(value) if math.isfinite(value) else repr(float(value))
+
+
 class MatrixError(Exception):
     """Exception raised for matrix operation errors."""
 
@@ -107,9 +112,7 @@ class Matrix:  # noqa: PLW1641 - mutable, deliberately unhashable like list
         self._array = array.copy()
 
     def __repr__(self) -> str:
-        rows = [
-            ", ".join(format_ldraw_number(value) for value in row) for row in self.rows
-        ]
+        rows = [", ".join(_repr_number(value) for value in row) for row in self.rows]
         return f"(({rows[0]}),\n ({rows[1]}),\n ({rows[2]}))"
 
     @overload
@@ -226,11 +229,7 @@ class Vector:
     @property
     def repr(self) -> str:
         """Return string representation of vector coordinates."""
-        return (
-            f"{format_ldraw_number(self.x)}, "
-            f"{format_ldraw_number(self.y)}, "
-            f"{format_ldraw_number(self.z)}"
-        )
+        return f"{_repr_number(self.x)}, {_repr_number(self.y)}, {_repr_number(self.z)}"
 
     def __repr__(self) -> str:
         return f"<Vector: ({self.repr})>"
@@ -298,10 +297,7 @@ class Vector2D:
     y: Number
 
     def __repr__(self) -> str:
-        return (
-            f"<Vector2D: ({format_ldraw_number(self.x)}, "
-            f"{format_ldraw_number(self.y)}) >"
-        )
+        return f"<Vector2D: ({_repr_number(self.x)}, {_repr_number(self.y)}) >"
 
     def __add__(self, other: Vector2D) -> Vector2D:
         return Vector2D(self.x + other.x, self.y + other.y)

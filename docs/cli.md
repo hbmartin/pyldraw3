@@ -361,6 +361,9 @@ When the listing is missing, the error names its configured path and recommends
 `ldraw download`. Listing-only comparison does not scan geometry or load colours.
 Models with non-finite geometry also exit **2**, with source diagnostics and no
 comparison output.
+Unresolved submodel references are rejected before looking up the listing, so
+a missing library cannot hide a model reference error. Exported BOM identifiers
+retain the first occurrence's case and reference separators.
 Unresolved `.ldr`/`.mpd` references always exit **2**, and part aliases cannot
 turn an unresolved reference into a known part. Missing or undecodable models
 report the underlying read/decode diagnostic, including the filename.

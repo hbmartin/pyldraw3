@@ -22,18 +22,26 @@ class _Benchmark(Protocol):
     ) -> object: ...
 
 
-@pytest.mark.parametrize("fractional", [False, True], ids=["integer", "fractional"])
-def test_duplicate_placements(benchmark: _Benchmark, *, fractional: bool) -> None:
+@pytest.mark.parametrize("workload", ["integer", "fractional", "varying"])
+def test_duplicate_placements(benchmark: _Benchmark, workload: str) -> None:
     """Measure 100,000 placements without imposing noisy timing assertions."""
-    offset = 0.1234567 if fractional else 0
-    rotation = Matrix.rotation(x=17, y=31, z=23) if fractional else None
+    offset = 0 if workload == "integer" else 0.1234567
+    rotation = Matrix.rotation(x=17, y=31, z=23) if offset else None
     model = Model(
         objects=[
             Piece.place(
                 "3001",
                 colour=4,
                 position=Vector(index + offset, offset, offset),
-                matrix=rotation,
+                matrix=(
+                    Matrix.rotation(
+                        x=index * 0.037 + 0.113,
+                        y=index * 0.029 + 0.131,
+                        z=index * 0.019 + 0.173,
+                    )
+                    if workload == "varying"
+                    else rotation
+                ),
             )
             for index in range(100_000)
         ]

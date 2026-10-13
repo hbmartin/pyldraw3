@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from difflib import get_close_matches
 from functools import lru_cache
 from math import isfinite
@@ -13,14 +14,14 @@ from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.parts import CatalogSearchField
 from ldraw.pieces import Piece
 from ldraw.serialization import format_ldraw_number
-from ldraw.utils import normalize_ref
+from ldraw.utils import normalize_ref, split_ldraw_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
     from ldraw.colour import Colour
-    from ldraw.geometry import Vector
+    from ldraw.geometry import Matrix, Vector
     from ldraw.model import Model, ModelLoadResult
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
@@ -61,22 +62,89 @@ _COLOURED_TYPES = (Piece, Line, Triangle, Quadrilateral, OptionalLine)
 ValidationIssue = Diagnostic
 
 
+@dataclass(slots=True)
+class _NumericAnalysis:
+    values: tuple[float, ...]
+    invalid: tuple[tuple[str, float], ...] = ()
+    matrix_invalid: bool = False
+
+
+_PLACEMENT_FIELDS = (
+    "position.x",
+    "position.y",
+    "position.z",
+    *(f"matrix[{row}][{column}]" for row in range(3) for column in range(3)),
+)
+
+
+def _placement_analysis(position: Vector, matrix: Matrix) -> _NumericAnalysis:
+    values = (position.x, position.y, position.z, *matrix.flatten())
+    if all(isfinite(value) for value in values):
+        return _NumericAnalysis(values)
+    invalid = tuple(
+        (field, value)
+        for field, value in zip(_PLACEMENT_FIELDS, values, strict=True)
+        if not isfinite(value)
+    )
+    return _NumericAnalysis(
+        values=values,
+        invalid=invalid,
+        matrix_invalid=any(field.startswith("matrix[") for field, _ in invalid),
+    )
+
+
+def _object_analysis(parsed: ParsedObject) -> _NumericAnalysis:
+    match parsed:
+        case Piece():
+            position, matrix = parsed._transformed()  # noqa: SLF001 - effective placement
+            return _placement_analysis(position, matrix)
+        case Line() | Triangle() | Quadrilateral() | OptionalLine():
+            invalid = tuple(
+                (f"point{index}.{axis}", value)
+                for index, point in enumerate(parsed.points, start=1)
+                for axis in ("x", "y", "z")
+                if not isfinite(value := getattr(point, axis))
+            )
+            return _NumericAnalysis(values=(), invalid=invalid)
+        case _:
+            return _NumericAnalysis(())
+
+
 def iter_duplicate_issues(
     model: Model, *, path: Path | None = None
 ) -> Iterator[ValidationIssue]:
     """Warn about placements equal at serialization precision in one section."""
-    format_number = lru_cache(maxsize=4_096)(format_ldraw_number)
+    yield from _iter_duplicate_issues(
+        ((piece, _object_analysis(piece)) for piece in model.pieces),
+        model=model,
+        path=path,
+    )
+
+
+def _iter_duplicate_issues(
+    placements: Iterator[tuple[Piece, _NumericAnalysis]],
+    *,
+    model: Model,
+    path: Path | None,
+) -> Iterator[ValidationIssue]:
+    cached_format = lru_cache(maxsize=4_096)(format_ldraw_number)
+    format_number = cached_format
+    finite_count = 0
     seen: dict[tuple[object, ...], int | None] = {}
-    for piece in model.pieces:
-        position, matrix = piece._transformed()  # noqa: SLF001 - section-local group transform
-        values = (position.x, position.y, position.z, *matrix.flatten())
-        if not all(isfinite(value) for value in values):
+    for piece, analysis in placements:
+        if analysis.invalid:
             continue
         key = (
             normalize_ref(piece.reference),
             piece.colour,
-            *(format_number(value) for value in values),
+            *(format_number(value) for value in analysis.values),
         )
+        finite_count += 1
+        if finite_count == 128:
+            info = cached_format.cache_info()
+            if info.hits / (info.hits + info.misses) < 0.25:
+                format_number = format_ldraw_number
+                cached_format.cache_clear()
         number = model.source_line_for(piece)
         if key in seen:
             first = seen[key]
@@ -100,38 +168,14 @@ def _unknown_part(piece: Piece, parts: Parts) -> bool:
     return parts.find_part(code=piece.part) is None
 
 
-def _non_finite_vector_fields(
-    point: Vector, *, prefix: str
-) -> Iterator[tuple[str, float]]:
-    for axis in ("x", "y", "z"):
-        if not isfinite(value := getattr(point, axis)):
-            yield f"{prefix}.{axis}", value
-
-
-def _non_finite_fields(parsed: ParsedObject) -> Iterator[tuple[str, float]]:
-    match parsed:
-        case Piece():
-            position, matrix = parsed._transformed()  # noqa: SLF001 - validate effective placement
-            yield from _non_finite_vector_fields(position, prefix="position")
-            for row, values in enumerate(matrix.rows):
-                for column, value in enumerate(values):
-                    if not isfinite(value):
-                        yield f"matrix[{row}][{column}]", value
-        case Line() | Triangle() | Quadrilateral() | OptionalLine():
-            for index, point in enumerate(parsed.points, start=1):
-                yield from _non_finite_vector_fields(point, prefix=f"point{index}")
-
-
 def _numeric_issue(
-    parsed: ParsedObject,
+    analysis: _NumericAnalysis,
     *,
-    number: int,
+    number: int | None,
     path: Path | None,
     section: str | None,
 ) -> ValidationIssue | None:
-    invalid = ", ".join(
-        f"{field}={value!r}" for field, value in _non_finite_fields(parsed)
-    )
+    invalid = ", ".join(f"{field}={value!r}" for field, value in analysis.invalid)
     if not invalid:
         return None
     return ValidationIssue(
@@ -142,6 +186,26 @@ def _numeric_issue(
         section=section,
         offending_value=invalid,
     )
+
+
+def _iter_model_numeric_issues(model: Model) -> Iterator[ValidationIssue]:
+    """Check all declared geometry, including objects without source lines."""
+    pending = [model]
+    visited: set[int] = set()
+    while pending:
+        section = pending.pop()
+        if id(section) in visited:
+            continue
+        visited.add(id(section))
+        pending.extend(reversed(tuple(section.submodels.values())))
+        for obj in section.objects:
+            if issue := _numeric_issue(
+                _object_analysis(obj),
+                number=section.source_line_for(obj),
+                path=None,
+                section=section.name or None,
+            ):
+                yield issue
 
 
 _candidate_codes_cache: WeakKeyDictionary[Parts, tuple[int, tuple[str, ...]]] = (
@@ -164,7 +228,7 @@ def _candidate_codes(parts: Parts) -> tuple[str, ...]:
 
 
 def _part_suggestions(reference: str, parts: Parts) -> tuple[str, ...]:
-    code = reference.rsplit(".", maxsplit=1)[0].replace("\\", "/")
+    code = split_ldraw_reference(reference)[0].replace("\\", "/")
     substring = parts.catalog.search(
         code,
         fields=(CatalogSearchField.CODE,),
@@ -283,6 +347,27 @@ def iter_object_issues(  # noqa: PLR0913 - parsed-object context is explicit
     section: str | None = None,
 ) -> Iterator[ValidationIssue]:
     """Yield validation diagnostics for one already-parsed source object."""
+    yield from _iter_object_issues(
+        parsed,
+        analysis=_object_analysis(parsed),
+        number=number,
+        parts=parts,
+        submodels=submodels,
+        path=path,
+        section=section,
+    )
+
+
+def _iter_object_issues(  # noqa: PLR0913 - shared parsed-object analysis and context
+    parsed: ParsedObject,
+    *,
+    analysis: _NumericAnalysis,
+    number: int,
+    parts: Parts | None,
+    submodels: set[str],
+    path: Path | None,
+    section: str | None,
+) -> Iterator[ValidationIssue]:
     if isinstance(parsed, MetaCommand):
         if (
             meta_issue := _meta_issue(
@@ -304,13 +389,13 @@ def iter_object_issues(  # noqa: PLR0913 - parsed-object context is explicit
         )
     ):
         yield colour_issue
-    numeric_issue = _numeric_issue(parsed, number=number, path=path, section=section)
+    numeric_issue = _numeric_issue(analysis, number=number, path=path, section=section)
     if numeric_issue is not None:
         yield numeric_issue
     if not isinstance(parsed, Piece):
         return
     if (
-        numeric_issue is None
+        not analysis.matrix_invalid
         and (
             matrix_issue := _matrix_issue(
                 parsed,
@@ -336,6 +421,34 @@ def iter_object_issues(  # noqa: PLR0913 - parsed-object context is explicit
             offending_value=parsed.reference,
             suggestions=_part_suggestions(parsed.reference, parts),
         )
+
+
+def _iter_section_issues(
+    model: Model, *, parts: Parts | None, submodels: set[str], path: Path | None
+) -> Iterator[ValidationIssue]:
+    """Share each object's numeric analysis across section validation passes."""
+    object_issues: list[ValidationIssue] = []
+
+    def placements() -> Iterator[tuple[Piece, _NumericAnalysis]]:
+        for obj in model.objects:
+            analysis = _object_analysis(obj)
+            if (number := model.source_line_for(obj)) is not None:
+                object_issues.extend(
+                    _iter_object_issues(
+                        obj,
+                        analysis=analysis,
+                        number=number,
+                        parts=parts,
+                        submodels=submodels,
+                        path=path,
+                        section=model.name or None,
+                    )
+                )
+            if isinstance(obj, Piece):
+                yield obj, analysis
+
+    yield from _iter_duplicate_issues(placements(), model=model, path=path)
+    yield from object_issues
 
 
 def iter_ldr_issues(

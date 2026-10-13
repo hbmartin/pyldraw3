@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.serialization import format_ldraw_colour, format_ldraw_number
-from ldraw.utils import split_reference
+from ldraw.utils import split_ldraw_reference, split_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -51,8 +51,7 @@ class Piece:
         # Case is preserved so files round-trip byte-identically and output
         # matches the library's canonical lowercase filenames; lookups and
         # comparisons casefold instead.
-        self.part = part
-        self.suffix = suffix
+        self.part, self.suffix = split_ldraw_reference(f"{part}{suffix}")
         self.group = None
         if group is not None:
             group.add_piece(self)

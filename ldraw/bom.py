@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from ldraw._parts_listing import reference_key
 from ldraw.colour import Colour
 from ldraw.errors import PartError
 from ldraw.part import colour_from_str
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
 
     from ldraw._parts_listing import PartDescriptionSource
+    from ldraw.diagnostics import Diagnostic
     from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
 
@@ -97,11 +99,11 @@ class _BomLeaf:
 
 
 def _bom_leaf(occurrence: ModelOccurrence) -> _BomLeaf:
-    stem, suffix = split_reference(occurrence.reference)
+    _, suffix = split_reference(occurrence.reference)
     suffix = suffix.casefold()
     return _BomLeaf(
         reference=occurrence.reference,
-        part=(stem if suffix == ".dat" else occurrence.reference).replace("\\", "/"),
+        part=occurrence.part_code,
         colour=occurrence.colour,
         requires_listing=suffix not in {".dat", ".ldr", ".mpd"},
         unresolved_submodel=suffix in {".ldr", ".mpd"},
@@ -111,14 +113,34 @@ def _bom_leaf(occurrence: ModelOccurrence) -> _BomLeaf:
 def _prepare_inventory_occurrences(
     occurrences: Iterable[ModelOccurrence],
 ) -> tuple[_BomLeaf, ...]:
-    return tuple(_bom_leaf(occurrence) for occurrence in occurrences)
+    from ldraw.validation import _numeric_issue, _placement_analysis  # noqa: PLC0415
+
+    leaves: list[_BomLeaf] = []
+    for occurrence in occurrences:
+        if issue := _numeric_issue(
+            _placement_analysis(occurrence.position, occurrence.matrix),
+            number=occurrence.source_line,
+            path=None,
+            section=occurrence.source_model.name or None,
+        ):
+            _reject_numeric_issue(issue)
+        leaves.append(_bom_leaf(occurrence))
+    return tuple(leaves)
+
+
+def _reject_numeric_issue(issue: Diagnostic) -> None:
+    location = issue.section or "model"
+    if issue.line_number is not None:
+        location = f"{location}:{issue.line_number}"
+    message = f"{issue.code}: {location}: {issue.message}"
+    raise ValueError(message)
 
 
 def _bom_rows(leaves: Iterable[_BomLeaf], *, parts: Parts | None) -> list[BomRow]:
     counts: Counter[tuple[str, Colour]] = Counter()
     display: dict[str, str] = {}
     for leaf in leaves:
-        part_key = leaf.part.casefold()
+        part_key = reference_key(leaf.part)
         display.setdefault(part_key, leaf.part)
         counts[(part_key, leaf.colour)] += 1
     rows = [
@@ -162,8 +184,10 @@ def bill_of_materials(
     ``Model.submodels`` — the latter treats nested submodel references as
     leaf parts.
 
-    Part codes are counted case-insensitively; each row shows the code as
-    first written in the model, removing only a terminal .dat suffix.
+    Part codes are counted case- and separator-insensitively; each row shows
+    the first occurrence's spelling. ``ModelOccurrence.part_code`` is
+    authoritative, including caller-provided overrides. Parsed part identities
+    retain dotted names and omit their terminal .dat suffix.
     """
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"
@@ -365,15 +389,20 @@ def _inventory_counts(
     return counts
 
 
+def _validate_inventory_submodels(occurrences: tuple[_BomLeaf, ...]) -> None:
+    """Reject structural reference failures before consulting a listing."""
+    for occurrence in occurrences:
+        if occurrence.unresolved_submodel:
+            message = (
+                f"model contains unresolved submodel reference {occurrence.reference!r}"
+            )
+            raise ValueError(message)
+
+
 def _validate_inventory_reference(
     occurrence: _BomLeaf, *, parts: PartDescriptionSource | None
 ) -> None:
     """Require listing evidence for leaves without an explicit .dat suffix."""
-    if occurrence.unresolved_submodel:
-        message = (
-            f"model contains unresolved submodel reference {occurrence.reference!r}"
-        )
-        raise ValueError(message)
     if occurrence.requires_listing and (
         parts is None or parts.description_for(occurrence.reference) is None
     ):
@@ -400,7 +429,16 @@ def compare_inventory(
     explicit ``.dat`` suffix require listing evidence in ``parts`` before
     aliases are applied;
     explicit ``.dat`` part references do not require a catalog.
+
+    Non-finite geometry in a concrete Model, or non-finite expanded transforms
+    from any occurrence provider, raises ValueError before comparing counts.
     """
+    from ldraw.model import Model  # noqa: PLC0415
+    from ldraw.validation import _iter_model_numeric_issues  # noqa: PLC0415
+
+    if isinstance(model, Model):
+        for issue in _iter_model_numeric_issues(model):
+            _reject_numeric_issue(issue)
     return _compare_inventory_occurrences(
         occurrences=_prepare_inventory_occurrences(
             model.iter_occurrences(include_steps=False)
@@ -419,6 +457,7 @@ def _compare_inventory_occurrences(
     parts: PartDescriptionSource | None = None,
 ) -> InventoryComparison:
     """Compare already-expanded leaves without traversing the model again."""
+    _validate_inventory_submodels(occurrences)
     aliases = {
         normalize_ref(key).removesuffix(".dat"): normalize_ref(value).removesuffix(
             ".dat"

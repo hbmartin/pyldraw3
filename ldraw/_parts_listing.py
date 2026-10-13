@@ -12,8 +12,30 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Self
 
-DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
+DOT_DAT = re.compile(r"\.DAT(?=\s|$)", flags=re.IGNORECASE)
 logger = logging.getLogger("ldraw.parts")
+
+
+def reference_code(code: str) -> str:
+    """Normalize reference separators without changing the displayed spelling."""
+    return code.replace("\\", "/")
+
+
+def reference_key(code: str) -> str:
+    """Return the shared case-insensitive listing and part identity key."""
+    return reference_code(code).casefold()
+
+
+def normalized_index(mapping: dict[str, str]) -> dict[str, str]:
+    """Index descriptions by normalized part reference."""
+    return {reference_key(code): value for code, value in mapping.items()}
+
+
+def listing_description(
+    code: str, *, by_code: dict[str, str], normalized: dict[str, str]
+) -> str | None:
+    """Prefer exact spelling before case and separator fallback."""
+    return by_code[code] if code in by_code else normalized.get(reference_key(code))
 
 
 class PartDescriptionSource(Protocol):
@@ -55,14 +77,11 @@ class PartsListing:
         by_code = dict(iter_parts_listing(path))
         return cls(
             by_code=by_code,
-            normalized={
-                code.replace("\\", "/").casefold(): description
-                for code, description in by_code.items()
-            },
+            normalized=normalized_index(by_code),
         )
 
     def description_for(self, code: str) -> str | None:
         """Prefer an exact code before normalized reference fallback."""
-        if (description := self.by_code.get(code)) is not None:
-            return description
-        return self.normalized.get(code.replace("\\", "/").casefold())
+        return listing_description(
+            code, by_code=self.by_code, normalized=self.normalized
+        )
