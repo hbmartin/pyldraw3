@@ -39,8 +39,8 @@ def analyze_model(
 ) -> ModelAnalysis:
     """Traverse leaf occurrences once and reuse them for all derived views.
 
-    Cyclic submodel references (possible in tolerantly-loaded models) are
-    skipped rather than raising; each skipped reference surfaces as an
+    Built-in expansion and custom overrides delegating to it skip cyclic
+    submodel references; other custom exceptions propagate. Each skip surfaces as an
     ``MPD_CYCLE`` diagnostic unless an equal one was already passed in via
     ``diagnostics``.
     """

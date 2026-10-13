@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from ldraw._model_cycles import _custom_occurrences
 from ldraw._model_validation import ModelValidationContext
 from ldraw._parts_listing import reference_key
 from ldraw.colour import Colour
@@ -171,6 +172,11 @@ def _prepare_model_inventory(
                 reachable_only=model._is_submodel_view,  # noqa: SLF001
             )
             _audit_inventory_transforms(model, context=context)
+            return _prepare_inventory_occurrences(
+                _custom_occurrences(
+                    model=model, expand_submodels=True, include_steps=False
+                )
+            )
         case _:
             pass
     return _prepare_inventory_occurrences(model.iter_occurrences(include_steps=False))
@@ -231,6 +237,8 @@ def bill_of_materials(
 
     Custom occurrence traversals are authoritative. Concrete Model overrides
     delegating to super() retain the BOM's cycle-skipping behavior.
+    Iterable returns and narrower overrides accepting only include_steps are
+    supported; other custom exceptions propagate.
     """
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"

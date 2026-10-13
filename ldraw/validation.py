@@ -9,8 +9,6 @@ from math import isfinite
 from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary
 
-from ldraw._model_validation import _resolve_reference
-from ldraw._model_views import _selected_model
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.parts import CatalogSearchField
@@ -204,48 +202,24 @@ def _iter_model_numeric_issues(
     model: Model,
     *,
     reachable_only: bool = False,
-    context: ModelValidationContext | None = None,
+    context: ModelValidationContext,
 ) -> Iterator[ValidationIssue]:
     """Check geometry in the explicitly selected declared or reachable scope."""
-    pending = [_selected_model(model)]
-    visited: set[int] = set()
-    while pending:
-        section = _selected_model(pending.pop())
-        if id(section) in visited:
-            continue
-        visited.add(id(section))
+    for section in context.sections(root=model, reachable_only=reachable_only):
         yield from _iter_section_numeric_issues(section=section, context=context)
-        if reachable_only:
-            targets = (
-                [target for _, target in context.edges(root=model, section=section)]
-                if context is not None
-                else [
-                    target
-                    for piece in section.pieces
-                    if (
-                        target := _resolve_reference(
-                            root=model, piece=piece, context=None
-                        )
-                    )
-                    is not None
-                ]
-            )
-        else:
-            targets = list(section.submodels.values())
-        pending.extend(reversed(targets))
 
 
 def _iter_section_numeric_issues(
-    *, section: Model, context: ModelValidationContext | None
+    *, section: Model, context: ModelValidationContext
 ) -> Iterator[ValidationIssue]:
-    if context is not None and id(section) in context.validated_sections:
+    if id(section) in context.validated_sections:
         return
     invalid = False
     for obj in section.objects:
-        if isinstance(obj, Piece) and context is not None and obj in context.placements:
+        if isinstance(obj, Piece) and obj in context.placements:
             continue
         analysis = _object_analysis(obj)
-        if isinstance(obj, Piece) and context is not None:
+        if isinstance(obj, Piece):
             context.record(piece=obj, analysis=analysis)
         if analysis.invalid and (
             issue := _numeric_issue(
@@ -257,7 +231,7 @@ def _iter_section_numeric_issues(
         ):
             invalid = True
             yield issue
-    if context is not None and not invalid:
+    if not invalid:
         context.validated_sections.add(id(section))
 
 

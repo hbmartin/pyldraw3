@@ -391,14 +391,16 @@ def _snapshot_objects(objects: Iterable[ParsedObject]) -> list[ParsedObject]:
 def _dependency_closure(
     root: Model,
     objects: Iterable[ParsedObject],
+    *,
+    section_name: str,
 ) -> list[Model]:
     result: list[Model] = []
-    seen: set[str] = set()
+    seen = {normalize_ref(section_name)}
     pending = [obj for obj in objects if isinstance(obj, Piece)]
     while pending:
         piece = pending.pop(0)
         target = _resolve_reference(root=root, piece=piece, context=None)
-        if target is None or target is root:
+        if target is None:
             continue
         key = normalize_ref(target.name)
         if key in seen:
@@ -417,7 +419,9 @@ def _write_snapshot_mpd(
     path: Path,
 ) -> None:
     root_objects = _snapshot_objects(step.cumulative_objects)
-    dependencies = _dependency_closure(document.model, root_objects)
+    dependencies = _dependency_closure(
+        root=document.model, objects=root_objects, section_name=section.name
+    )
     sections = [(section.name, root_objects)] + [
         (dependency.name, _snapshot_objects(dependency.objects))
         for dependency in dependencies

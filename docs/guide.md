@@ -533,10 +533,30 @@ reachable submodels, ignoring unrelated siblings in the shared resolution table.
 This includes a view of the root's own name. Views forward state reads and writes
 to the selected model, including scalar subclass attributes and replacement
 object lists or source mappings. They resolve references through the original
-root's resolver, including when creating further views. No constructors or
-copying hooks run. A private adapter inherits the selected class, so
+root's resolver, including when creating further views. View creation invokes
+neither instance constructors, copying/state hooks, nor the selected class's
+`__init_subclass__` hook. A private adapter inherits the selected class, so
 `isinstance(view, SelectedClass)` and `super()` work, while `type(view)` can differ
 from `type(selected)`.
+
+Inherited descriptors bind to the view, including cached methods,
+`singledispatchmethod`, `partialmethod`, and custom descriptors. Class factories
+remain bound to the selected class. Cached properties have a separate view
+cache: pre-existing values on the selected model are ignored, and assigning or
+deleting a cached property affects only that view. They follow normal explicit
+cache invalidation; delete a cached property when its inputs change. A view's
+`__dict__` exposes this descriptor cache, while ordinary attributes and slot
+state continue forwarding to the selected model.
+
+`copy.copy(view)` produces another live view of the same selected model and
+resolution root. `copy.deepcopy(view)` copies both in one graph, preserving
+their relationship and cyclic backreferences. Pickle restores the same view
+bindings in the restored graph. These operations start with empty derived view
+caches. Explicit deep-copy and pickle operations honor underlying objects'
+normal copying and serialization hooks, including their failures; custom
+classes must be pickleable under Python's normal rules. Adapter types are
+cached weakly and are collectible when no live users retain them.
+
 Built-in traversal checks every composed placement, including overflow from
 finite inputs into empty submodels or submodels containing geometry without
 leaf parts.
@@ -554,15 +574,31 @@ providers can be checked only through the transforms they emit.
 Unresolved emitted references fail immediately during preparation, so a later
 invalid provider transform does not replace that error. Concrete model source
 geometry is validated before occurrence preparation.
+Reachable source discovery stops active reference-name cycles even when a
+custom resolver creates fresh section objects on every call. Newly encountered
+cycle-closing sections still receive numeric checks. Distinct acyclic sections
+sharing a name are checked separately. Built-in comparison retains its normal
+cycle error, while custom source audits stop cyclic re-entry without replacing
+the override's occurrences.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 
 Both `bill_of_materials(model)` and `model.bill_of_materials()` honor custom
 occurrence traversal, including relabelling and filtering. Analysis uses the
 same authoritative occurrences; summaries keep their raw identity aggregation.
-BOM generation and analysis skip cycles when an override delegates to `super()`.
-The cycle policy applies only while advancing that model's iterator and does
-not affect ordinary public iteration or suppress explicit custom failures.
+BOM generation, analysis, summaries, and comparison accept overrides returning
+iterables such as lists or tuples. Overrides accepting only `include_steps`
+remain supported for default expansion; an explicit unsupported
+`expand_submodels=False` request raises `TypeError`. Exceptions from an override
+are propagated without retrying its body.
+BOM generation, analysis, and summaries skip built-in expansion cycles and
+cycles in overrides delegating to `super()`. Other custom exceptions propagate.
+The cycle policy applies only while creating or advancing that model's iterator,
+resets before yielding, and does not affect ordinary public iteration.
+
+Instruction documents include each reachable section once, including when
+built from a view. Snapshot dependencies omit the section already being rendered,
+so self-references do not produce duplicate `0 FILE` blocks.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that
