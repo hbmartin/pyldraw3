@@ -319,17 +319,19 @@ def test_custom_flags_work_through_all_analysis_entrypoints(
 
 
 def test_positional_gap_required_argument_is_rejected_before_calling_body() -> None:
-    class Required(Model):
-        def iter_occurrences(
-            self: Self, marker: str, expand_submodels: bool = True, /
-        ) -> Never:
-            message = f"body must not run: {marker} {expand_submodels}"
-            raise AssertionError(message)
+    def required_occurrences(
+        self: Model, marker: str, expand_submodels: bool = True, /
+    ) -> Never:
+        message = f"body must not run: {marker} {expand_submodels}"
+        raise AssertionError(message)
 
-    with pytest.raises(TypeError, match="requires argument 'marker'"):
-        _custom_occurrences(
-            model=Required(), expand_submodels=True, include_steps=False
-        )
+    with (
+        patch.object(
+            target=Model, attribute="iter_occurrences", new=required_occurrences
+        ),
+        pytest.raises(TypeError, match="requires argument 'marker'"),
+    ):
+        _custom_occurrences(model=Model(), expand_submodels=True, include_steps=False)
 
 
 def lattice(layers: int) -> Model:

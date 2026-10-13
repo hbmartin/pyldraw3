@@ -8,13 +8,15 @@ from typing import TYPE_CHECKING
 from ldraw.model import Model
 
 if TYPE_CHECKING:
-    from ldraw._instruction_resolution import InstructionResolution
+    from ldraw import _instruction_resolution
     from ldraw.pieces import Piece
 
 
 @dataclass(slots=True, eq=False)
 class _InstructionExpansion(Model):
-    resolution: InstructionResolution = field(kw_only=True, repr=False)
+    resolution: _instruction_resolution.InstructionResolution = field(
+        kw_only=True, repr=False
+    )
     expand: bool = field(kw_only=True, repr=False)
 
     def submodel_for(self, piece: Piece) -> Model | None:

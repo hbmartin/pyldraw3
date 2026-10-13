@@ -10,8 +10,8 @@ from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from ldraw._instruction_resolution import InstructionResolution
-from ldraw._model_validation import ModelValidationContext, _resolve_reference
+from ldraw import _instruction_resolution
+from ldraw._model_validation import _resolve_reference
 from ldraw.bom import BomRow, bill_of_materials
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import Comment, MetaCommand
@@ -23,6 +23,7 @@ from ldraw.validation import Severity
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
+    from ldraw import _model_validation
     from ldraw.model import Model, ModelOccurrence
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
@@ -196,7 +197,7 @@ class InstructionStep:
     _ignored_bom: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_pli: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_bom: frozenset[int] = field(repr=False, compare=False)
-    _resolution: InstructionResolution | None = field(
+    _resolution: _instruction_resolution.InstructionResolution | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
@@ -344,7 +345,7 @@ class InstructionDocument:
     orphan_sections: tuple[InstructionSection, ...]
     model: Model = field(repr=False, compare=False)
     parts: Parts | None = field(default=None, repr=False, compare=False)
-    _resolution: InstructionResolution | None = field(
+    _resolution: _instruction_resolution.InstructionResolution | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
@@ -356,7 +357,7 @@ class InstructionDocument:
         parts: Parts | None = None,
     ) -> InstructionDocument:
         """Build a semantic instruction document from ``model``."""
-        resolution = InstructionResolution(root=model)
+        resolution = _instruction_resolution.InstructionResolution(root=model)
         reachable_models = _reachable_instruction_models(
             root=model, resolution=resolution
         )
@@ -402,7 +403,7 @@ class InstructionDocument:
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
 
-    def _resolution_context(self) -> ModelValidationContext | None:
+    def _resolution_context(self) -> _model_validation.ModelValidationContext | None:
         return self._resolution.context if self._resolution is not None else None
 
 
@@ -784,7 +785,7 @@ def _expandable_submodels(root: Model, *, expand: bool) -> dict[str, Model]:
 
 
 def _reachable_instruction_models(
-    root: Model, *, resolution: InstructionResolution
+    root: Model, *, resolution: _instruction_resolution.InstructionResolution
 ) -> list[Model]:
     pending = [root]
     discovered = {normalize_ref(root.name): root}
@@ -810,7 +811,9 @@ def _reachable_instruction_models(
     return [discovered[key] for key in ordered if key in discovered]
 
 
-def _references(model: Model, *, resolution: InstructionResolution) -> tuple[str, ...]:
+def _references(
+    model: Model, *, resolution: _instruction_resolution.InstructionResolution
+) -> tuple[str, ...]:
     refs: list[str] = []
     for piece in model.pieces:
         target = resolution.resolve(piece)
@@ -845,7 +848,7 @@ class _SectionMachine:
     model: Model
     is_root: bool
     reachable: bool
-    resolution: InstructionResolution
+    resolution: _instruction_resolution.InstructionResolution
     steps: list[InstructionStep] = field(default_factory=list)
     state: _StepState = field(default_factory=_StepState)
     cumulative: list[ParsedObject] = field(default_factory=list)
@@ -1024,7 +1027,7 @@ def _build_section(
     model: Model,
     is_root: bool,
     reachable: bool,
-    resolution: InstructionResolution,
+    resolution: _instruction_resolution.InstructionResolution,
 ) -> InstructionSection:
     return _SectionMachine(
         root=root,
@@ -1471,7 +1474,7 @@ def _resolvable_callout_references(
     references: tuple[str, ...],
     *,
     root: Model,
-    context: ModelValidationContext | None = None,
+    context: _model_validation.ModelValidationContext | None = None,
 ) -> bool:
     root_key = normalize_ref(root.name)
     for reference in references:
