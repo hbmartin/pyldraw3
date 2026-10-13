@@ -26,7 +26,6 @@ from ldraw.lines import (
     Triangle,
 )
 from ldraw.pieces import Piece
-from ldraw.utils import split_ldraw_reference
 
 if TYPE_CHECKING:
     from ldraw.part_metadata import PartMetadata
@@ -96,13 +95,12 @@ def _sub_file(pieces: list[str]) -> Piece:
         raise InvalidLineDataError(line_type="subfile", size=14, line=pieces)
     values = _floats("subfile", pieces[1:13], pieces)
     rows = [values[3:6], values[6:9], values[9:12]]
-    part, suffix = split_ldraw_reference(" ".join(pieces[13:]))
     return Piece(
-        _colour(pieces),
-        Vector(*values[:3]),
-        Matrix(rows),
-        part,
-        suffix=suffix,
+        colour=_colour(pieces),
+        position=Vector(*values[:3]),
+        matrix=Matrix(rows),
+        part=" ".join(pieces[13:]),
+        suffix="",
     )
 
 

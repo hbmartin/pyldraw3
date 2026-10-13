@@ -202,6 +202,7 @@ class Model:
     submodels: dict[str, Model] = field(default_factory=dict)
     _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
     _object_source_lines: dict[int, int] = field(default_factory=dict, repr=False)
+    _is_submodel_view: bool = field(default=False, init=False, repr=False)
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
         for obj in self.objects:
@@ -433,13 +434,15 @@ class Model:
             return self
         if (submodel := self.submodels.get(key)) is None:
             raise UnknownSubmodelError(name)
-        return Model(
+        view = Model(
             name=submodel.name,
             objects=submodel.objects,
             submodels=self.submodels,
             _source_lines=submodel._source_lines,  # noqa: SLF001 - same class
             _object_source_lines=submodel._object_source_lines,  # noqa: SLF001
         )
+        view._is_submodel_view = True
+        return view
 
     def add_step(self) -> None:
         """Append a ``0 STEP`` marker ending the current building step."""
@@ -678,6 +681,25 @@ def _iter_occurrences_skip_cycles(
     )
 
 
+def _iter_inventory_occurrences(
+    model: Model, *, placements: dict[Piece, tuple[Vector, Matrix]]
+) -> Iterator[ModelOccurrence]:
+    """Expand validated source placements once for inventory comparison."""
+    return _iter_model_occurrences(
+        root=model,
+        model=model,
+        position=Vector(0, 0, 0),
+        matrix=Identity(),
+        inherited_colour=None,
+        visiting=frozenset(),
+        inherited_step=None,
+        path=(),
+        expand_submodels=True,
+        include_steps=False,
+        placements=placements,
+    )
+
+
 def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     *,
     root: Model,
@@ -691,6 +713,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     expand_submodels: bool,
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None = None,
+    placements: dict[Piece, tuple[Vector, Matrix]] | None = None,
 ) -> Iterator[ModelOccurrence]:
     """Yield leaf occurrences of ``model``, resolving references against ``root``.
 
@@ -700,9 +723,15 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     """
     visiting = visiting | {normalize_ref(model.name)}
     for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
-        piece_position, piece_matrix = piece._transformed()  # noqa: SLF001
-        world_position = position + matrix * piece_position
-        world_matrix = matrix * piece_matrix
+        effective = placements.get(piece) if placements is not None else None
+        piece_position, piece_matrix = (
+            effective if effective is not None else piece._transformed()  # noqa: SLF001
+        )
+        if placements is not None and not path:
+            world_position, world_matrix = piece_position, piece_matrix
+        else:
+            world_position = position + matrix * piece_position
+            world_matrix = matrix * piece_matrix
         occurrence_step = inherited_step if inherited_step is not None else source_step
         colour = _effective_colour(piece.colour, inherited_colour)
         occurrence_path = (
@@ -734,11 +763,16 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
                 expand_submodels=expand_submodels,
                 include_steps=include_steps,
                 on_cycle=on_cycle,
+                placements=placements,
             )
             continue
         yield ModelOccurrence(
             piece=piece,
-            part_code=piece.part,
+            part_code=(
+                piece.reference
+                if piece.suffix.casefold() in {".ldr", ".mpd"}
+                else piece.part
+            ),
             reference=piece.reference,
             colour=colour,
             position=world_position,

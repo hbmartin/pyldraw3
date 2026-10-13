@@ -486,10 +486,14 @@ Ordinary BOMs use the same full identifiers, stripping only a terminal `.dat`
 suffix. Dotted identifiers remain distinct, and a model matches its own BOM.
 Parsing and piece construction preserve these dotted part identities in
 `Piece.part` and leaf `ModelOccurrence.part_code`, so model summaries and BOMs
-agree. Serialized reference spelling and suffix case remain unchanged.
+use the same dotted identities. Summaries count raw `part_code` spellings
+separately; BOMs additionally aggregate case and separator variants.
+Serialized reference spelling and suffix case remain unchanged.
 When supplying occurrences directly, their `part_code` values are authoritative,
 including caller-provided replacements. BOM rows preserve the first identifier's
 case and separators while aggregating equivalent spellings.
+Default unresolved or deliberately unexpanded `.ldr`/`.mpd` leaf occurrences
+keep their full reference, distinguishing them from same-named `.dat` parts.
 Unresolved `.ldr`/`.mpd` references always fail; ambiguous references fail
 before aliases are applied. Explicit `.dat` references do not require a
 catalog, and resolved submodels expand normally.
@@ -517,6 +521,9 @@ Geometry representations remain readable for inspection, including `repr()` of
 objects containing NaN or Infinity. The Python `compare_inventory` API rejects
 non-finite geometry in every declared Model section, including type-2–5 objects;
 occurrence-only providers are checked for non-finite expanded transforms.
+For `root.submodel_view(name)`, comparison checks the selected section and its
+reachable submodels, ignoring unrelated siblings in the shared resolution table.
+Composed transforms are checked too, including overflow from finite inputs.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 

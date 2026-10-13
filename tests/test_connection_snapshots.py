@@ -331,6 +331,87 @@ def test_snapshot_normalizes_archive_members_preserving_attribution(
     ]
 
 
+def test_snapshot_canonicalizes_multiple_origins_and_preserves_attribution(
+    tmp_path: Path,
+) -> None:
+    outputs = []
+    for uppercase in (False, True):
+        root = tmp_path / f"Library: Mixed Names {uppercase}"
+        directory = root / ("PARTS" if uppercase else "parts")
+        directory.mkdir(parents=True)
+        source = directory / ("PRIMARY.DAT" if uppercase else "primary.dat")
+        other = directory / ("OTHER.DAT" if uppercase else "other.dat")
+        source.write_text(
+            "0 Brick\n0 !LDCAD SNAP_CYL [id=PiN] [gender=M] [secs=R 6 4]\n"
+        )
+        other.write_text("0 Other\n")
+        listing = root / "parts.lst"
+        listing.write_text("primary.dat  Brick\n")
+        alias = tmp_path / f"Alias: With Spaces {uppercase}"
+        alias.symlink_to(root, target_is_directory=True)
+        feature = Parts(parts_lst=listing).connections("primary")[0]
+        member = "PARTS\\SHADOW.DAT" if uppercase else "parts/shadow.dat"
+        secondary = alias / other.relative_to(root)
+        metadata = alias / ("Metadata.JSON" if uppercase else "metadata.json")
+        feature = replace(
+            feature,
+            provenance=(
+                *feature.provenance,
+                f"{secondary}:37 via MiXeD:I0 > parts/Target.DAT",
+                f"{metadata}: Studio connection 4",
+                f"{member}:12 via MyID:I0 > PARTS/Target",
+                "MiXeD descriptive text",
+            ),
+        )
+        result = normalized(feature, library_root=root)
+        assert result["provenance"] == [
+            "<library>/parts/primary.dat:2",
+            "<library>/parts/other.dat:37 via MiXeD:I0 > parts/Target.DAT",
+            "<library>/metadata.json: Studio connection 4",
+            "parts/shadow.dat:12 via MyID:I0 > PARTS/Target",
+            "MiXeD descriptive text",
+        ]
+        descriptive = f"{root}/MiXeD descriptive text"
+        with_description = replace(
+            feature, provenance=(*feature.provenance, descriptive)
+        )
+        assert (
+            normalized(with_description, library_root=root)["provenance"][-1]
+            == descriptive
+        )
+        outputs.append(result)
+    assert outputs[0] == outputs[1]
+
+
+def test_snapshot_secondary_sources_without_structured_origin_and_outside_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "library"
+    (root / "parts").mkdir(parents=True)
+    source = root / "parts" / "3001.dat"
+    source.write_text("0 Brick\n0 !LDCAD SNAP_CYL [id=PiN] [gender=M] [secs=R 6 4]\n")
+    listing = root / "parts.lst"
+    listing.write_text("3001.dat  Brick\n")
+    feature = Parts(parts_lst=listing).connections("3001")[0]
+    secondary = replace(
+        feature,
+        connection_provenance=None,
+        provenance=(
+            f"{root}/PARTS/OTHER.DAT:3",
+            "OtherID:I0",
+            "parts/a.dat:4 via ID.dat",
+        ),
+    )
+    assert normalized(secondary, library_root=root)["provenance"] == [
+        "<library>/parts/other.dat:3",
+        "OtherID:I0",
+        "parts/a.dat:4 via ID.dat",
+    ]
+    outside = replace(secondary, provenance=(f"{tmp_path}/outside.dat:3",))
+    with pytest.raises(ValueError):
+        normalized(outside, library_root=root)
+
+
 @pytest.mark.parametrize(
     "failure", ["missing", "malformed", "non-object", "schema", "content"]
 )

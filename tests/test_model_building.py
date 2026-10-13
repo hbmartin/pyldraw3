@@ -315,7 +315,7 @@ def test_iter_occurrences_can_leave_submodels_unexpanded() -> None:
         root.iter_occurrences(expand_submodels=False, include_steps=False),
     )
 
-    assert occurrence.part_code == "outer"
+    assert occurrence.part_code == "outer.LDR"
     assert occurrence.reference == "outer.LDR"
     assert occurrence.step is None
     assert occurrence.source_step is None

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self
 from ldraw.colour import Colour
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.serialization import format_ldraw_colour, format_ldraw_number
-from ldraw.utils import split_ldraw_reference, split_reference
+from ldraw.utils import split_ldraw_reference
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -73,10 +73,9 @@ class Piece:
         suffix: str = DEFAULT_SUFFIX,
     ) -> Self:
         """Create a piece keyword-first, defaulting to the origin and identity."""
-        if "." in part:
-            stem, existing_suffix = split_reference(part)
-            if suffix.casefold() in {DEFAULT_SUFFIX, existing_suffix.casefold()}:
-                part, suffix = stem, existing_suffix
+        _, dot, ending = part.rpartition(".")
+        if dot and suffix.casefold() in {DEFAULT_SUFFIX, f".{ending}".casefold()}:
+            suffix = ""
         return cls(
             colour=colour,
             position=position if position is not None else Vector(0, 0, 0),

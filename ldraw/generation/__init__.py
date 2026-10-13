@@ -29,7 +29,7 @@ logger = logging.getLogger("ldraw")
 # Bump whenever generator output changes (templates, symbol naming, colour
 # attribute detection, …) so previously generated libraries regenerate
 # instead of silently serving stale modules.
-GENERATION_SCHEMA_VERSION = 3
+GENERATION_SCHEMA_VERSION = 4
 
 
 def _file_md5(path: Path) -> str:

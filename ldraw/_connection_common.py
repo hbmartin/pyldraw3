@@ -12,6 +12,7 @@ from ldraw.connection_types import (
     ConnectionFeature,
     ConnectionProvenance,
     ConnectionRole,
+    _format_provenance,
     frame_for_axis,
 )
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -286,16 +287,7 @@ def _boolean(value: str | None, *, default: bool) -> bool:
 
 
 def _provenance_text(provenance: ConnectionProvenance) -> str:
-    location = provenance.archive_member or (
-        str(provenance.path)
-        if provenance.path is not None
-        else provenance.command or provenance.source.value
-    )
-    if provenance.line_number is not None:
-        location = f"{location}:{provenance.line_number}"
-    if provenance.include_chain:
-        location = f"{location} via {' > '.join(provenance.include_chain)}"
-    return location
+    return _format_provenance(provenance)
 
 
 def _feature_origin(feature: ConnectionFeature) -> str:

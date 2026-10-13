@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 # metadata fingerprint (meta key `tree_fingerprint`), so path, size, or mtime
 # changes that leave parts.lst byte-identical still invalidate the index.
 # (Version 3: entry descriptions stored as written in parts.lst.)
-CATALOG_SCHEMA_VERSION = 6
+CATALOG_SCHEMA_VERSION = 7
 
 _CREATE_META = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 _CREATE_PARTS = """
