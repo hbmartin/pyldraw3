@@ -263,6 +263,9 @@ Direct placements and expanded occurrences use the same default identity rule:
 part codes omit a terminal `.dat`, while `.ldr`/`.mpd` references retain their
 suffixes. This keeps an unresolved `body.ldr` distinct from `body.dat` in both
 placement views. The corrected values retain manifest schema v1.
+Previously, direct placements used a stem such as `body` while unexpanded
+occurrences used `body.ldr`; both now use `body.ldr`. Consumers that assumed
+stem-only direct-placement identities should use the documented identity rule.
 
 `snapshots` writes this layout by default:
 

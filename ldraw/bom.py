@@ -151,32 +151,28 @@ def _prepare_model_inventory(
     model: _ModelLike, *, context: ModelValidationContext | None = None
 ) -> tuple[_BomLeaf, ...]:
     """Prepare counts, optionally reusing analysis from immediate report loading."""
-    from ldraw.model import Model, _iter_inventory_occurrences  # noqa: PLC0415
-    from ldraw.validation import (  # noqa: PLC0415
-        _iter_model_numeric_issues,
-        _reject_numeric_issue,
+    from ldraw.model import (  # noqa: PLC0415 - model/BOM cycle
+        Model,
+        _audit_inventory_transforms,
+        _iter_inventory_occurrences,
     )
 
     match model:
-        case Model() if type(model) is Model:
-            if context is None:
-                context = ModelValidationContext()
-                for issue in _iter_model_numeric_issues(
-                    model,
-                    reachable_only=model._is_submodel_view,  # noqa: SLF001
-                    context=context,
-                ):
-                    _reject_numeric_issue(issue)
-            return _prepare_inventory_occurrences(
-                _iter_inventory_occurrences(model, context=context),
-                transforms_validated=True,
-            )
         case Model():
-            for issue in _iter_model_numeric_issues(
-                model,
+            context = context if context is not None else ModelValidationContext()
+            context.ensure_validated(
+                root=model,
                 reachable_only=model._is_submodel_view,  # noqa: SLF001
+            )
+            if (
+                getattr(model.iter_occurrences, "__func__", None)
+                is Model.iter_occurrences
             ):
-                _reject_numeric_issue(issue)
+                return _prepare_inventory_occurrences(
+                    _iter_inventory_occurrences(model, context=context),
+                    transforms_validated=True,
+                )
+            _audit_inventory_transforms(model, context=context)
         case _:
             pass
     return _prepare_inventory_occurrences(model.iter_occurrences(include_steps=False))

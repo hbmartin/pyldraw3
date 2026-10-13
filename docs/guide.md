@@ -492,6 +492,9 @@ Serialized reference spelling and suffix case remain unchanged.
 `Piece.place("custom.v1")` uses the default reference `custom.v1.dat`, matching
 the constructor. Recognized `.dat`, `.ldr`, and `.mpd` endings retain their
 existing spelling; an explicit empty suffix keeps a reference suffix-free.
+Earlier factory behavior kept `custom.v1` suffix-free; callers requiring that
+reference should pass `suffix=""`. An explicit `suffix=".dat"` retains the
+factory's existing handling of recognized endings, just like the default.
 When supplying occurrences directly, their `part_code` values are authoritative,
 including caller-provided replacements. BOM rows preserve the first identifier's
 case and separators while aggregating equivalent spellings.
@@ -526,8 +529,19 @@ non-finite geometry in every declared Model section, including type-2–5 object
 occurrence-only providers are checked for non-finite expanded transforms.
 For `root.submodel_view(name)`, comparison checks the selected section and its
 reachable submodels, ignoring unrelated siblings in the shared resolution table.
+This includes a view of the root's own name. Views preserve the selected model's
+subclass, custom state, and overridden traversal while sharing its live content.
 Every composed placement is checked too, including overflow from finite inputs
 into empty submodels or submodels containing geometry without leaf parts.
+Subclasses inheriting `Model.iter_occurrences` use the same validated traversal.
+Custom traversal overrides keep their emitted occurrences authoritative; their
+reachable concrete source placements are separately audited for overflow, and
+their emitted transforms receive full numeric checks. The source audit stops
+cyclic re-entry and does not classify unresolved source leaves. Occurrence-only
+providers can be checked only through the transforms they emit.
+Unresolved emitted references fail immediately during preparation, so a later
+invalid provider transform does not replace that error. Concrete model source
+geometry is validated before occurrence preparation.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 

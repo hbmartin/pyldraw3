@@ -9,6 +9,7 @@ from math import isfinite
 from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary
 
+from ldraw._model_validation import _resolve_reference
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.lines import Line, MetaCommand, OptionalLine, Quadrilateral, Triangle
 from ldraw.parts import CatalogSearchField
@@ -212,10 +213,8 @@ def _iter_model_numeric_issues(
                 target
                 for piece in section.pieces
                 if (
-                    target := (
-                        context.resolve(root=model, piece=piece)
-                        if context is not None
-                        else model.submodel_for(piece)
+                    target := _resolve_reference(
+                        root=model, piece=piece, context=context
                     )
                 )
                 is not None
@@ -224,15 +223,15 @@ def _iter_model_numeric_issues(
             targets = list(section.submodels.values())
         pending.extend(reversed(targets))
         for obj in section.objects:
+            if (
+                isinstance(obj, Piece)
+                and context is not None
+                and obj in context.placements
+            ):
+                continue
+            analysis = _object_analysis(obj)
             if isinstance(obj, Piece) and context is not None:
-                if obj in context.placements:
-                    continue
-                position, matrix = obj._transformed()  # noqa: SLF001 - effective placement
-                analysis = _placement_analysis(position=position, matrix=matrix)
-                if not analysis.invalid:
-                    context.placements[obj] = position, matrix
-            else:
-                analysis = _object_analysis(obj)
+                context.record(piece=obj, analysis=analysis)
             if analysis.invalid and (
                 issue := _numeric_issue(
                     analysis,
@@ -483,14 +482,8 @@ def _iter_section_issues(
             if number is None and not isinstance(obj, Piece):
                 continue
             analysis = _object_analysis(obj)
-            if (
-                context is not None
-                and isinstance(obj, Piece)
-                and not analysis.invalid
-                and analysis.position is not None
-                and analysis.matrix is not None
-            ):
-                context.placements[obj] = analysis.position, analysis.matrix
+            if context is not None and isinstance(obj, Piece):
+                context.record(piece=obj, analysis=analysis)
             if number is not None:
                 object_issues.extend(
                     _iter_object_issues(
