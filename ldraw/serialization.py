@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import TYPE_CHECKING
 
 from ldraw.colour import OPAQUE_ALPHA, normalized_rgb_hex
@@ -37,8 +38,11 @@ def format_ldraw_colour(colour: Colour) -> str:
 
 
 def format_ldraw_number(value: float) -> str:
-    """Format a numeric LDraw field using compact decimal notation."""
+    """Format a finite numeric LDraw field using compact decimal notation."""
     number = float(value)
+    if not isfinite(number):
+        message = f"Cannot serialize non-finite LDraw number {number!r}"
+        raise ValueError(message)
     if abs(number) <= ZERO_TOLERANCE:
         return "0"
 

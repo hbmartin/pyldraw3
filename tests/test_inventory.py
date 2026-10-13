@@ -12,7 +12,7 @@ from ldraw.cli import main
 from ldraw.colour import Colour
 from ldraw.config import Config
 from ldraw.geometry import Identity, Matrix, Radians, XAxis, YAxis, ZAxis
-from ldraw.model import Model, parse_model_result
+from ldraw.model import Model, parse_model_result, read_model
 from ldraw.parts import Parts
 from ldraw.pieces import Piece
 from ldraw.units import BRICK_HEIGHT, LDU_TO_MM, PLATE_HEIGHT, STUD_PITCH
@@ -177,8 +177,13 @@ def test_comparison_cli_classifies_bare_references(
     listing_path.assert_called_once_with()
     output = capsys.readouterr()
     if status == 2:
-        assert reference in output.err
-        assert "supply a parts catalog or use .dat" in output.err
+        if catalog_available:
+            assert reference in output.err
+            assert "supply a parts catalog or use .dat" in output.err
+        else:
+            assert str(tmp_path / "missing.lst") in output.err
+            assert "parts.lst not found" in output.err
+            assert "ldraw download" in output.err
         assert not output.out
     else:
         assert "Inventory matches" in output.out
@@ -221,6 +226,10 @@ def test_comparison_cli_traverses_once_without_catalog_work(
     with (
         patch("ldraw.cli._bom._parts_lst_path", return_value=parts.path),
         patch.object(
+            Parts, "_scan_library_directories", side_effect=AssertionError("scan")
+        ),
+        patch("ldraw.part.parse_ldraw_line", side_effect=AssertionError("geometry")),
+        patch.object(
             Model,
             "iter_occurrences",
             autospec=True,
@@ -238,6 +247,49 @@ def test_comparison_cli_traverses_once_without_catalog_work(
         assert main(["bom", str(model), "--compare", str(inventory)]) == 0
     assert traversal.call_count == 1
     assert traversal.call_args.kwargs == {"include_steps": False}
+
+
+@pytest.mark.parametrize("suffix", ["", ".dat", ".DAT"])
+def test_dotted_model_matches_its_own_exported_bom(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], suffix: str
+) -> None:
+    listing = tmp_path / "parts.lst"
+    listing.write_text("custom.v1.dat  Version One\ncustom.v2.dat  Version Two\n")
+    parts = Parts(parts_lst=listing)
+    model_path = tmp_path / "model.mpd"
+    identity = "1 0 0 0 1 0 0 0 1"
+    model_path.write_text(
+        f"0 FILE main.ldr\n1 4 0 0 0 {identity} body.ldr\n"
+        f"0 FILE body.ldr\n1 16 0 0 0 {identity} custom.v1{suffix}\n"
+        f"1 16 20 0 0 {identity} CUSTOM.V1{suffix}\n"
+        f"1 16 40 0 0 {identity} custom.v2{suffix}\n"
+    )
+    model = read_model(model_path)
+    rows = model.bill_of_materials(parts=parts)
+    assert [(row.part, row.quantity, row.description) for row in rows] == [
+        ("custom.v1", 2, "Version One"),
+        ("custom.v2", 1, "Version Two"),
+    ]
+    inventory = tmp_path / "inventory.csv"
+    inventory.write_text(rows_to_csv(rows))
+    assert compare_inventory(
+        model=model, expected=read_inventory(inventory), parts=parts
+    ).matched
+    with patch("ldraw.cli._bom._parts_lst_path", return_value=listing):
+        assert main(["bom", str(model_path), "--compare", str(inventory)]) == 0
+        capsys.readouterr()
+        exported = tmp_path / "exported.csv"
+        with patch("ldraw.cli._bom._try_load_parts", return_value=parts):
+            assert (
+                main(["bom", str(model_path), "--format", "csv", "-o", str(exported)])
+                == 0
+            )
+        assert main(["bom", str(model_path), "--compare", str(exported)]) == 0
+    assert "Inventory matches" in capsys.readouterr().out
+    aliases = {"custom.v1": "external-1", "custom.v2": "external-2"}
+    assert compare_inventory(
+        model=model, expected=rows, parts=parts, part_aliases=aliases
+    ).matched
 
 
 @pytest.mark.parametrize("failure", ["missing", "unreadable", "undecodable"])

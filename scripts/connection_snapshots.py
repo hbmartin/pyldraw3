@@ -17,6 +17,7 @@ from ldraw._library_content import (
     archive_library_content_sha256,
     library_content_sha256,
 )
+from ldraw.connection_types import ConnectionFeature
 from ldraw.dirs import get_cache_dir
 from ldraw.geometry import Matrix
 from ldraw.part_geometry import part_connections
@@ -76,10 +77,16 @@ def normalized(value: Any, *, library_root: Path) -> Any:  # noqa: ANN401, PLR09
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Path):
-        return value.relative_to(library_root).as_posix()
+        return value.relative_to(library_root).as_posix().lower()
+    if isinstance(value, ConnectionFeature):
+        return _normalized_feature(value, library_root=library_root)
     if is_dataclass(value) and not isinstance(value, type):
         return {
-            item.name: normalized(getattr(value, item.name), library_root=library_root)
+            item.name: (
+                getattr(value, item.name)
+                if item.name == "command"
+                else normalized(getattr(value, item.name), library_root=library_root)
+            )
             for item in fields(value)
         }
     if isinstance(value, dict):
@@ -93,6 +100,25 @@ def normalized(value: Any, *, library_root: Path) -> Any:  # noqa: ANN401, PLR09
     if isinstance(value, str):
         return value.replace(str(library_root), "<library>")
     return value
+
+
+def _normalized_feature(
+    feature: ConnectionFeature, *, library_root: Path
+) -> dict[str, Any]:
+    result = {
+        item.name: normalized(getattr(feature, item.name), library_root=library_root)
+        for item in fields(feature)
+    }
+    if (
+        feature.connection_provenance is not None
+        and (path := feature.connection_provenance.path) is not None
+    ):
+        canonical = f"<library>/{path.relative_to(library_root).as_posix().lower()}"
+        result["provenance"] = [
+            item.replace(str(path), canonical).replace(str(library_root), "<library>")
+            for item in feature.provenance
+        ]
+    return result
 
 
 def snapshot(parts: Parts, codes: list[str]) -> dict[str, Any]:
@@ -123,6 +149,12 @@ def main() -> None:
     args = parser.parse_args()
     parts = Parts(args.parts_list)
     digest = library_content_sha256(parts.library_root)
+    archive_digest: str | None = None
+    if args.archive is not None:
+        if archive_library_content_sha256(args.archive) != digest:
+            message = "archive library content differs from the extracted library"
+            raise ValueError(message)
+        archive_digest = archive_checksum(args.archive)
     if args.select:
         manifest = {
             "schema_version": 2,
@@ -141,11 +173,8 @@ def main() -> None:
                 "before explicitly reselecting"
             )
             raise ValueError(message)
-    if args.archive is not None:
-        if archive_library_content_sha256(args.archive) != digest:
-            message = "archive library content differs from the extracted library"
-            raise ValueError(message)
-        manifest["archive_sha256"] = archive_checksum(args.archive)
+    if archive_digest is not None:
+        manifest["archive_sha256"] = archive_digest
     result = snapshot(parts, manifest["part_codes"])
     CORPUS.mkdir(exist_ok=True)
     MANIFEST.write_text(f"{json.dumps(manifest, indent=2)}\n", encoding="utf-8")

@@ -44,6 +44,7 @@ class DiagnosticCode(StrEnum):
     MODEL_SINGULAR_MATRIX = "model.singular_matrix"
     MODEL_NON_ORTHONORMAL_MATRIX = "model.non_orthonormal_matrix"
     MODEL_UNKNOWN_META = "model.unknown_meta"
+    MODEL_NON_FINITE_NUMERIC = "model.non_finite_numeric"
     MODEL_DUPLICATE_PLACEMENT = "model.duplicate_placement"
     PART_NOT_FOUND = "part.not_found"
     PART_HEADER_INVALID = "part.header_invalid"

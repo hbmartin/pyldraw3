@@ -6,7 +6,7 @@ import csv
 import io
 import json
 from collections import Counter
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -18,6 +18,7 @@ from ldraw.utils import normalize_ref, split_reference
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
 
+    from ldraw._parts_listing import PartDescriptionSource
     from ldraw.model import ModelOccurrence
     from ldraw.parts import Parts
 
@@ -84,6 +85,63 @@ def _colour_name(colour: Colour, parts: Parts | None) -> str | None:
     return catalogued.name if catalogued is not None else None
 
 
+@dataclass(frozen=True, slots=True)
+class _BomLeaf:
+    """An expanded leaf with its BOM identity and classification prepared once."""
+
+    reference: str
+    part: str
+    colour: Colour
+    requires_listing: bool
+    unresolved_submodel: bool
+
+
+def _bom_leaf(occurrence: ModelOccurrence) -> _BomLeaf:
+    stem, suffix = split_reference(occurrence.reference)
+    suffix = suffix.casefold()
+    return _BomLeaf(
+        reference=occurrence.reference,
+        part=(stem if suffix == ".dat" else occurrence.reference).replace("\\", "/"),
+        colour=occurrence.colour,
+        requires_listing=suffix not in {".dat", ".ldr", ".mpd"},
+        unresolved_submodel=suffix in {".ldr", ".mpd"},
+    )
+
+
+def _prepare_inventory_occurrences(
+    occurrences: Iterable[ModelOccurrence],
+) -> tuple[_BomLeaf, ...]:
+    return tuple(_bom_leaf(occurrence) for occurrence in occurrences)
+
+
+def _bom_rows(leaves: Iterable[_BomLeaf], *, parts: Parts | None) -> list[BomRow]:
+    counts: Counter[tuple[str, Colour]] = Counter()
+    display: dict[str, str] = {}
+    for leaf in leaves:
+        part_key = leaf.part.casefold()
+        display.setdefault(part_key, leaf.part)
+        counts[(part_key, leaf.colour)] += 1
+    rows = [
+        BomRow(
+            part=display[part_key],
+            description=_description(display[part_key], parts),
+            colour_code=colour.code,
+            colour_name=_colour_name(colour, parts),
+            quantity=quantity,
+        )
+        for (part_key, colour), quantity in counts.items()
+    ]
+    rows.sort(
+        key=lambda row: (
+            row.part.casefold(),
+            row.colour_code is None,
+            row.colour_code or 0,
+            row.colour_name or "",
+        ),
+    )
+    return rows
+
+
 def bill_of_materials(
     model: _ModelLike | None = None,
     *,
@@ -105,7 +163,7 @@ def bill_of_materials(
     leaf parts.
 
     Part codes are counted case-insensitively; each row shows the code as
-    first written in the model.
+    first written in the model, removing only a terminal .dat suffix.
     """
     if (model is None) == (occurrences is None):
         message = "provide exactly one of model or occurrences"
@@ -115,31 +173,7 @@ def bill_of_materials(
     )
     if source is None:  # pragma: no cover - guarded above
         raise AssertionError
-    counts: Counter[tuple[str, Colour]] = Counter()
-    display: dict[str, str] = {}
-    for occurrence in source:
-        part_key = occurrence.part_code.casefold()
-        display.setdefault(part_key, occurrence.part_code)
-        counts[(part_key, occurrence.colour)] += 1
-    rows = [
-        BomRow(
-            part=display[part_key],
-            description=_description(part_key, parts),
-            colour_code=colour.code,
-            colour_name=_colour_name(colour, parts),
-            quantity=quantity,
-        )
-        for (part_key, colour), quantity in counts.items()
-    ]
-    rows.sort(
-        key=lambda row: (
-            row.part.casefold(),
-            row.colour_code is None,
-            row.colour_code or 0,
-            row.colour_name or "",
-        ),
-    )
-    return rows
+    return _bom_rows((_bom_leaf(occurrence) for occurrence in source), parts=parts)
 
 
 def rows_to_csv(rows: Iterable[BomRow]) -> str:
@@ -331,23 +365,16 @@ def _inventory_counts(
     return counts
 
 
-def _inventory_reference_requires_catalog(reference: str) -> bool:
-    """Whether a leaf reference needs listing evidence to identify a part."""
-    _, suffix = split_reference(reference)
-    return suffix.casefold() not in {".dat", ".ldr", ".mpd"}
-
-
 def _validate_inventory_reference(
-    occurrence: ModelOccurrence, *, parts: Parts | None
+    occurrence: _BomLeaf, *, parts: PartDescriptionSource | None
 ) -> None:
     """Require listing evidence for leaves without an explicit .dat suffix."""
-    _, suffix = split_reference(occurrence.reference)
-    if suffix.casefold() in {".ldr", ".mpd"}:
+    if occurrence.unresolved_submodel:
         message = (
             f"model contains unresolved submodel reference {occurrence.reference!r}"
         )
         raise ValueError(message)
-    if _inventory_reference_requires_catalog(occurrence.reference) and (
+    if occurrence.requires_listing and (
         parts is None or parts.description_for(occurrence.reference) is None
     ):
         message = (
@@ -375,7 +402,9 @@ def compare_inventory(
     explicit ``.dat`` part references do not require a catalog.
     """
     return _compare_inventory_occurrences(
-        occurrences=tuple(model.iter_occurrences(include_steps=False)),
+        occurrences=_prepare_inventory_occurrences(
+            model.iter_occurrences(include_steps=False)
+        ),
         expected=expected,
         part_aliases=part_aliases,
         parts=parts,
@@ -383,11 +412,11 @@ def compare_inventory(
 
 
 def _compare_inventory_occurrences(
-    occurrences: tuple[ModelOccurrence, ...],
+    occurrences: tuple[_BomLeaf, ...],
     expected: Iterable[BomRow],
     *,
     part_aliases: Mapping[str, str] | None = None,
-    parts: Parts | None = None,
+    parts: PartDescriptionSource | None = None,
 ) -> InventoryComparison:
     """Compare already-expanded leaves without traversing the model again."""
     aliases = {
@@ -401,14 +430,7 @@ def _compare_inventory_occurrences(
     for occurrence in occurrences:
         _validate_inventory_reference(occurrence, parts=parts)
     actual = _inventory_counts(
-        bill_of_materials(
-            occurrences=(
-                replace(occurrence, part_code=occurrence.reference)
-                if _inventory_reference_requires_catalog(occurrence.reference)
-                else occurrence
-                for occurrence in occurrences
-            ),
-        ),
+        _bom_rows(occurrences, parts=None),
         aliases=aliases,
     )
     inventory = _inventory_counts(expected, aliases=aliases)
