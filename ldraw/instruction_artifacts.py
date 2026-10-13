@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from ldraw._model_validation import _resolve_reference
+from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.errors import PartError, SubmodelCycleError
 from ldraw.geometry import Identity, Matrix, Vector
 from ldraw.lines import (
@@ -393,13 +393,14 @@ def _dependency_closure(
     objects: Iterable[ParsedObject],
     *,
     section_name: str,
+    context: ModelValidationContext | None = None,
 ) -> list[Model]:
     result: list[Model] = []
     seen = {normalize_ref(section_name)}
     pending = [obj for obj in objects if isinstance(obj, Piece)]
     while pending:
         piece = pending.pop(0)
-        target = _resolve_reference(root=root, piece=piece, context=None)
+        target = _resolve_reference(root=root, piece=piece, context=context)
         if target is None:
             continue
         key = normalize_ref(target.name)
@@ -420,7 +421,10 @@ def _write_snapshot_mpd(
 ) -> None:
     root_objects = _snapshot_objects(step.cumulative_objects)
     dependencies = _dependency_closure(
-        root=document.model, objects=root_objects, section_name=section.name
+        root=document.model,
+        objects=root_objects,
+        section_name=section.name,
+        context=document._resolution_context(),  # noqa: SLF001
     )
     sections = [(section.name, root_objects)] + [
         (dependency.name, _snapshot_objects(dependency.objects))
@@ -457,6 +461,7 @@ def _write_snapshot_ldr(
             inherited_colour=None,
             visiting=frozenset(),
             embedded_parts=embedded_parts,
+            context=document._resolution_context(),  # noqa: SLF001
         )
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,8 +471,9 @@ def _write_snapshot_ldr(
     )
     sidecars: list[str] = []
     for name, model in _embedded_dependency_closure(
-        document.model,
-        embedded_parts,
+        root=document.model,
+        initial=embedded_parts,
+        context=document._resolution_context(),  # noqa: SLF001
     ).items():
         relative = _safe_reference_path(name)
         destination = path.parent / relative
@@ -483,6 +489,8 @@ def _write_snapshot_ldr(
 def _embedded_dependency_closure(
     root: Model,
     initial: dict[str, Model],
+    *,
+    context: ModelValidationContext | None = None,
 ) -> dict[str, Model]:
     result = dict(initial)
     seen = {normalize_ref(name) for name in result}
@@ -490,7 +498,7 @@ def _embedded_dependency_closure(
     while pending:
         model = pending.pop(0)
         for piece in model.pieces:
-            target = _resolve_reference(root=root, piece=piece, context=None)
+            target = _resolve_reference(root=root, piece=piece, context=context)
             if target is None or not target.name.casefold().endswith(".dat"):
                 continue
             key = normalize_ref(target.name)
@@ -512,6 +520,7 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
     inherited_colour: Colour | None,
     visiting: frozenset[str],
     embedded_parts: dict[str, Model],
+    context: ModelValidationContext | None = None,
 ) -> Iterable[ParsedObject]:
     key = normalize_ref(model.name)
     if key in visiting:
@@ -523,7 +532,7 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
             world_position = position + matrix * piece_position
             world_matrix = matrix * piece_matrix
             colour = _effective_colour(obj.colour, inherited_colour)
-            target = _resolve_reference(root=root, piece=obj, context=None)
+            target = _resolve_reference(root=root, piece=obj, context=context)
             if target is not None and not target.name.casefold().endswith(".dat"):
                 yield from _flatten_objects(
                     root=root,
@@ -534,6 +543,7 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
                     inherited_colour=colour,
                     visiting=visiting,
                     embedded_parts=embedded_parts,
+                    context=context,
                 )
             else:
                 if target is not None:

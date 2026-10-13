@@ -60,30 +60,51 @@ class ModelValidationContext:
         completed = self._completed_sections.get(scope)
         if completed is not None and completed <= self.validated_sections:
             return
-        pending = [(selected, frozenset[str]())]
+        pending = [(selected, frozenset[str](), False)]
         visited: set[int] = set()
-        explored: set[tuple[int, frozenset[str]]] = set()
+        expanded: set[int] = set()
+        outgoing: dict[int, tuple[Model, ...]] = {}
+        deferred: dict[int, frozenset[str]] = {}
+        retried: set[tuple[int, frozenset[str]]] = set()
         while pending:
-            target, visiting = pending.pop()
+            target, visiting, exiting = pending.pop()
             section = _selected_model(target)
-            if (key := id(section)) not in visited:
+            key = id(section)
+            if exiting:
+                deferred[key] = frozenset().union(
+                    *(
+                        deferred.get(id(_selected_model(child)), frozenset())
+                        for child in outgoing[key]
+                    )
+                )
+                continue
+            if key not in visited:
                 visited.add(key)
                 yield section
-            route = key, visiting
-            if route in explored:
+            if key in expanded and not _retry_deferred(
+                key=key, visiting=visiting, deferred=deferred, retried=retried
+            ):
                 continue
-            explored.add(route)
             if reachable_only:
                 name = normalize_ref(section.name)
                 if name in visiting:
+                    deferred[key] = frozenset({name})
                     continue
-                targets = [
-                    target for _, target in self.edges(root=root, section=section)
-                ]
                 visiting = visiting | {name}
-            else:
-                targets = list(section.submodels.values())
-            pending.extend((target, visiting) for target in reversed(targets))
+            if key not in outgoing:
+                outgoing[key] = (
+                    tuple(
+                        target for _, target in self.edges(root=root, section=section)
+                    )
+                    if reachable_only
+                    else tuple(section.submodels.values())
+                )
+            expanded.add(key)
+            deferred[key] = frozenset()
+            pending.append((section, visiting, True))
+            pending.extend(
+                (target, visiting, False) for target in reversed(outgoing[key])
+            )
         self._completed_sections[scope] = frozenset(visited)
 
     def ensure_validated(self, *, root: Model, reachable_only: bool) -> None:
@@ -157,6 +178,21 @@ class ModelValidationContext:
         if piece not in self.targets:
             self.targets[piece] = _optional_reference(root=root, piece=piece)
         return self.targets[piece]
+
+
+def _retry_deferred(
+    *,
+    key: int,
+    visiting: frozenset[str],
+    deferred: dict[int, frozenset[str]],
+    retried: set[tuple[int, frozenset[str]]],
+) -> bool:
+    """Revisit only newly unblocked cycle-sensitive routes, never ordinary paths."""
+    blockers = deferred.get(key, frozenset())
+    if blockers <= visiting or (retry := (key, blockers & visiting)) in retried:
+        return False
+    retried.add(retry)
+    return True
 
 
 def _optional_reference(*, root: Model, piece: Piece) -> Model | None:
