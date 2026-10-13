@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from ldraw._model_validation import ModelValidationContext
     from ldraw.colour import Colour
     from ldraw.geometry import Matrix, Vector
     from ldraw.model import Model, ModelLoadResult
@@ -67,6 +68,8 @@ class _NumericAnalysis:
     values: tuple[float, ...]
     invalid: tuple[tuple[str, float], ...] = ()
     matrix_invalid: bool = False
+    position: Vector | None = None
+    matrix: Matrix | None = None
 
 
 _PLACEMENT_FIELDS = (
@@ -80,7 +83,7 @@ _PLACEMENT_FIELDS = (
 def _placement_analysis(position: Vector, matrix: Matrix) -> _NumericAnalysis:
     values = (position.x, position.y, position.z, *matrix.flatten())
     if all(isfinite(value) for value in values):
-        return _NumericAnalysis(values)
+        return _NumericAnalysis(values=values, position=position, matrix=matrix)
     invalid = tuple(
         (field, value)
         for field, value in zip(_PLACEMENT_FIELDS, values, strict=True)
@@ -90,6 +93,8 @@ def _placement_analysis(position: Vector, matrix: Matrix) -> _NumericAnalysis:
         values=values,
         invalid=invalid,
         matrix_invalid=any(field.startswith("matrix[") for field, _ in invalid),
+        position=position,
+        matrix=matrix,
     )
 
 
@@ -189,9 +194,12 @@ def _numeric_issue(
 
 
 def _iter_model_numeric_issues(
-    model: Model, *, placements: dict[Piece, tuple[Vector, Matrix]] | None = None
+    model: Model,
+    *,
+    reachable_only: bool = False,
+    context: ModelValidationContext | None = None,
 ) -> Iterator[ValidationIssue]:
-    """Check declared geometry, or only reachable sections for a submodel view."""
+    """Check geometry in the explicitly selected declared or reachable scope."""
     pending = [model]
     visited: set[int] = set()
     while pending:
@@ -199,32 +207,49 @@ def _iter_model_numeric_issues(
         if id(section) in visited:
             continue
         visited.add(id(section))
-        if model._is_submodel_view:  # noqa: SLF001 - comparison validation scope
+        if reachable_only:
             targets = [
                 target
                 for piece in section.pieces
-                if (target := model.submodel_for(piece)) is not None
+                if (
+                    target := (
+                        context.resolve(root=model, piece=piece)
+                        if context is not None
+                        else model.submodel_for(piece)
+                    )
+                )
+                is not None
             ]
         else:
             targets = list(section.submodels.values())
         pending.extend(reversed(targets))
         for obj in section.objects:
-            if isinstance(obj, Piece) and placements is not None:
-                if obj in placements:
+            if isinstance(obj, Piece) and context is not None:
+                if obj in context.placements:
                     continue
                 position, matrix = obj._transformed()  # noqa: SLF001 - effective placement
                 analysis = _placement_analysis(position=position, matrix=matrix)
                 if not analysis.invalid:
-                    placements[obj] = position, matrix
+                    context.placements[obj] = position, matrix
             else:
                 analysis = _object_analysis(obj)
-            if issue := _numeric_issue(
-                analysis,
-                number=section.source_line_for(obj),
-                path=None,
-                section=section.name or None,
+            if analysis.invalid and (
+                issue := _numeric_issue(
+                    analysis,
+                    number=section.source_line_for(obj),
+                    path=None,
+                    section=section.name or None,
+                )
             ):
                 yield issue
+
+
+def _reject_numeric_issue(issue: Diagnostic) -> None:
+    location = issue.section or "model"
+    if issue.line_number is not None:
+        location = f"{location}:{issue.line_number}"
+    message = f"{issue.code}: {location}: {issue.message}"
+    raise ValueError(message)
 
 
 _candidate_codes_cache: WeakKeyDictionary[Parts, tuple[int, tuple[str, ...]]] = (
@@ -442,7 +467,12 @@ def _iter_object_issues(  # noqa: PLR0913 - shared parsed-object analysis and co
 
 
 def _iter_section_issues(
-    model: Model, *, parts: Parts | None, submodels: set[str], path: Path | None
+    model: Model,
+    *,
+    parts: Parts | None,
+    submodels: set[str],
+    path: Path | None,
+    context: ModelValidationContext | None = None,
 ) -> Iterator[ValidationIssue]:
     """Share each object's numeric analysis across section validation passes."""
     object_issues: list[ValidationIssue] = []
@@ -453,6 +483,14 @@ def _iter_section_issues(
             if number is None and not isinstance(obj, Piece):
                 continue
             analysis = _object_analysis(obj)
+            if (
+                context is not None
+                and isinstance(obj, Piece)
+                and not analysis.invalid
+                and analysis.position is not None
+                and analysis.matrix is not None
+            ):
+                context.placements[obj] = analysis.position, analysis.matrix
             if number is not None:
                 object_issues.extend(
                     _iter_object_issues(

@@ -30,7 +30,7 @@ from ldraw.connection_metadata import metadata_report, parse_ldcad_text
 from ldraw.connection_types import (
     METADATA_SOURCES as _METADATA_SOURCES,
 )
-from ldraw.connection_types import ConnectionSource, _format_provenance
+from ldraw.connection_types import ConnectionSource, _feature_origin
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import NoGeometryError, PartError
 from ldraw.geometry import Vector
@@ -677,7 +677,7 @@ def _fold_child(  # noqa: PLR0913 - traversal outputs are explicit
             continue
         provenance = feature.connection_provenance
         key = (
-            _connection_origin(feature),
+            _feature_origin(feature),
             provenance.line_number if provenance is not None else None,
         )
         if len(diagnostics) > diagnostic_count:
@@ -758,7 +758,7 @@ def _transformed_child_connection(  # noqa: PLR0913 - transform context is expli
                 feature,
                 message=(
                     f"connection feature {feature.feature_id!r} from "
-                    f"{_connection_origin(feature)} rejected under invalid "
+                    f"{_feature_origin(feature)} rejected under invalid "
                     "scale or reflection"
                 ),
             ),
@@ -887,7 +887,7 @@ def _memoized_socket_transform(  # noqa: PLR0913 - transform context is explicit
                 feature,
                 message=(
                     f"socket evidence {feature.feature_id!r} from "
-                    f"{_connection_origin(feature)} dropped under invalid "
+                    f"{_feature_origin(feature)} dropped under invalid "
                     "scale or reflection"
                 ),
             ),
@@ -1148,7 +1148,7 @@ def _feature_conflict(
     return Diagnostic(
         message=(
             f"connection feature {winning.feature_id!r} from "
-            f"{_connection_origin(winning)} overrides {_connection_origin(losing)}"
+            f"{_feature_origin(winning)} overrides {_feature_origin(losing)}"
         ),
         severity=Severity.WARNING,
         code=DiagnosticCode.CONNECTION_FEATURE_CONFLICT,
@@ -1164,13 +1164,6 @@ def _feature_conflict(
         ),
         offending_value=winning.feature_id,
     )
-
-
-def _connection_origin(feature: ConnectionFeature) -> str:
-    provenance = feature.connection_provenance
-    if provenance is None:
-        return ", ".join(feature.provenance) or feature.source.value
-    return _format_provenance(provenance)
 
 
 class _BoxAccumulator:

@@ -12,7 +12,12 @@ from ldraw.cli import main
 from ldraw.colour import Colour
 from ldraw.config import Config
 from ldraw.geometry import Identity, Matrix, Radians, XAxis, YAxis, ZAxis
-from ldraw.model import Model, parse_model_result, read_model
+from ldraw.model import (
+    Model,
+    _iter_inventory_occurrences,
+    parse_model_result,
+    read_model,
+)
 from ldraw.parts import Parts
 from ldraw.pieces import Piece
 from ldraw.units import BRICK_HEIGHT, LDU_TO_MM, PLATE_HEIGHT, STUD_PITCH
@@ -68,7 +73,7 @@ def test_inventory_rejects_unknown_dotted_references_before_aliases(
     stem = reference.rsplit(".", maxsplit=1)[0]
     aliases = {reference: "3001", stem: "3001"} if with_alias else None
     expected_code = "3001" if with_alias else stem
-    model = Model(objects=[Piece.place(reference, colour=4)])
+    model = Model(objects=[Piece.place(reference, colour=4, suffix="")])
     with pytest.raises(ValueError, match=r"without an explicit \.dat suffix") as raised:
         compare_inventory(
             model,
@@ -229,11 +234,9 @@ def test_comparison_cli_traverses_once_without_catalog_work(
             Parts, "_scan_library_directories", side_effect=AssertionError("scan")
         ),
         patch("ldraw.part.parse_ldraw_line", side_effect=AssertionError("geometry")),
-        patch.object(
-            Model,
-            "iter_occurrences",
-            autospec=True,
-            side_effect=Model.iter_occurrences,
+        patch(
+            "ldraw.model._iter_inventory_occurrences",
+            wraps=_iter_inventory_occurrences,
         ) as traversal,
         patch.object(
             Parts, "_categorize_parts", side_effect=AssertionError("categorization")
@@ -246,7 +249,6 @@ def test_comparison_cli_traverses_once_without_catalog_work(
     ):
         assert main(["bom", str(model), "--compare", str(inventory)]) == 0
     assert traversal.call_count == 1
-    assert traversal.call_args.kwargs == {"include_steps": False}
 
 
 @pytest.mark.parametrize("suffix", ["", ".dat", ".DAT"])

@@ -21,7 +21,7 @@ from ldraw.lines import (
     Quadrilateral,
     Triangle,
 )
-from ldraw.pieces import MAIN_COLOUR_CODE, Piece
+from ldraw.pieces import MAIN_COLOUR_CODE, Piece, _default_leaf_identity
 from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
@@ -285,10 +285,11 @@ def _piece_manifest(
     source_line: int | None,
 ) -> dict[str, object]:
     position, matrix = piece._transformed()  # noqa: SLF001 - serialization view
+    part = _default_leaf_identity(piece)
     return {
-        "part": piece.part,
+        "part": part,
         "reference": piece.reference,
-        "description": parts.description_for(piece.part),
+        "description": parts.description_for(part),
         "colour": _colour_manifest(piece.colour, parts=parts),
         "position": [position.x, position.y, position.z],
         "matrix": matrix.rows,

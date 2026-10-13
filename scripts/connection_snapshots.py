@@ -91,7 +91,7 @@ def normalized(value: Any, *, library_root: Path) -> Any:  # noqa: ANN401, PLR09
                 _canonical_member(member)
                 if isinstance(value, ConnectionProvenance)
                 and item.name == "archive_member"
-                and (member := getattr(value, item.name)) is not None
+                and (member := getattr(value, item.name))
                 else normalized(getattr(value, item.name), library_root=library_root)
             )
             for item in fields(value)
@@ -125,7 +125,7 @@ _SOURCE_ENTRY = re.compile(
 def _canonical_source(
     provenance: ConnectionProvenance, *, library_root: Path
 ) -> str | None:
-    if provenance.archive_member is not None:
+    if provenance.archive_member:
         return _canonical_member(provenance.archive_member)
     if provenance.path is not None:
         relative = _canonical_path(provenance.path, library_root=library_root)
@@ -155,10 +155,11 @@ def _normalized_source_text(
         canonical = f"<library>/{relative}"
     elif source.startswith("<library>/"):
         canonical = f"<library>/{_canonical_member(source[len('<library>/') :])}"
-    elif (
-        "/" in source
-        or "\\" in source
-        or (tail and not any(c.isspace() for c in source))
+    elif not any(c.isspace() for c in source) and (
+        tail
+        or source.replace("\\", "/")
+        .casefold()
+        .startswith(("parts/", "p/", "models/", "textures/"))
     ):
         canonical = _canonical_member(source)
     else:

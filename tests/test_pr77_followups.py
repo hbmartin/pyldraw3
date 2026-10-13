@@ -10,7 +10,7 @@ import pytest
 
 from ldraw.analysis import analyze_model
 from ldraw.bom import (
-    _validate_inventory_submodels,
+    _prepare_inventory_occurrences,
     bill_of_materials,
     compare_inventory,
 )
@@ -214,8 +214,8 @@ def test_cli_prepares_and_rejects_submodels_once_before_listing(
     inventory.write_text("part,colour_code,quantity\n3001,4,1\n")
     with (
         patch(
-            "ldraw.bom._validate_inventory_submodels",
-            wraps=_validate_inventory_submodels,
+            "ldraw.bom._prepare_inventory_occurrences",
+            wraps=_prepare_inventory_occurrences,
         ) as guard,
         patch("ldraw.cli._bom._inventory_parts", side_effect=AssertionError("listing")),
     ):
@@ -229,8 +229,8 @@ def test_valid_comparison_prepares_structure_and_expands_once() -> None:
     model = Model(objects=[Piece.place("3001", colour=4)])
     with (
         patch(
-            "ldraw.bom._validate_inventory_submodels",
-            wraps=_validate_inventory_submodels,
+            "ldraw.bom._prepare_inventory_occurrences",
+            wraps=_prepare_inventory_occurrences,
         ) as guard,
         patch(
             "ldraw.model._iter_inventory_occurrences", wraps=_iter_inventory_occurrences

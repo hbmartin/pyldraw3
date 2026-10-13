@@ -10,7 +10,7 @@ from ldraw._parts_listing import PartsListing
 from ldraw.bom import (
     BomRow,
     _compare_inventory_occurrences,
-    _prepare_inventory_occurrences,
+    _prepare_model_inventory,
     comparison_to_csv,
     read_inventory,
     rows_to_csv,
@@ -18,7 +18,7 @@ from ldraw.bom import (
 )
 from ldraw.cli._common import _parts_lst_path, _print_diagnostics, _try_load_parts
 from ldraw.errors import ConfigLoadError, PartError
-from ldraw.model import load_model, read_model
+from ldraw.model import _load_inventory_model, read_model
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
@@ -155,7 +155,7 @@ def _compare_inventory_command(
             message = "--inventory-mapping requires --compare"
             raise ValueError(message)  # noqa: TRY301 - input failures share exit status 2
         options = _read_inventory_mapping(mapping)
-        loaded = load_model(file)
+        loaded, context = _load_inventory_model(file)
         if loaded.model is None:
             _print_diagnostics(loaded.diagnostics, fallback_path=file)
             return 2
@@ -170,9 +170,7 @@ def _compare_inventory_command(
             columns=options.get("columns"),
             colour_map=options.get("colour_map"),
         )
-        occurrences = _prepare_inventory_occurrences(
-            loaded.model.iter_occurrences(include_steps=False)
-        )
+        occurrences = _prepare_model_inventory(loaded.model, context=context)
         comparison = _compare_inventory_occurrences(
             occurrences=occurrences,
             expected=expected,

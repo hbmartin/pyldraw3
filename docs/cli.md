@@ -259,6 +259,10 @@ source provenance, direct and expanded additions, cumulative count/BOM/bounds,
 ROTSTEP and LPub camera state, directives, callouts/groups, and suppression or
 page-break flags. Cumulative occurrences are deliberately represented only by
 aggregates so manifests do not grow quadratically.
+Direct placements and expanded occurrences use the same default identity rule:
+part codes omit a terminal `.dat`, while `.ldr`/`.mpd` references retain their
+suffixes. This keeps an unresolved `body.ldr` distinct from `body.dat` in both
+placement views. The corrected values retain manifest schema v1.
 
 `snapshots` writes this layout by default:
 

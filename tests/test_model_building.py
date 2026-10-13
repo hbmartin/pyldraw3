@@ -390,10 +390,14 @@ def test_submodel_view_resolves_names_case_insensitively() -> None:
     assert root.submodel_view("OUTER.LDR").name == "outer.ldr"
 
 
-def test_submodel_view_of_the_root_name_is_the_root() -> None:
+def test_submodel_view_of_the_root_name_shares_root_content() -> None:
     root = nested_mpd_root()
 
-    assert root.submodel_view("Main.ldr") is root
+    view = root.submodel_view("Main.ldr")
+    assert view is not root
+    assert view.objects is root.objects
+    assert view.submodels is root.submodels
+    assert view.name == root.name
 
 
 def test_submodel_view_unknown_name_raises() -> None:

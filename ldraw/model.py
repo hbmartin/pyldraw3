@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
+from ldraw._model_validation import ModelValidationContext
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import (
     DuplicateSubmodelError,
@@ -21,8 +22,13 @@ from ldraw.errors import (
 from ldraw.geometry import Identity, Vector
 from ldraw.lines import Comment, MetaCommand
 from ldraw.part import ParsedObject, parse_ldraw_line
-from ldraw.pieces import MAIN_COLOUR_CODE, Piece
-from ldraw.utils import ldraw_file_name, normalize_ref, split_reference
+from ldraw.pieces import MAIN_COLOUR_CODE, Piece, _default_leaf_identity
+from ldraw.utils import (
+    SUBMODEL_SUFFIXES,
+    ldraw_file_name,
+    normalize_ref,
+    split_reference,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -431,8 +437,8 @@ class Model:
         """
         key = normalize_ref(name)
         if key == normalize_ref(self.name):
-            return self
-        if (submodel := self.submodels.get(key)) is None:
+            submodel = self
+        elif (submodel := self.submodels.get(key)) is None:
             raise UnknownSubmodelError(name)
         view = Model(
             name=submodel.name,
@@ -682,25 +688,29 @@ def _iter_occurrences_skip_cycles(
 
 
 def _iter_inventory_occurrences(
-    model: Model, *, placements: dict[Piece, tuple[Vector, Matrix]]
+    model: Model, *, context: ModelValidationContext
 ) -> Iterator[ModelOccurrence]:
-    """Expand validated source placements once for inventory comparison."""
-    return _iter_model_occurrences(
+    """Use validated root placements as world coordinates at the identity origin."""
+    placements = (
+        (piece, None, *context.placements[piece])
+        for piece in model.objects
+        if isinstance(piece, Piece)
+    )
+    return _iter_occurrences_at_placements(
         root=model,
         model=model,
-        position=Vector(0, 0, 0),
-        matrix=Identity(),
+        placements=placements,
         inherited_colour=None,
         visiting=frozenset(),
         inherited_step=None,
         path=(),
         expand_submodels=True,
         include_steps=False,
-        placements=placements,
+        context=context,
     )
 
 
-def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
+def _iter_model_occurrences(  # noqa: PLR0913 - explicit traversal state
     *,
     root: Model,
     model: Model,
@@ -713,38 +723,103 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
     expand_submodels: bool,
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None = None,
-    placements: dict[Piece, tuple[Vector, Matrix]] | None = None,
+    context: ModelValidationContext | None = None,
 ) -> Iterator[ModelOccurrence]:
-    """Yield leaf occurrences of ``model``, resolving references against ``root``.
+    """Compose the supplied parent transform and traverse resulting placements."""
+    return _iter_occurrences_at_placements(
+        root=root,
+        model=model,
+        placements=_iter_composed_placements(
+            model=model,
+            position=position,
+            matrix=matrix,
+            include_steps=include_steps,
+            context=context,
+        ),
+        inherited_colour=inherited_colour,
+        visiting=visiting,
+        inherited_step=inherited_step,
+        path=path,
+        expand_submodels=expand_submodels,
+        include_steps=include_steps,
+        on_cycle=on_cycle,
+        context=context,
+    )
 
-    A submodel reference that would re-enter an in-progress submodel
-    raises ``SubmodelCycleError``, unless ``on_cycle`` is given — then the
-    reference is reported to the callback and skipped instead.
-    """
-    visiting = visiting | {normalize_ref(model.name)}
+
+def _iter_composed_placements(
+    *,
+    model: Model,
+    position: Vector,
+    matrix: Matrix,
+    include_steps: bool,
+    context: ModelValidationContext | None,
+) -> Iterator[tuple[Piece, int | None, Vector, Matrix]]:
+    """Compose each source placement, checking world values for comparison."""
+    from ldraw.validation import (  # noqa: PLC0415
+        _numeric_issue,
+        _placement_analysis,
+        _reject_numeric_issue,
+    )
+
     for piece, source_step in _iter_piece_steps(model, include_steps=include_steps):
-        effective = placements.get(piece) if placements is not None else None
+        effective = context.placements.get(piece) if context is not None else None
         piece_position, piece_matrix = (
             effective if effective is not None else piece._transformed()  # noqa: SLF001
         )
-        if placements is not None and not path:
-            world_position, world_matrix = piece_position, piece_matrix
-        else:
-            world_position = position + matrix * piece_position
-            world_matrix = matrix * piece_matrix
+        world_position = position + matrix * piece_position
+        world_matrix = matrix * piece_matrix
+        if context is not None:
+            analysis = _placement_analysis(position=world_position, matrix=world_matrix)
+            if analysis.invalid and (
+                issue := _numeric_issue(
+                    analysis,
+                    number=model.source_line_for(piece),
+                    path=None,
+                    section=model.name or None,
+                )
+            ):
+                _reject_numeric_issue(issue)
+        yield piece, source_step, world_position, world_matrix
+
+
+def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
+    *,
+    root: Model,
+    model: Model,
+    placements: Iterable[tuple[Piece, int | None, Vector, Matrix]],
+    inherited_colour: Colour | None,
+    visiting: frozenset[str],
+    inherited_step: int | None,
+    path: tuple[OccurrencePathItem, ...],
+    expand_submodels: bool,
+    include_steps: bool,
+    on_cycle: Callable[[Model, Piece, Model], None] | None = None,
+    context: ModelValidationContext | None = None,
+) -> Iterator[ModelOccurrence]:
+    """Expand world placements or emit leaves, sharing identity and cycle handling."""
+    visiting = visiting | {normalize_ref(model.name)}
+    for piece, source_step, position, matrix in placements:
         occurrence_step = inherited_step if inherited_step is not None else source_step
         colour = _effective_colour(piece.colour, inherited_colour)
+        source_line = model.source_line_for(piece)
         occurrence_path = (
             *path,
             OccurrencePathItem(
                 model=model,
                 piece=piece,
-                source_line=model.source_line_for(piece),
+                source_line=source_line,
                 local_step=source_step,
                 effective_step=occurrence_step,
             ),
         )
-        target = root.submodel_for(piece) if expand_submodels else None
+        target = None
+        if expand_submodels:
+            target = (
+                context.resolve(root=root, piece=piece)
+                if context is not None
+                else root.submodel_for(piece)
+            )
         if target is not None:
             if normalize_ref(target.name) in visiting:
                 if on_cycle is None:
@@ -754,8 +829,8 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
             yield from _iter_model_occurrences(
                 root=root,
                 model=target,
-                position=world_position,
-                matrix=world_matrix,
+                position=position,
+                matrix=matrix,
                 inherited_colour=colour,
                 visiting=visiting,
                 inherited_step=occurrence_step,
@@ -763,22 +838,18 @@ def _iter_model_occurrences(  # noqa: PLR0913 - traversal state is explicit
                 expand_submodels=expand_submodels,
                 include_steps=include_steps,
                 on_cycle=on_cycle,
-                placements=placements,
+                context=context,
             )
             continue
         yield ModelOccurrence(
             piece=piece,
-            part_code=(
-                piece.reference
-                if piece.suffix.casefold() in {".ldr", ".mpd"}
-                else piece.part
-            ),
+            part_code=_default_leaf_identity(piece),
             reference=piece.reference,
             colour=colour,
-            position=world_position,
-            matrix=world_matrix,
+            position=position,
+            matrix=matrix,
             source_model=model,
-            source_line=model.source_line_for(piece),
+            source_line=source_line,
             step=occurrence_step,
             source_step=source_step,
             path=occurrence_path,
@@ -937,7 +1008,12 @@ def _parse_objects_report(
     return objects, source_lines, object_source_lines, diagnostics, complete
 
 
-def _model_structure_diagnostics(root: Model, *, path: Path | None) -> list[Diagnostic]:
+def _model_structure_diagnostics(
+    root: Model,
+    *,
+    path: Path | None,
+    context: ModelValidationContext | None = None,
+) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     emitted_cycles: set[tuple[str, int | None]] = set()
 
@@ -945,11 +1021,15 @@ def _model_structure_diagnostics(root: Model, *, path: Path | None) -> list[Diag
         key = normalize_ref(model.name)
         next_visiting = (*visiting, key)
         for piece in model.pieces:
-            target = root.submodel_for(piece)
+            target = (
+                context.resolve(root=root, piece=piece)
+                if context is not None
+                else root.submodel_for(piece)
+            )
             line_number = model.source_line_for(piece)
             if target is None:
                 _, suffix = split_reference(piece.reference)
-                if suffix.casefold() in {".ldr", ".mpd"}:
+                if suffix.casefold() in SUBMODEL_SUFFIXES:
                     # Sibling-file references are legal LDraw multi-file
                     # layout, so an unresolved one is only a warning.
                     diagnostics.append(
@@ -993,11 +1073,12 @@ def _validation_diagnostics(
     *,
     parts: Parts | None,
     path: Path | None,
+    context: ModelValidationContext | None = None,
 ) -> list[Diagnostic]:
     from ldraw.validation import _iter_section_issues  # noqa: PLC0415
 
     submodels = {normalize_ref(root.name), *root.submodels}
-    structural = _model_structure_diagnostics(root, path=path)
+    structural = _model_structure_diagnostics(root, path=path, context=context)
     unresolved_references = {
         (diagnostic.section, diagnostic.line_number)
         for diagnostic in structural
@@ -1012,6 +1093,7 @@ def _validation_diagnostics(
                 parts=parts,
                 submodels=submodels,
                 path=path,
+                context=context,
             )
             # A structurally unresolved reference is not also unknown.
             if not (
@@ -1032,6 +1114,25 @@ def parse_model_result(
     tolerant: bool = True,
 ) -> ModelLoadResult:
     """Parse and validate text once, optionally retaining a partial model."""
+    return _parse_model_result(
+        text,
+        name=name,
+        source=source,
+        parts=parts,
+        tolerant=tolerant,
+    )
+
+
+def _parse_model_result(  # noqa: PLR0913 - report inputs plus optional invocation analysis
+    text: str,
+    *,
+    name: str,
+    source: Path | str | None,
+    parts: Parts | None,
+    tolerant: bool,
+    context: ModelValidationContext | None = None,
+) -> ModelLoadResult:
+    """Build a report, optionally retaining source analysis for this invocation."""
     if not tolerant:
         try:
             model = parse_model(text, name=name, source=source)
@@ -1039,12 +1140,13 @@ def parse_model_result(
             # Re-derive diagnostics tolerantly so strict failures report
             # the same codes and line numbers as tolerant mode, then
             # discard the partial model.
-            report = parse_model_result(
+            report = _parse_model_result(
                 text,
                 name=name,
                 source=source,
                 parts=parts,
                 tolerant=True,
+                context=context,
             )
             return ModelLoadResult(
                 model=None,
@@ -1055,6 +1157,7 @@ def parse_model_result(
             model,
             parts=parts,
             path=_source_path(source),
+            context=context,
         )
         return ModelLoadResult(model, tuple(diagnostics), complete=True)
 
@@ -1084,61 +1187,18 @@ def parse_model_result(
         seen.add(key)
         unique_sections.append(section)
 
-    if not unique_sections:
-        parsed = _parse_objects_report(
-            preamble,
-            source=source,
-            section=name or None,
-        )
-        objects, source_lines, object_lines, parse_diagnostics, parsed_all = parsed
-        model = Model(
-            name=name,
-            objects=objects,
-            _source_lines=source_lines,
-            _object_source_lines=object_lines,
-        )
-        diagnostics.extend(parse_diagnostics)
-        complete = complete and parsed_all
-    else:
-        first, *rest = unique_sections
-        root_lines = [*preamble, *first.lines]
-        parsed = _parse_objects_report(
-            root_lines,
-            source=source,
-            section=first.name,
-        )
-        objects, source_lines, object_lines, parse_diagnostics, parsed_all = parsed
-        model = Model(
-            name=first.name,
-            objects=objects,
-            _source_lines=source_lines,
-            _object_source_lines=object_lines,
-        )
-        diagnostics.extend(parse_diagnostics)
-        complete = complete and parsed_all
-        for section in rest:
-            parsed = _parse_objects_report(
-                section.lines,
-                source=source,
-                section=section.name,
-            )
-            objects, source_lines, object_lines, section_diagnostics, parsed_all = (
-                parsed
-            )
-            model.submodels[normalize_ref(section.name)] = Model(
-                name=section.name,
-                objects=objects,
-                _source_lines=source_lines,
-                _object_source_lines=object_lines,
-            )
-            diagnostics.extend(section_diagnostics)
-            complete = complete and parsed_all
+    model, parse_diagnostics, parsed_all = _reported_model(
+        preamble=preamble, sections=unique_sections, name=name, source=source
+    )
+    diagnostics.extend(parse_diagnostics)
+    complete = complete and parsed_all
 
     diagnostics.extend(
         _validation_diagnostics(
             model,
             parts=parts,
             path=_source_path(source),
+            context=context,
         ),
     )
     return ModelLoadResult(
@@ -1146,6 +1206,39 @@ def parse_model_result(
         diagnostics=tuple(diagnostics),
         complete=complete,
     )
+
+
+def _reported_model(
+    *,
+    preamble: list[_NumberedLine],
+    sections: list[_RawSection],
+    name: str,
+    source: Path | str | None,
+) -> tuple[Model, list[Diagnostic], bool]:
+    """Build report sections while retaining each object's source location."""
+    first, *rest = sections or [_RawSection(name=name)]
+    objects, source_lines, object_lines, diagnostics, complete = _parse_objects_report(
+        [*preamble, *first.lines], source=source, section=first.name or None
+    )
+    root = Model(
+        name=first.name,
+        objects=objects,
+        _source_lines=source_lines,
+        _object_source_lines=object_lines,
+    )
+    for section in rest:
+        objects, source_lines, object_lines, issues, parsed_all = _parse_objects_report(
+            section.lines, source=source, section=section.name
+        )
+        root.submodels[normalize_ref(section.name)] = Model(
+            name=section.name,
+            objects=objects,
+            _source_lines=source_lines,
+            _object_source_lines=object_lines,
+        )
+        diagnostics.extend(issues)
+        complete = complete and parsed_all
+    return root, diagnostics, complete
 
 
 def parse_model(
@@ -1221,6 +1314,25 @@ def load_model(
     tolerant: bool = True,
 ) -> ModelLoadResult:
     """Read, parse, and validate a model without throwing for data failures."""
+    return _load_model(path, parts=parts, tolerant=tolerant)
+
+
+def _load_inventory_model(
+    path: Path,
+) -> tuple[ModelLoadResult, ModelValidationContext]:
+    """Load a report and source analysis for immediate inventory preparation."""
+    context = ModelValidationContext()
+    return _load_model(path, parts=None, tolerant=True, context=context), context
+
+
+def _load_model(
+    path: Path | str,
+    *,
+    parts: Parts | None,
+    tolerant: bool,
+    context: ModelValidationContext | None = None,
+) -> ModelLoadResult:
+    """Share file reading between public loading and comparison report loading."""
     file_path = Path(path)
     try:
         data = file_path.read_bytes()
@@ -1253,10 +1365,11 @@ def load_model(
             ),
             complete=False,
         )
-    return parse_model_result(
+    return _parse_model_result(
         text,
         name=file_path.name,
         source=file_path,
         parts=parts,
         tolerant=tolerant,
+        context=context,
     )

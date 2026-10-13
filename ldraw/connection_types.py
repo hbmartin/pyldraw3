@@ -313,6 +313,13 @@ def _format_provenance(
     return location
 
 
+def _feature_origin(feature: ConnectionFeature) -> str:
+    """Report structured origins, falling back to retained attribution text."""
+    if feature.connection_provenance is not None:
+        return _format_provenance(feature.connection_provenance)
+    return ", ".join(feature.provenance) or feature.source.value
+
+
 @dataclass(frozen=True, slots=True)
 class _TransformScales:
     """Scale and distortion measurements for one non-singular placement."""

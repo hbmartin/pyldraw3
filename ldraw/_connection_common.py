@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING
 
 from ldraw.connection_types import (
     ConnectionFeature,
-    ConnectionProvenance,
     ConnectionRole,
-    _format_provenance,
+    _feature_origin,
     frame_for_axis,
 )
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -284,16 +283,6 @@ def _boolean(value: str | None, *, default: bool) -> bool:
         message = f"expected true or false, got {value!r}"
         raise ValueError(message)
     return lowered == "true"
-
-
-def _provenance_text(provenance: ConnectionProvenance) -> str:
-    return _format_provenance(provenance)
-
-
-def _feature_origin(feature: ConnectionFeature) -> str:
-    if feature.connection_provenance is not None:
-        return _provenance_text(feature.connection_provenance)
-    return ", ".join(feature.provenance) or feature.source.value
 
 
 def _diagnostic(  # noqa: PLR0913
