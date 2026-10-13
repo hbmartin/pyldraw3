@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -12,6 +11,7 @@ from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from ldraw._parts_listing import DOT_DAT, iter_parts_listing
 from ldraw.colour import Colour
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
 from ldraw.errors import PartError, PartNotFoundError
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from ldraw.part_geometry_types import BoundingBox, PartGeometry, StudReference
     from ldraw.part_metadata import PartMetadata
 
-DOT_DAT = re.compile(r"\.DAT", flags=re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -891,26 +890,13 @@ class Parts:
     def _load_parts_list(self) -> None:
         """Load parts from the parts.lst file, skipping malformed lines."""
         duplicate_descriptions = 0
-        with self.path.open(mode="r", encoding="utf-8") as parts_lst_file:
-            for line_number, line in enumerate(parts_lst_file, start=1):
-                if not line.strip():
-                    continue
-                pieces = DOT_DAT.split(line, maxsplit=1)
-                if len(pieces) != 2:
-                    logger.warning(
-                        "skipping malformed line %d in %s: %r",
-                        line_number,
-                        self.path,
-                        line.strip(),
-                    )
-                    continue
-
-                code, description = self.section_find(pieces)
-                if description in self.by_name and self.by_name[description] != code:
-                    duplicate_descriptions += 1
-                self.by_name[description] = code
-                self.by_code[code] = description
-                self.by_code_name[(code, description)] = None
+        for listed_code, listed_description in iter_parts_listing(self.path):
+            code, description = self.section_find([listed_code, listed_description])
+            if description in self.by_name and self.by_name[description] != code:
+                duplicate_descriptions += 1
+            self.by_name[description] = code
+            self.by_code[code] = description
+            self.by_code_name[(code, description)] = None
         if duplicate_descriptions:
             logger.info(
                 "%d parts in %s share a description with another part"
@@ -1034,9 +1020,11 @@ class Parts:
     def description_for(self, code: str) -> str | None:
         """Return the ``parts.lst`` description for a part code, or None.
 
-        The lookup normalizes casing and reference separators, matching
-        library reference lookups without parsing or categorizing parts.
+        Prefer exact casing, then normalize casing and reference separators
+        without parsing or categorizing parts.
         """
+        if (description := self.by_code.get(code)) is not None:
+            return description
         return self._by_code_normalized.get(_reference_key(code))
 
     def part(

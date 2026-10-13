@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING
+from pathlib import PurePosixPath
+from typing import TYPE_CHECKING, cast
 from zipfile import ZipFile
+
+from ldraw._zip_paths import is_unsafe_zip_member
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from pathlib import Path
-    from zipfile import ZipInfo
+    from zipfile import ZipExtFile, ZipInfo
 
 
 def _content_sha256(entries: Iterable[tuple[str, bytes]]) -> str:
@@ -33,16 +35,17 @@ def _content_sha256(entries: Iterable[tuple[str, bytes]]) -> str:
 
 def _directory_entries(library_root: Path) -> Iterator[tuple[str, bytes]]:
     for child in library_root.iterdir():
-        if child.is_dir() and child.name.lower() in {"parts", "p"}:
-            paths = (
-                path
-                for path in child.rglob("*")
-                if path.is_file() and path.suffix.lower() == ".dat"
-            )
-        elif child.is_file() and child.name.lower() == "ldconfig.ldr":
-            paths = iter((child,))
-        else:
-            continue
+        match child.name.lower():
+            case "parts" | "p" if child.is_dir():
+                paths = (
+                    path
+                    for path in child.rglob("*")
+                    if path.is_file() and path.suffix.lower() == ".dat"
+                )
+            case "ldconfig.ldr" if child.is_file():
+                paths = iter((child,))
+            case _:
+                continue
         for path in paths:
             with path.open("rb") as source:
                 file_digest = hashlib.file_digest(source, "sha256").digest()
@@ -69,21 +72,14 @@ def _is_content_source(relative: PurePosixPath) -> bool:
 
 
 def _archive_members(archive: ZipFile) -> list[tuple[ZipInfo, PurePosixPath]]:
-    members: list[tuple[ZipInfo, PurePosixPath]] = []
+    members: dict[str, tuple[ZipInfo, PurePosixPath]] = {}
     for member in archive.infolist():
-        path = PurePosixPath(member.filename)
-        windows_path = PureWindowsPath(member.filename)
-        if (
-            path.is_absolute()
-            or windows_path.is_absolute()
-            or ".." in path.parts
-            or ".." in windows_path.parts
-        ):
+        if is_unsafe_zip_member(member.filename):
             message = f"unsafe ZIP member path {member.filename!r}"
             raise ValueError(message)
         if not member.is_dir():
-            members.append((member, PurePosixPath(member.filename.lower())))
-    return members
+            members[member.filename] = (member, PurePosixPath(member.filename.lower()))
+    return list(members.values())
 
 
 def _archive_library_root(paths: Iterable[PurePosixPath]) -> tuple[str, ...]:
@@ -110,14 +106,12 @@ def _archive_entries(archive: ZipFile) -> Iterator[tuple[str, bytes]]:
             continue
         relative = PurePosixPath(*path.parts[len(root) :])
         if _is_content_source(relative):
-            digest = hashlib.sha256()
-            with archive.open(member) as source:
-                while chunk := source.read(262_144):
-                    digest.update(chunk)
-            yield relative.as_posix(), digest.digest()
+            with cast("ZipExtFile", archive.open(member)) as source:
+                digest = hashlib.file_digest(source, "sha256").digest()
+            yield relative.as_posix(), digest
 
 
 def archive_library_content_sha256(archive_path: Path) -> str:
-    """Verify ZIP library content identity without extracting any files."""
+    """Hash effective ZIP sources, using the last entry for exact name repeats."""
     with ZipFile(archive_path) as archive:
         return _content_sha256(_archive_entries(archive))

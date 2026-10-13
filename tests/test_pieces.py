@@ -40,6 +40,18 @@ def test_format_ldraw_number_compacts_values() -> None:
     assert format_ldraw_number(1.2345678901234) == "1.234567890123"
 
 
+@pytest.mark.parametrize("token", ["nan", "inf", "-inf"])
+def test_format_ldraw_number_rejects_non_finite_values(token: str) -> None:
+    with pytest.raises(ValueError, match=f"non-finite LDraw number {token}"):
+        format_ldraw_number(float(token))
+
+
+def test_format_ldraw_number_preserves_zero_and_integer_tolerances() -> None:
+    assert format_ldraw_number(9e-13) == "0"
+    assert format_ldraw_number(1.1e-12) == "0.000000000001"
+    assert format_ldraw_number(1.0000000000009) == "1"
+
+
 def test_piece_to_ldraw_and_str_are_compact() -> None:
     piece = Piece(
         White,

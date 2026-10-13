@@ -1,6 +1,7 @@
 """Pinned real-library connection regression corpus."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
@@ -8,12 +9,14 @@ import pytest
 
 from ldraw._library_content import library_content_sha256
 from ldraw.config import Config
+from ldraw.connection_types import ConnectionProvenance, ConnectionSource
 from ldraw.parts import Parts
 from scripts import connection_snapshots
 from scripts.connection_snapshots import (
     MANIFEST,
     SEEDS,
     SNAPSHOT,
+    normalized,
     select_codes,
     snapshot,
 )
@@ -94,7 +97,7 @@ def test_regeneration_verifies_content_without_requiring_archive_receipt(
     if archive_provenance:
         archive = tmp_path / "archive.zip"
         with ZipFile(archive, mode="w") as zipped:
-            zipped.write(source, "wrapper/LDRAW/PARTS/3001.DAT")
+            zipped.write(filename=source, arcname="wrapper/LDRAW/PARTS/3001.DAT")
         arguments.extend(("--archive", str(archive)))
     monkeypatch.setattr("sys.argv", arguments)
     connection_snapshots.main()
@@ -137,12 +140,20 @@ def test_regeneration_rejects_unverified_provenance_without_writing_outputs(
         with ZipFile(archive, mode="w") as zipped:
             match failure:
                 case "mismatch":
-                    zipped.writestr("ldraw/parts/3001.dat", "0 Changed brick\n")
+                    zipped.writestr(
+                        zinfo_or_arcname="ldraw/parts/3001.dat",
+                        data="0 Changed brick\n",
+                    )
                 case "unrelated":
-                    zipped.writestr("readme.txt", "unrelated archive")
+                    zipped.writestr(
+                        zinfo_or_arcname="readme.txt", data="unrelated archive"
+                    )
                 case "ambiguous":
                     for prefix in ("first", "second"):
-                        zipped.writestr(f"{prefix}/ldraw/parts/3001.dat", "0 Brick\n")
+                        zipped.writestr(
+                            zinfo_or_arcname=f"{prefix}/ldraw/parts/3001.dat",
+                            data="0 Brick\n",
+                        )
     arguments = [
         "connection_snapshots",
         "--parts-list",
@@ -153,8 +164,15 @@ def test_regeneration_rejects_unverified_provenance_without_writing_outputs(
     if select:
         arguments.append("--select")
         monkeypatch.setattr(
-            connection_snapshots, "select_codes", lambda parts: ["3001"]
+            connection_snapshots,
+            "select_codes",
+            lambda parts: pytest.fail("selection before verification"),
         )
+    monkeypatch.setattr(
+        connection_snapshots,
+        "snapshot",
+        lambda parts, codes: pytest.fail("snapshot before verification"),
+    )
     monkeypatch.setattr("sys.argv", arguments)
     with pytest.raises((ValueError, BadZipFile)):
         connection_snapshots.main()
@@ -181,7 +199,9 @@ def test_reselection_records_only_explicit_verified_archive_provenance(
     if verified_archive:
         archive = tmp_path / "archive.zip"
         with ZipFile(archive, mode="w") as zipped:
-            zipped.write(root / "parts" / "3001.dat", "ldraw/parts/3001.dat")
+            zipped.write(
+                filename=root / "parts" / "3001.dat", arcname="ldraw/parts/3001.dat"
+            )
         arguments.extend(("--archive", str(archive)))
     monkeypatch.setattr(connection_snapshots, "select_codes", lambda parts: ["3001"])
     monkeypatch.setattr("sys.argv", arguments)
@@ -195,6 +215,46 @@ def test_reselection_records_only_explicit_verified_archive_provenance(
         )
     else:
         assert "archive_sha256" not in regenerated
+
+
+def test_snapshot_paths_and_embedded_provenance_ignore_library_path_case(
+    tmp_path: Path,
+) -> None:
+    command = "0 !LDCAD SNAP_CYL [id=PiN] [gender=M] [secs=R 6 4]"
+    snapshots = []
+    digests = []
+    for uppercase in (False, True):
+        root = tmp_path / str(uppercase)
+        relative = "PARTS/3001.DAT" if uppercase else "parts/3001.dat"
+        source = root / relative
+        source.parent.mkdir(parents=True)
+        source.write_text(f"0 Brick\n{command}\n")
+        listing = root / "parts.lst"
+        listing.write_text("3001.dat  Brick\n")
+        parts = Parts(parts_lst=listing)
+        digests.append(library_content_sha256(root))
+        snapshots.append(snapshot(parts=parts, codes=["3001"]))
+        feature = parts.connections("3001")[0]
+        text = "MiXeD descriptive text"
+        feature = replace(feature, provenance=(*feature.provenance, text))
+        assert normalized(feature, library_root=root)["provenance"][-1] == text
+    assert digests[0] == digests[1]
+    assert snapshots[0] == snapshots[1]
+    feature = snapshots[0]["3001"][0]
+    assert feature["connection_provenance"]["path"] == "parts/3001.dat"
+    assert feature["connection_provenance"]["command"] == command
+    assert feature["provenance"] == ["<library>/parts/3001.dat:2"]
+
+
+def test_snapshot_preserves_metadata_command_text(tmp_path: Path) -> None:
+    path = tmp_path / "PARTS" / "Custom.DAT"
+    command = f"0 !LDCAD SNAP_INCL [ref={path}]"
+    provenance = ConnectionProvenance(
+        source=ConnectionSource.LDCAD_INLINE, path=path, command=command
+    )
+    result = normalized(provenance, library_root=tmp_path)
+    assert result["path"] == "parts/custom.dat"
+    assert result["command"] == command
 
 
 def assert_snapshot_equal(actual: object, expected: object, path: str = "root") -> None:

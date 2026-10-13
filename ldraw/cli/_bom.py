@@ -6,10 +6,11 @@ import json
 import sys
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from ldraw._parts_listing import PartsListing
 from ldraw.bom import (
     BomRow,
     _compare_inventory_occurrences,
-    _inventory_reference_requires_catalog,
+    _prepare_inventory_occurrences,
     comparison_to_csv,
     read_inventory,
     rows_to_csv,
@@ -18,13 +19,12 @@ from ldraw.bom import (
 from ldraw.cli._common import _parts_lst_path, _print_diagnostics, _try_load_parts
 from ldraw.errors import ConfigLoadError, PartError
 from ldraw.model import load_model, read_model
-from ldraw.parts import Parts
 from ldraw.validation import Severity
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ldraw.model import ModelOccurrence
+    from ldraw.bom import _BomLeaf
 
 
 def _format_bom_table(rows: list[BomRow]) -> str:
@@ -131,14 +131,15 @@ def _read_inventory_mapping(path: Path | None) -> _InventoryMapping:
     return cast("_InventoryMapping", data)
 
 
-def _inventory_parts(occurrences: tuple[ModelOccurrence, ...]) -> Parts | None:
+def _inventory_parts(occurrences: tuple[_BomLeaf, ...]) -> PartsListing | None:
     """Load only the listing, and only when a leaf needs classification."""
-    if not any(
-        _inventory_reference_requires_catalog(item.reference) for item in occurrences
-    ):
+    if not any(item.requires_listing for item in occurrences):
         return None
     parts_lst = _parts_lst_path()
-    return Parts(parts_lst) if parts_lst.is_file() else None
+    if not parts_lst.is_file():
+        message = f"parts.lst not found at {parts_lst}; run `ldraw download` first"
+        raise FileNotFoundError(message)
+    return PartsListing.read(parts_lst)
 
 
 def _compare_inventory_command(
@@ -169,7 +170,9 @@ def _compare_inventory_command(
             columns=options.get("columns"),
             colour_map=options.get("colour_map"),
         )
-        occurrences = tuple(loaded.model.iter_occurrences(include_steps=False))
+        occurrences = _prepare_inventory_occurrences(
+            loaded.model.iter_occurrences(include_steps=False)
+        )
         comparison = _compare_inventory_occurrences(
             occurrences=occurrences,
             expected=expected,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from difflib import get_close_matches
+from functools import lru_cache
+from math import isfinite
 from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary
 
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ldraw.colour import Colour
+    from ldraw.geometry import Vector
     from ldraw.model import Model, ModelLoadResult
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
@@ -62,16 +65,17 @@ def iter_duplicate_issues(
     model: Model, *, path: Path | None = None
 ) -> Iterator[ValidationIssue]:
     """Warn about placements equal at serialization precision in one section."""
+    format_number = lru_cache(maxsize=4_096)(format_ldraw_number)
     seen: dict[tuple[object, ...], int | None] = {}
     for piece in model.pieces:
         position, matrix = piece._transformed()  # noqa: SLF001 - section-local group transform
+        values = (position.x, position.y, position.z, *matrix.flatten())
+        if not all(isfinite(value) for value in values):
+            continue
         key = (
             normalize_ref(piece.reference),
             piece.colour,
-            *(
-                format_ldraw_number(value)
-                for value in (position.x, position.y, position.z, *matrix.flatten())
-            ),
+            *(format_number(value) for value in values),
         )
         number = model.source_line_for(piece)
         if key in seen:
@@ -94,6 +98,50 @@ def iter_duplicate_issues(
 
 def _unknown_part(piece: Piece, parts: Parts) -> bool:
     return parts.find_part(code=piece.part) is None
+
+
+def _non_finite_vector_fields(
+    point: Vector, *, prefix: str
+) -> Iterator[tuple[str, float]]:
+    for axis in ("x", "y", "z"):
+        if not isfinite(value := getattr(point, axis)):
+            yield f"{prefix}.{axis}", value
+
+
+def _non_finite_fields(parsed: ParsedObject) -> Iterator[tuple[str, float]]:
+    match parsed:
+        case Piece():
+            position, matrix = parsed._transformed()  # noqa: SLF001 - validate effective placement
+            yield from _non_finite_vector_fields(position, prefix="position")
+            for row, values in enumerate(matrix.rows):
+                for column, value in enumerate(values):
+                    if not isfinite(value):
+                        yield f"matrix[{row}][{column}]", value
+        case Line() | Triangle() | Quadrilateral() | OptionalLine():
+            for index, point in enumerate(parsed.points, start=1):
+                yield from _non_finite_vector_fields(point, prefix=f"point{index}")
+
+
+def _numeric_issue(
+    parsed: ParsedObject,
+    *,
+    number: int,
+    path: Path | None,
+    section: str | None,
+) -> ValidationIssue | None:
+    invalid = ", ".join(
+        f"{field}={value!r}" for field, value in _non_finite_fields(parsed)
+    )
+    if not invalid:
+        return None
+    return ValidationIssue(
+        line_number=number,
+        message=f"non-finite numeric fields: {invalid}",
+        code=DiagnosticCode.MODEL_NON_FINITE_NUMERIC,
+        path=path,
+        section=section,
+        offending_value=invalid,
+    )
 
 
 _candidate_codes_cache: WeakKeyDictionary[Parts, tuple[int, tuple[str, ...]]] = (
@@ -256,16 +304,23 @@ def iter_object_issues(  # noqa: PLR0913 - parsed-object context is explicit
         )
     ):
         yield colour_issue
+    numeric_issue = _numeric_issue(parsed, number=number, path=path, section=section)
+    if numeric_issue is not None:
+        yield numeric_issue
     if not isinstance(parsed, Piece):
         return
     if (
-        matrix_issue := _matrix_issue(
-            parsed,
-            number,
-            path=path,
-            section=section,
+        numeric_issue is None
+        and (
+            matrix_issue := _matrix_issue(
+                parsed,
+                number,
+                path=path,
+                section=section,
+            )
         )
-    ) is not None:
+        is not None
+    ):
         yield matrix_issue
     if (
         parts is not None

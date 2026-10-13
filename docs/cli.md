@@ -156,6 +156,7 @@ Issues come in two severities:
 | --- | --- |
 | malformed / unparseable line | The line does not parse as valid LDraw (bad token count, non-numeric coordinates, etc.). |
 | `invalid colour value` | A colour that resolves to neither a code nor an RGB value. |
+| `non-finite numeric fields` | A placement coordinate, matrix field, or type-2–5 vertex contains NaN or Infinity. The object is retained for inspection, but validation fails. |
 | `unknown colour code N` | A colour code with no definition in the loaded catalog. |
 | `unknown part CODE` | A type-1 reference to a part that is not in the catalog and is not a submodel defined inside the file. |
 
@@ -347,11 +348,19 @@ Exit codes are **0** for a match, **1** for differences, and **2** for invalid
 comparison input or incomplete model counts. Ordinary BOM behavior is unchanged.
 `--inventory-mapping` requires `--compare`.
 
+Ordinary BOM export and inventory comparison preserve dotted identifiers such
+as `custom.v1`, removing only a terminal `.dat` suffix case-insensitively.
+A model's exported BOM therefore uses the same identifiers as its comparison.
+
 After submodel expansion, leaf references without an explicit `.dat` suffix
 must identify a part by their whole reference in the configured `parts.lst`.
 Comparison loads that listing only when needed, without building the parts
 index. Unknown references, an unavailable listing, or invalid configuration
 exit **2**. Use `.dat` for part references to compare without a library.
+When the listing is missing, the error names its configured path and recommends
+`ldraw download`. Listing-only comparison does not scan geometry or load colours.
+Models with non-finite geometry also exit **2**, with source diagnostics and no
+comparison output.
 Unresolved `.ldr`/`.mpd` references always exit **2**, and part aliases cannot
 turn an unresolved reference into a known part. Missing or undecodable models
 report the underlying read/decode diagnostic, including the filename.

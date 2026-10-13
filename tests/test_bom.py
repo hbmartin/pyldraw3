@@ -151,6 +151,17 @@ def test_bom_counts_codes_case_insensitively(tmp_path: Path) -> None:
     assert rows[0].description == "Test Part"
 
 
+def test_bom_description_prefers_displayed_exact_case(tmp_path: Path) -> None:
+    listing = tmp_path / "parts.lst"
+    listing.write_text("Foo.dat  Uppercase\nfoo.dat  Lowercase\n")
+    model = Model(objects=[Piece.place("Foo"), Piece.place("foo")])
+    rows = model.bill_of_materials(parts=Parts(parts_lst=listing))
+    assert len(rows) == 1
+    assert rows[0].part == "Foo"
+    assert rows[0].description == "Uppercase"
+    assert rows[0].quantity == 2
+
+
 def test_bom_unknown_part_and_colour_stay_unresolved() -> None:
     parts = Parts.get(TESTS_DIR / "test_ldraw" / "ldraw" / "parts.lst")
     model = Model(objects=[Piece.place("9999", colour=99)])

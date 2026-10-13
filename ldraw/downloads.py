@@ -7,7 +7,7 @@ import re
 import shutil
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 
 import httpx2
 from progress.bar import Bar
@@ -15,6 +15,7 @@ from progress.bar import Bar
 from ldraw._constants import (
     COMPLETE_VERSION as COMPLETE_VERSION,  # noqa: PLC0414 - public re-export
 )
+from ldraw._zip_paths import is_unsafe_zip_member as _is_unsafe_zip_member
 from ldraw.dirs import get_cache_dir
 from ldraw.download_updates import get_latest_release_id
 from ldraw.generate import generate_parts_lst
@@ -91,17 +92,6 @@ def _case_safe_rename(path: Path, destination: Path) -> Path:
     except OSError:
         temp_path.rename(path)
         raise
-
-
-def _is_unsafe_zip_member(filename: str) -> bool:
-    posix_path = PurePosixPath(filename)
-    windows_path = PureWindowsPath(filename)
-    return (
-        posix_path.is_absolute()
-        or windows_path.is_absolute()
-        or ".." in posix_path.parts
-        or ".." in windows_path.parts
-    )
 
 
 def _validate_zip_members(zip_ref: zipfile.ZipFile, destination: Path) -> None:

@@ -482,6 +482,8 @@ Leaf references without an explicit `.dat` suffix need `parts.lst` evidence
 after submodel expansion. Pass `parts=parts` to `compare_inventory` to accept
 listed identifiers case-insensitively, including dotted identifiers. The
 whole reference must be listed, even if its stem names a known part.
+Ordinary BOMs use the same full identifiers, stripping only a terminal `.dat`
+suffix. Dotted identifiers remain distinct, and a model matches its own BOM.
 Unresolved `.ldr`/`.mpd` references always fail; ambiguous references fail
 before aliases are applied. Explicit `.dat` references do not require a
 catalog, and resolved submodels expand normally.
@@ -498,3 +500,16 @@ serialization precision within one section,
 including across STEP boundaries. The later line identifies the first
 occurrence. Independent MPD sections are checked separately; `--strict`
 makes these warnings fail validation.
+
+NaN and Infinity remain parsed objects so they can be inspected and repaired.
+Report-oriented loading emits `model.non_finite_numeric` errors for their
+coordinates or matrices, including type-2–5 vertices. If every source object
+parsed, `complete` remains true while `valid` is false. Duplicate checks skip
+these placements, inventory comparison refuses the invalid model, and
+serialization raises a clear `ValueError` until the values are repaired.
+
+Connection-corpus verification hashes effective ZIP content: exact repeated
+filenames use the last entry, matching extraction, while distinct names that
+collide after normalization are rejected. Archive content is verified before
+selection or output writes. Snapshot source paths and embedded provenance paths
+use lowercase POSIX library-relative names, consistent with content identity.
