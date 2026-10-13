@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ldraw._model_validation import ModelValidationContext
-from ldraw.model import Model
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ldraw.model import Model
     from ldraw.part import ParsedObject
     from ldraw.pieces import Piece
 
@@ -30,6 +30,8 @@ class InstructionResolution:
         self, *, source: Model, objects: Iterable[ParsedObject], expand: bool
     ) -> Model:
         """Build a step-local model using the document's authoritative targets."""
+        from ldraw._instruction_expansion import _InstructionExpansion  # noqa: PLC0415 - runtime cycle
+
         return _InstructionExpansion(
             name=source.name,
             objects=list(objects),
@@ -38,21 +40,4 @@ class InstructionResolution:
             _object_source_lines=source._object_source_lines,  # noqa: SLF001
             resolution=self,
             expand=expand,
-        )
-
-
-@dataclass(slots=True, eq=False)
-class _InstructionExpansion(Model):
-    resolution: InstructionResolution = field(kw_only=True, repr=False)
-    expand: bool = field(kw_only=True, repr=False)
-
-    def submodel_for(self, piece: Piece) -> Model | None:
-        """Expand instruction sections while keeping embedded DAT parts as leaves."""
-        if not self.expand:
-            return None
-        target = self.resolution.resolve(piece)
-        return (
-            target
-            if target is not None and not target.name.casefold().endswith(".dat")
-            else None
         )
