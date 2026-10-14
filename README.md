@@ -74,6 +74,9 @@ uv run zensical build --clean --strict
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for integration tests, snapshot regeneration, coverage policy, and performance measurements.
 
+For manual comparisons between Git tags or against your working files, see
+[API compatibility checks](CONTRIBUTING.md#api-compatibility-checks).
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 or later - see the [license (COPYING)](https://github.com/hbmartin/pyldraw3/blob/main/COPYING) file for details.

@@ -51,6 +51,7 @@ ldraw = "ldraw.cli:main"
 
 [dependency-groups]
 dev = [
+    "griffe>=2.3.2",
     "pillow>=11.0",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
