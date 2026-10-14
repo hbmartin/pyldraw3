@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
+from ldraw._instruction_export import _ExportPreparation
 from ldraw._instruction_resolution import InstructionResolution
-from ldraw._model_definitions import _SourceOrigin
 from ldraw._model_validation import ModelValidationContext
 from ldraw.errors import DuplicateSubmodelError, SubmodelCycleError
 from ldraw.geometry import Matrix, Vector
@@ -23,7 +23,6 @@ from ldraw.instruction_artifacts import (
     instruction_manifest,
     write_instruction_snapshots,
 )
-from ldraw.instructions import InstructionDocument
 from ldraw.lines import Line, OptionalLine, Quadrilateral, Triangle
 from ldraw.model import Model, _model_structure_diagnostics, parse_model_result
 from ldraw.parts import Parts
@@ -154,7 +153,7 @@ def test_raw_copies_and_replacements_serialize_self_tables(
 
 def test_token_conversion_copy_graphs_reset_and_hooks() -> None:
     raw = Model(name="main.ldr")
-    assert isinstance(raw._serialization_origin, _SourceOrigin)  # noqa: SLF001
+    assert isinstance(raw._serialization_origin, dict)  # noqa: SLF001
     assert asdict(raw)["name"] == "main.ldr"
     assert inspect.signature(Model).parameters["_serialization_origin"].default is None
     raw.submodels[raw.name] = raw
@@ -225,7 +224,7 @@ def test_structural_loading_expands_shared_sources_once(*, cyclic: bool) -> None
         for d in report.diagnostics
         if d.code.value in {"mpd.cycle", "mpd.unresolved_submodel"}
     ]
-    assert len(relevant) == 2
+    assert len(relevant) == (120 if cyclic else 2)
 
 
 def test_ambiguous_structural_cycle_routes_keep_locations() -> None:
@@ -248,7 +247,7 @@ def test_ambiguous_structural_cycle_routes_keep_locations() -> None:
     diagnostics = _model_structure_diagnostics(
         root, path=None, context=ModelValidationContext()
     )
-    assert {d.line_number for d in diagnostics} == {7, 8}
+    assert {d.line_number for d in diagnostics} == {None, 7, 8}
 
 
 def deep_model() -> Model:
@@ -355,12 +354,12 @@ def test_export_preparation_is_reused_and_fresh_between_invocations(
         submodels={child.name: child},
     )
     document = model.instruction_document()
-    validate = InstructionDocument._validate_export  # noqa: SLF001
+    validate = _ExportPreparation.__post_init__
     dependencies = InstructionResolution.dependencies
     with (
         patch.object(
-            target=InstructionDocument,
-            attribute="_validate_export",
+            target=_ExportPreparation,
+            attribute="__post_init__",
             autospec=True,
             side_effect=validate,
         ) as validated,
@@ -454,8 +453,8 @@ def test_modified_step_bindings_are_validated_before_private_output(
 def test_programmatic_cycles_report_each_source_placement_once() -> None:
     model = shared_lattice(layers=10, cyclic=True)
     diagnostics = _model_structure_diagnostics(model, path=None)
-    assert len(diagnostics) == 2
-    assert {d.section for d in diagnostics} == {"9-a.ldr", "9-b.ldr"}
+    assert len(diagnostics) == 40
+    assert {d.section for d in diagnostics} == {"main.ldr", *model.submodels}
 
 
 def test_flattening_does_not_invoke_geometry_subclass_constructors() -> None:

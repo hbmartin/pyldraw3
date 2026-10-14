@@ -189,8 +189,9 @@ def test_instruction_replacement_retains_resolution_and_occurrence_authority() -
         "3004",
     ]
     copied_document = replace(document)
-    assert copied_document._resolution is document._resolution  # noqa: SLF001
-    assert copied_document.root.steps[0] is step
+    assert copied_document._resolution is not document._resolution  # noqa: SLF001
+    assert copied_document._resolution.context is document._resolution.context  # noqa: SLF001
+    assert copied_document.root.steps[0].objects is step.objects
 
 
 def test_document_context_rebinding_is_explicit_and_immutable() -> None:
@@ -198,7 +199,7 @@ def test_document_context_rebinding_is_explicit_and_immutable() -> None:
     document = root.instruction_document()
     context = InstructionResolution(root=root)
     rebound = replace(document, _resolution=context)
-    assert rebound.root.steps[0]._resolution is context  # noqa: SLF001
+    assert rebound.root.steps[0]._resolution.context is context.context  # noqa: SLF001
     assert document.root.steps[0]._resolution is not context  # noqa: SLF001
     assert rebound.sections[0] is rebound.root
     assert (

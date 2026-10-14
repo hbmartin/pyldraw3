@@ -237,8 +237,9 @@ def test_section_selection_uses_one_numbered_directory(tmp_path: Path) -> None:
     assert (output / "001-sub/step-0001.mpd").is_file()
     assert not (output / "002-sub").exists()
     manifest = json.loads((output / MANIFEST_NAME).read_text(encoding="utf-8"))
-    assert manifest["sections"][0]["steps"][0]["artifacts"] == {}
-    assert manifest["sections"][1]["steps"][0]["artifacts"]["ldr"].startswith(
+    assert manifest["root_section"] == "sub.ldr"
+    assert len(manifest["sections"]) == 1
+    assert manifest["sections"][0]["steps"][0]["artifacts"]["ldr"].startswith(
         "001-sub/"
     )
 

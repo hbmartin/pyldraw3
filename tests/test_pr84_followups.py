@@ -411,7 +411,7 @@ def test_replaced_views_supersede_only_their_recorded_origin() -> None:
     view = root.submodel_view(child.name)
     first = replace(view, objects=[Piece.place("3002")])
     second = replace(first, objects=[Piece.place("3003")])
-    assert first._serialization_origin is child  # noqa: SLF001
+    assert first._serialization_origin["parent"] is child  # noqa: SLF001
     assert "_serialization_origin" not in repr(first)
     for model in (first, second, copy(view), deepcopy(view)):
         assert parse_model_result(model.to_ldraw()).complete

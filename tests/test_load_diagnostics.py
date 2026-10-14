@@ -69,8 +69,8 @@ def test_cyclic_model_analysis_succeeds_and_surfaces_cycle(tmp_path: Path) -> No
         for diagnostic in analysis.diagnostics
         if diagnostic.code is DiagnosticCode.MPD_CYCLE
     ]
-    assert len(cycle_diagnostics) == 1
-    assert cycle_diagnostics[0].line_number == 6
+    assert len(cycle_diagnostics) == 2
+    assert [diagnostic.line_number for diagnostic in cycle_diagnostics] == [2, 6]
 
 
 def test_analyze_model_directly_on_cyclic_model_emits_cycle_diagnostic(

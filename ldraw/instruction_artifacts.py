@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from ldraw._instruction_export import _ExportPreparation
+from ldraw._instruction_export import _ExportPreparation, prepare_export
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.errors import PartError, SubmodelCycleError
 from ldraw.geometry import Identity, Matrix, Vector
@@ -23,8 +23,8 @@ from ldraw.lines import (
     Quadrilateral,
     Triangle,
 )
-from ldraw.model import _cycle_target
-from ldraw.pieces import MAIN_COLOUR_CODE, Piece, _default_leaf_identity
+from ldraw.model import _compose_placement, _cycle_target, _effective_colour
+from ldraw.pieces import Piece, _default_leaf_identity
 from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
@@ -57,23 +57,25 @@ def instruction_manifest(
     generated_files: Iterable[str] = (),
 ) -> dict[str, object]:
     """Return a deterministic schema-v1 instruction manifest."""
-    _ExportPreparation(document=document)
+    preparation = prepare_export(document)
     return _prepared_manifest(
         document,
         parts=parts,
         source=source,
         artifact_paths=artifact_paths,
         generated_files=generated_files,
+        preparation=preparation,
     )
 
 
-def _prepared_manifest(
+def _prepared_manifest(  # noqa: PLR0913 - explicit artifact context
     document: InstructionDocument,
     *,
     parts: Parts,
     source: Path | str | None = None,
     artifact_paths: dict[tuple[str, int], dict[str, str]] | None = None,
     generated_files: Iterable[str] = (),
+    preparation: _ExportPreparation,
 ) -> dict[str, object]:
     """Build a manifest after its caller has completed export preparation."""
     paths = artifact_paths or {}
@@ -81,13 +83,21 @@ def _prepared_manifest(
         "schema_version": SCHEMA_VERSION,
         "generator": {"name": PACKAGE_NAME, "version": _package_version()},
         "source": None if source is None else str(source),
-        "root_section": document.root.name,
+        "root_section": (
+            document.root.name
+            if preparation.selected is None
+            else preparation.selected[0].name
+        ),
         "generated_files": list(generated_files),
         "sections": [
             _section_manifest(section, parts=parts, artifact_paths=paths)
-            for section in document.sections
+            for section in preparation.sections
         ],
-        "orphan_sections": [section.name for section in document.orphan_sections],
+        "orphan_sections": (
+            [section.name for section in document.orphan_sections]
+            if preparation.selected is None
+            else []
+        ),
     }
 
 
@@ -134,9 +144,11 @@ def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explici
     force: bool = False,
 ) -> Path:
     """Write MPD and flattened-LDR snapshots plus a manifest."""
-    preparation = _ExportPreparation(document=document)
     selected = (
         document.sections if section_name is None else (document.section(section_name),)
+    )
+    preparation = prepare_export(
+        document, selected=None if section_name is None else selected
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     old_owned = _prepare_output(output, force=force)
@@ -181,6 +193,7 @@ def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explici
             source=source,
             artifact_paths=paths,
             generated_files=generated,
+            preparation=preparation,
         )
         (stage / MANIFEST_NAME).write_text(manifest_json(manifest), encoding="utf-8")
         _commit_staged_output(
@@ -424,7 +437,7 @@ def _write_snapshot_mpd(
     prepared = (
         preparation
         if preparation is not None
-        else _ExportPreparation(document=document)
+        else prepare_export(document, selected=(section,))
     )
     dependencies = prepared.dependencies(source=section.model, objects=root_objects)
     sections = [(section.name, root_objects)] + [
@@ -455,7 +468,7 @@ def _write_snapshot_ldr(
     prepared = (
         preparation
         if preparation is not None
-        else _ExportPreparation(document=document)
+        else prepare_export(document, selected=(section,))
     )
     prepared.dependencies(source=section.model, objects=step.cumulative_objects)
     embedded_parts: dict[str, Model] = {}
@@ -532,7 +545,7 @@ def _flatten_geometry(
     *, obj: Line | Triangle | Quadrilateral | OptionalLine, frame: _FlattenFrame
 ) -> Line | Triangle | Quadrilateral | OptionalLine:
     """Construct standard snapshot geometry without invoking subclass factories."""
-    colour = _effective_colour(obj.colour, frame.colour)
+    colour = _effective_colour(colour=obj.colour, inherited=frame.colour)
     point1 = frame.position + frame.matrix * obj.point1
     point2 = frame.position + frame.matrix * obj.point2
     if isinstance(obj, Line):
@@ -581,10 +594,15 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
             frames.pop()
             continue
         if isinstance(obj, Piece):
-            piece_position, piece_matrix = obj._transformed()  # noqa: SLF001
-            world_position = frame.position + frame.matrix * piece_position
-            world_matrix = frame.matrix * piece_matrix
-            colour = _effective_colour(obj.colour, frame.colour)
+            world_position, world_matrix = _compose_placement(
+                model=frame.model,
+                piece=obj,
+                position=frame.position,
+                matrix=frame.matrix,
+                effective=obj._transformed(),  # noqa: SLF001
+                context=None,
+            )
+            colour = _effective_colour(colour=obj.colour, inherited=frame.colour)
             target = _resolve_reference(root=root, piece=obj, context=context)
             if target is not None and not target.name.casefold().endswith(".dat"):
                 _cycle_target(
@@ -616,12 +634,6 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
                 )
         elif isinstance(obj, Line | Triangle | Quadrilateral | OptionalLine):
             yield _flatten_geometry(obj=obj, frame=frame)
-
-
-def _effective_colour(colour: Colour, inherited: Colour | None) -> Colour:
-    if colour.code == MAIN_COLOUR_CODE and inherited is not None:
-        return inherited
-    return colour
 
 
 def _safe_reference_path(reference: str) -> Path:

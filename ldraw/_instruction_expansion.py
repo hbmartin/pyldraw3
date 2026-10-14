@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import chain
 from typing import TYPE_CHECKING
 
 from ldraw._instruction_common import _is_instruction_model
+from ldraw._instruction_export import _ExportState, instruction_dependencies
 from ldraw._model_cycles import _cycle_callback
-from ldraw._model_definitions import _DefinitionRegistry
-from ldraw.model import Model, _occurrences_at_origin
+from ldraw.model import Model, _models_ldraw, _occurrences_at_origin
 from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
@@ -25,24 +26,19 @@ class _InstructionExpansion(Model):
         kw_only=True, repr=False
     )
     expand: bool = field(kw_only=True, repr=False)
+    source: Model = field(kw_only=True, repr=False)
 
     def iter_occurrences(
         self, *, expand_submodels: bool = True, include_steps: bool = True
     ) -> Iterator[ModelOccurrence]:
         """Keep step expansion finite and retain closing references as leaves."""
-        source = (
-            self
-            if not isinstance(self._serialization_origin, Model)
-            else self._serialization_origin
-        )
-
         return _occurrences_at_origin(
             model=self,
             expand_submodels=expand_submodels,
             include_steps=include_steps,
             on_cycle=_cycle_callback(self),
             cycle_leaf=True,
-            visiting=self.resolution.ancestry(source),
+            visiting=self.resolution.ancestry(self.source),
         )
 
     def iter_pieces(self) -> Iterator[Piece]:
@@ -50,7 +46,7 @@ class _InstructionExpansion(Model):
         return (occurrence.piece for occurrence in self.iter_occurrences())
 
     def _serialization_aliases(self) -> tuple[Model, ...]:
-        return self.resolution.equivalents(self)
+        return self.resolution.equivalents(self.source)
 
     def submodel_for(self, piece: Piece) -> Model | None:
         """Expand instruction sections while keeping embedded DAT parts as leaves."""
@@ -65,16 +61,21 @@ class _InstructionExpansion(Model):
 
     def to_ldraw(self) -> str:
         """Close dependencies and reject lossy bindings before serialization."""
-        if self.expand:
-            registry = _DefinitionRegistry(
-                selected=self, aliases=self._serialization_aliases()
-            )
-            for target in self.submodels.values():
-                registry.register(target)
-            dependencies = self.resolution.dependencies(
-                source=self, objects=self.objects
-            )
-            for key, target in dependencies.items():
-                registry.register(target)
-                self.submodels.setdefault(key, target)
-        return super(_InstructionExpansion, self).to_ldraw()
+        if not self.expand:
+            return super(_InstructionExpansion, self).to_ldraw()
+        state = _ExportState(source=self, aliases=self._serialization_aliases())
+        for target in self.submodels.values():
+            if state.registry.register(target):
+                state.dependencies[normalize_ref(target.name)] = target
+        dependencies = instruction_dependencies(
+            resolution=self.resolution,
+            source=self,
+            objects=chain(
+                self.objects, *(target.objects for target in self.submodels.values())
+            ),
+            state=state,
+        )
+        return _models_ldraw(
+            models=(self, *dependencies.values()),
+            mpd=bool(self.submodels or dependencies),
+        )

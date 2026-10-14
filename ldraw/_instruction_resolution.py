@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ldraw._instruction_common import _is_instruction_model
-from ldraw._model_definitions import _serialization_origins
 from ldraw._model_views import _resolution_root, _selected_model
 from ldraw.utils import normalize_ref
 
@@ -38,7 +37,7 @@ class InstructionResolution:
     _reachable_models: list[_model.Model] | None = field(
         default=None, init=False, repr=False
     )
-    _sources: dict[int, _model.Model] = field(
+    _sources: dict[int, tuple[_model.Model, _model.Model]] = field(
         default_factory=dict, init=False, repr=False
     )
 
@@ -70,15 +69,27 @@ class InstructionResolution:
                 else canonical.get(normalize_ref(source.name))
             )
             if target is not None:
-                self._sources[id(_selected_model(source))] = _selected_model(target)
+                selected_source = _selected_model(source)
+                self._sources[id(selected_source)] = (
+                    selected_source,
+                    _selected_model(target),
+                )
+
+    def for_sources(
+        self, *, selected: _model.Model, sources: Iterable[_model.Model]
+    ) -> InstructionResolution:
+        """Fork correspondence ownership while retaining authoritative resolutions."""
+        resolution = InstructionResolution(root=self.root, context=self.context)
+        resolution._reachable_models = self.reachable_models()
+        resolution._reachable_sources = self._reachable_sources.copy()
+        resolution.bind_sources(selected=selected, sources=sources)
+        return resolution
 
     def equivalents(self, source: _model.Model) -> tuple[_model.Model, ...]:
         """Expose only explicitly bound selected-source correspondences."""
-        return tuple(
-            self._sources[key]
-            for key in _serialization_origins(source)
-            if key in self._sources
-        )
+        selected = _selected_model(source)
+        binding = self._sources.get(id(selected))
+        return (binding[1],) if binding is not None and binding[0] is selected else ()
 
     def reachable_models(self) -> list[_model.Model]:
         """Record root reachability while keeping declaration and discovery order."""
@@ -128,11 +139,14 @@ class InstructionResolution:
         *,
         source: _model.Model,
         objects: Iterable[ParsedObject],
+        targets: dict[Piece, _model.Model | None] | None = None,
     ) -> dict[str, _model.Model]:
         """Reject ambiguous bindings before materializing serialized dependencies."""
         from ldraw._instruction_export import instruction_dependencies  # noqa: PLC0415 - runtime model cycle
 
-        return instruction_dependencies(resolution=self, source=source, objects=objects)
+        return instruction_dependencies(
+            resolution=self, source=source, objects=objects, targets=targets
+        )
 
     def expansion(
         self, *, source: _model.Model, objects: Iterable[ParsedObject], expand: bool
@@ -147,5 +161,6 @@ class InstructionResolution:
             _object_source_lines=source._object_source_lines,  # noqa: SLF001
             resolution=self,
             expand=expand,
+            source=source,
             _serialization_origin=source,
         )
