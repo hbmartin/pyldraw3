@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ldraw._instruction_common import _is_instruction_model
+from ldraw._model_definitions import _serialization_origins
 from ldraw._model_views import _resolution_root, _selected_model
 from ldraw.utils import normalize_ref
 
@@ -37,6 +38,9 @@ class InstructionResolution:
     _reachable_models: list[_model.Model] | None = field(
         default=None, init=False, repr=False
     )
+    _sources: dict[int, _model.Model] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def bind_document(self, *, model: _model.Model) -> None:
         """Reject attaching one document's resolution to a different source scope."""
@@ -49,6 +53,32 @@ class InstructionResolution:
     def resolve(self, piece: Piece) -> _model.Model | None:
         """Resolve once; canonical definitions belong to discovery and export."""
         return self.context.resolve(root=self.root, piece=piece)
+
+    def bind_sources(
+        self, *, selected: _model.Model, sources: Iterable[_model.Model]
+    ) -> None:
+        """Associate retained content with this resolver's canonical source roles."""
+        discovered = self.reachable_models()
+        canonical = {
+            normalize_ref(model.name): model for model in self.root.submodels.values()
+        }
+        canonical.update({normalize_ref(model.name): model for model in discovered})
+        for source in sources:
+            target = (
+                self.root
+                if source is selected
+                else canonical.get(normalize_ref(source.name))
+            )
+            if target is not None:
+                self._sources[id(_selected_model(source))] = _selected_model(target)
+
+    def equivalents(self, source: _model.Model) -> tuple[_model.Model, ...]:
+        """Expose only explicitly bound selected-source correspondences."""
+        return tuple(
+            self._sources[key]
+            for key in _serialization_origins(source)
+            if key in self._sources
+        )
 
     def reachable_models(self) -> list[_model.Model]:
         """Record root reachability while keeping declaration and discovery order."""
@@ -86,7 +116,10 @@ class InstructionResolution:
         self.reachable_models()
         return (
             frozenset({normalize_ref(self.root.name)})
-            if id(_selected_model(source)) in self._reachable_sources
+            if any(
+                id(_selected_model(target)) in self._reachable_sources
+                for target in (source, *self.equivalents(source))
+            )
             else frozenset()
         )
 

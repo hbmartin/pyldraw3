@@ -106,6 +106,15 @@ class ModelValidationContext:
         """Whether targets can extend beyond the root's declared table."""
         return not self._builtin_resolver
 
+    def unique_names(self, *, root: Model) -> bool:
+        """Inspect cached edges without assuming uniqueness from resolver type."""
+        discovery = _unique_sections(root=root, context=self)
+        while True:
+            try:
+                next(discovery)
+            except StopIteration as completed:
+                return bool(completed.value)
+
     def record(self, *, piece: Piece, analysis: _NumericAnalysis) -> None:
         """Retain finite effective placements with the required type narrowing."""
         if (

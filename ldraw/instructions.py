@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import shlex
-from collections import Counter, deque
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
@@ -25,7 +25,7 @@ from ldraw.validation import Severity
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
-    from ldraw import _model_validation
+    from ldraw import _instruction_export, _model_validation
     from ldraw.model import Model, ModelOccurrence
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
@@ -340,8 +340,14 @@ class InstructionDocument:
             else _instruction_resolution.InstructionResolution(root=self.model)
         )
         resolution.bind_document(model=self.model)
-        resolution.reachable_models()
-        bound = {}
+        resolution.bind_sources(
+            selected=self.root.model,
+            sources=(
+                section.model
+                for section in (*self.sections, *self.orphan_sections, self.root)
+            ),
+        )
+        bound: dict[int, InstructionSection] = {}
         for section in (*self.sections, *self.orphan_sections, self.root):
             if id(section) not in bound:
                 bound[id(section)] = _section_with_resolution(
@@ -409,8 +415,15 @@ class InstructionDocument:
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
 
-    def _validate_export(self) -> None:
+    def _validate_export(
+        self, *, preparation: _instruction_export._ExportPreparation | None = None
+    ) -> None:
         """Validate definitions while keeping counts available for custom resolvers."""
+        if preparation is not None:
+            preparation.dependencies(
+                source=self.root.model, objects=self.root.model.objects
+            )
+            return
         cast(
             "_instruction_resolution.InstructionResolution", self._resolution
         ).dependencies(source=self.root.model, objects=self.root.model.objects)
@@ -1458,18 +1471,11 @@ def _callout_source_index(*, step: InstructionStep) -> dict[str, list[Piece]]:
     return index
 
 
-def _needs_callout_index(callout: InstructionCallout) -> bool:
-    if callout._pieces is None:  # noqa: SLF001
-        return True
-    requested = Counter(normalize_ref(reference) for reference in callout.references)
-    retained = Counter(normalize_ref(piece.reference) for piece in callout._pieces)  # noqa: SLF001
-    return bool(requested - retained)
-
-
 def _callout_pieces(
     *,
     callout: InstructionCallout,
-    index: dict[str, list[Piece]],
+    step: InstructionStep,
+    indexes: list[dict[str, list[Piece]]],
 ) -> Iterator[Piece]:
     """Honor edited references while keeping unchanged placement identities."""
     retained: dict[str, deque[Piece]] = {}
@@ -1483,7 +1489,9 @@ def _callout_pieces(
             used.add(piece)
             yield piece
         else:
-            for piece in index.get(key, ()):
+            if not indexes:
+                indexes.append(_callout_source_index(step=step))
+            for piece in indexes[0].get(key, ()):
                 if piece not in used:
                     used.add(piece)
                     yield piece
@@ -1495,16 +1503,12 @@ def _callout_issues(
     step: InstructionStep,
 ) -> Iterator[InstructionIssue]:
     """Validate current references against retained or indexed actual sources."""
-    index = (
-        _callout_source_index(step=step)
-        if any(_needs_callout_index(callout) for callout in step.callouts)
-        else {}
-    )
+    indexes: list[dict[str, list[Piece]]] = []
     for callout in step.callouts:
         if not any(
             (target := step._resolution.resolve(piece)) is not None  # noqa: SLF001
             and _is_instruction_model(target)
-            for piece in _callout_pieces(callout=callout, index=index)
+            for piece in _callout_pieces(callout=callout, step=step, indexes=indexes)
         ):
             yield InstructionIssue(
                 section=section,

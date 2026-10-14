@@ -6,11 +6,12 @@ import json
 import re
 import shutil
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
+from ldraw._instruction_export import _ExportPreparation
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.errors import PartError, SubmodelCycleError
 from ldraw.geometry import Identity, Matrix, Vector
@@ -22,13 +23,13 @@ from ldraw.lines import (
     Quadrilateral,
     Triangle,
 )
+from ldraw.model import _cycle_target
 from ldraw.pieces import MAIN_COLOUR_CODE, Piece, _default_leaf_identity
 from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
-    from ldraw._instruction_resolution import InstructionResolution
     from ldraw.colour import Colour
     from ldraw.instructions import (
         CameraState,
@@ -56,7 +57,25 @@ def instruction_manifest(
     generated_files: Iterable[str] = (),
 ) -> dict[str, object]:
     """Return a deterministic schema-v1 instruction manifest."""
-    document._validate_export()  # noqa: SLF001
+    _ExportPreparation(document=document)
+    return _prepared_manifest(
+        document,
+        parts=parts,
+        source=source,
+        artifact_paths=artifact_paths,
+        generated_files=generated_files,
+    )
+
+
+def _prepared_manifest(
+    document: InstructionDocument,
+    *,
+    parts: Parts,
+    source: Path | str | None = None,
+    artifact_paths: dict[tuple[str, int], dict[str, str]] | None = None,
+    generated_files: Iterable[str] = (),
+) -> dict[str, object]:
+    """Build a manifest after its caller has completed export preparation."""
     paths = artifact_paths or {}
     return {
         "schema_version": SCHEMA_VERSION,
@@ -115,7 +134,7 @@ def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explici
     force: bool = False,
 ) -> Path:
     """Write MPD and flattened-LDR snapshots plus a manifest."""
-    document._validate_export()  # noqa: SLF001
+    preparation = _ExportPreparation(document=document)
     selected = (
         document.sections if section_name is None else (document.section(section_name),)
     )
@@ -145,16 +164,18 @@ def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explici
                     section=section,
                     step=step,
                     path=stage / mpd_relative,
+                    preparation=preparation,
                 )
                 sidecars = _write_snapshot_ldr(
                     document,
                     section=section,
                     step=step,
                     path=stage / ldr_relative,
+                    preparation=preparation,
                 )
                 generated.extend((mpd_relative, ldr_relative, *sidecars))
         generated = list(dict.fromkeys((*generated, MANIFEST_NAME)))
-        manifest = instruction_manifest(
+        manifest = _prepared_manifest(
             document,
             parts=parts,
             source=source,
@@ -397,13 +418,15 @@ def _write_snapshot_mpd(
     section: InstructionSection,
     step: InstructionStep,
     path: Path,
+    preparation: _ExportPreparation | None = None,
 ) -> None:
     root_objects = _snapshot_objects(step.cumulative_objects)
-    dependencies = (
-        cast("InstructionResolution", document._resolution)  # noqa: SLF001
-        .dependencies(source=section.model, objects=root_objects)
-        .values()
+    prepared = (
+        preparation
+        if preparation is not None
+        else _ExportPreparation(document=document)
     )
+    dependencies = prepared.dependencies(source=section.model, objects=root_objects)
     sections = [(section.name, root_objects)] + [
         (dependency.name, _snapshot_objects(dependency.objects))
         for dependency in dependencies
@@ -427,10 +450,14 @@ def _write_snapshot_ldr(
     section: InstructionSection,
     step: InstructionStep,
     path: Path,
+    preparation: _ExportPreparation | None = None,
 ) -> list[str]:
-    cast("InstructionResolution", document._resolution).dependencies(  # noqa: SLF001
-        source=section.model, objects=step.cumulative_objects
+    prepared = (
+        preparation
+        if preparation is not None
+        else _ExportPreparation(document=document)
     )
+    prepared.dependencies(source=section.model, objects=step.cumulative_objects)
     embedded_parts: dict[str, Model] = {}
     flattened = list(
         _flatten_objects(
@@ -491,6 +518,38 @@ def _embedded_dependency_closure(
     return result
 
 
+@dataclass(slots=True)
+class _FlattenFrame:
+    model: Model
+    objects: Iterator[ParsedObject]
+    position: Vector
+    matrix: Matrix
+    colour: Colour | None
+    visiting: frozenset[str]
+
+
+def _flatten_geometry(
+    *, obj: Line | Triangle | Quadrilateral | OptionalLine, frame: _FlattenFrame
+) -> Line | Triangle | Quadrilateral | OptionalLine:
+    """Construct standard snapshot geometry without invoking subclass factories."""
+    colour = _effective_colour(obj.colour, frame.colour)
+    point1 = frame.position + frame.matrix * obj.point1
+    point2 = frame.position + frame.matrix * obj.point2
+    if isinstance(obj, Line):
+        return Line(colour=colour, point1=point1, point2=point2)
+    point3 = frame.position + frame.matrix * obj.point3
+    if isinstance(obj, Triangle):
+        return Triangle(colour=colour, point1=point1, point2=point2, point3=point3)
+    constructor = Quadrilateral if isinstance(obj, Quadrilateral) else OptionalLine
+    return constructor(
+        colour=colour,
+        point1=point1,
+        point2=point2,
+        point3=point3,
+        point4=frame.position + frame.matrix * obj.point4,
+    )
+
+
 def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
     *,
     root: Model,
@@ -506,25 +565,44 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
     key = normalize_ref(model.name)
     if key in visiting:
         raise SubmodelCycleError(model.name)
-    visiting = visiting | {key}
-    for obj in objects:
+    frames = [
+        _FlattenFrame(
+            model=model,
+            objects=iter(objects),
+            position=position,
+            matrix=matrix,
+            colour=inherited_colour,
+            visiting=visiting | {key},
+        )
+    ]
+    while frames:
+        frame = frames[-1]
+        if (obj := next(frame.objects, None)) is None:
+            frames.pop()
+            continue
         if isinstance(obj, Piece):
             piece_position, piece_matrix = obj._transformed()  # noqa: SLF001
-            world_position = position + matrix * piece_position
-            world_matrix = matrix * piece_matrix
-            colour = _effective_colour(obj.colour, inherited_colour)
+            world_position = frame.position + frame.matrix * piece_position
+            world_matrix = frame.matrix * piece_matrix
+            colour = _effective_colour(obj.colour, frame.colour)
             target = _resolve_reference(root=root, piece=obj, context=context)
             if target is not None and not target.name.casefold().endswith(".dat"):
-                yield from _flatten_objects(
-                    root=root,
-                    model=target,
-                    objects=_snapshot_objects(target.objects),
-                    position=world_position,
-                    matrix=world_matrix,
-                    inherited_colour=colour,
-                    visiting=visiting,
-                    embedded_parts=embedded_parts,
-                    context=context,
+                _cycle_target(
+                    source=frame.model,
+                    piece=obj,
+                    target=target,
+                    visiting=frame.visiting,
+                    on_cycle=None,
+                )
+                frames.append(
+                    _FlattenFrame(
+                        model=target,
+                        objects=iter(_snapshot_objects(target.objects)),
+                        position=world_position,
+                        matrix=world_matrix,
+                        colour=colour,
+                        visiting=frame.visiting | {normalize_ref(target.name)},
+                    )
                 )
             else:
                 if target is not None:
@@ -536,35 +614,8 @@ def _flatten_objects(  # noqa: PLR0913 - explicit traversal state
                     part=obj.part,
                     suffix=obj.suffix,
                 )
-        elif isinstance(obj, Line):
-            yield Line(
-                _effective_colour(obj.colour, inherited_colour),
-                position + matrix * obj.point1,
-                position + matrix * obj.point2,
-            )
-        elif isinstance(obj, Triangle):
-            yield Triangle(
-                _effective_colour(obj.colour, inherited_colour),
-                position + matrix * obj.point1,
-                position + matrix * obj.point2,
-                position + matrix * obj.point3,
-            )
-        elif isinstance(obj, Quadrilateral):
-            yield Quadrilateral(
-                _effective_colour(obj.colour, inherited_colour),
-                position + matrix * obj.point1,
-                position + matrix * obj.point2,
-                position + matrix * obj.point3,
-                position + matrix * obj.point4,
-            )
-        elif isinstance(obj, OptionalLine):
-            yield OptionalLine(
-                _effective_colour(obj.colour, inherited_colour),
-                position + matrix * obj.point1,
-                position + matrix * obj.point2,
-                position + matrix * obj.point3,
-                position + matrix * obj.point4,
-            )
+        elif isinstance(obj, Line | Triangle | Quadrilateral | OptionalLine):
+            yield _flatten_geometry(obj=obj, frame=frame)
 
 
 def _effective_colour(colour: Colour, inherited: Colour | None) -> Colour:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from ldraw._model_cycles import _cycle_callback, _iter_cycle_tolerant_occurrences
+from ldraw._model_definitions import _DefinitionRegistry, _SourceOrigin
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw._model_views import _model_view, _resolution_root, _selected_model
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -211,10 +212,24 @@ class Model:
     submodels: dict[str, Model] = field(default_factory=dict)
     _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
     _object_source_lines: dict[int, int] = field(default_factory=dict, repr=False)
-    _serialization_origin: Model | None = field(
+    _serialization_origin: Model | _SourceOrigin | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
     _is_submodel_view: bool = field(default=False, init=False, repr=False)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Initialize private copy lineage without changing constructor hooks."""
+        object.__setattr__(
+            self,
+            name,
+            _SourceOrigin()
+            if name == "_serialization_origin" and value is None
+            else value,
+        )
+
+    def _serialization_aliases(self) -> tuple[Model, ...]:
+        """Additional selected definitions recognized by private expansion models."""
+        return ()
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
         for obj in self.objects:
@@ -629,37 +644,16 @@ def _serialized(obj: ParsedObject) -> str:
     return line
 
 
-def _serialization_origins(model: Model) -> set[int]:
-    """Identify only the selected source and its explicit replacement ancestry."""
-    origins: set[int] = set()
-    origin: Model | None = _selected_model(model)
-    while origin is not None:
-        origin = _selected_model(origin)
-        if id(origin) in origins:
-            break
-        origins.add(id(origin))
-        origin = origin._serialization_origin  # noqa: SLF001
-    return origins
-
-
 def _serialization_models(*, model: Model) -> Iterator[Model]:
     """Keep the selected section authoritative and reject conflicting dependencies."""
-    selected_key = normalize_ref(model.name)
-    selected = _selected_model(model)
-    origins = _serialization_origins(model)
-    seen = {selected_key: selected}
+    registry = _DefinitionRegistry(
+        selected=model,
+        aliases=model._serialization_aliases(),  # noqa: SLF001
+    )
     yield model
     for dependency in model.submodels.values():
-        key = normalize_ref(dependency.name)
-        source = _selected_model(dependency)
-        if key == selected_key and id(source) in origins:
-            continue
-        if (previous := seen.get(key)) is not None:
-            if previous is not source:
-                raise DuplicateSubmodelError(dependency.name)
-            continue
-        seen[key] = source
-        yield dependency
+        if registry.register(dependency):
+            yield dependency
 
 
 def _iter_model_pieces(
@@ -671,13 +665,34 @@ def _iter_model_pieces(
     key = normalize_ref(model.name)
     if key in visiting:
         raise SubmodelCycleError(model.name)
-    visiting = visiting | {key}
-    for piece in model.pieces:
+    frames = [
+        _ReferenceFrame(
+            model=model, pieces=iter(model.pieces), visiting=visiting | {key}
+        )
+    ]
+    while frames:
+        frame = frames[-1]
+        if (piece := next(frame.pieces, None)) is None:
+            frames.pop()
+            continue
         target = _resolve_reference(root=root, piece=piece, context=None)
         if target is None:
             yield piece
-        else:
-            yield from _iter_model_pieces(root=root, model=target, visiting=visiting)
+            continue
+        _cycle_target(
+            source=frame.model,
+            piece=piece,
+            target=target,
+            visiting=frame.visiting,
+            on_cycle=None,
+        )
+        frames.append(
+            _ReferenceFrame(
+                model=target,
+                pieces=iter(target.pieces),
+                visiting=frame.visiting | {normalize_ref(target.name)},
+            )
+        )
 
 
 def _iter_occurrences_skip_cycles(
@@ -1285,6 +1300,8 @@ def _iter_reference_edges(
 ) -> Iterator[tuple[Model, Piece, Model | None, bool]]:
     """Inspect source edges iteratively, retaining unresolved and closing edges."""
     selected = _selected_model(root)
+    cache = context if context is not None else ModelValidationContext()
+    by_identity = not unique_names and cache.unique_names(root=root)
     frames = [
         _ReferenceFrame(
             model=selected,
@@ -1292,13 +1309,13 @@ def _iter_reference_edges(
             visiting=frozenset({normalize_ref(selected.name)}),
         )
     ]
-    seen = {normalize_ref(selected.name)}
+    seen: set[str | int | tuple[int, frozenset[str]]] = set()
     while frames:
         frame = frames[-1]
         if (piece := next(frame.pieces, None)) is None:
             frames.pop()
             continue
-        target = _resolve_reference(root=root, piece=piece, context=context)
+        target = cache.resolve(root=root, piece=piece)
         closing = (
             target is not None
             and _cycle_target(
@@ -1306,18 +1323,24 @@ def _iter_reference_edges(
                 piece=piece,
                 target=target,
                 visiting=frame.visiting,
-                on_cycle=_ignore_cycle,
+                on_cycle=None,
+                cycle_leaf=True,
             )
             is None
         )
         yield frame.model, piece, target, closing
         if target is not None and not closing:
             key = normalize_ref(target.name)
-            if (descend is not None and not descend(target)) or (
-                unique_names and key in seen
-            ):
+            marker = (
+                key
+                if unique_names
+                else id(_selected_model(target))
+                if by_identity
+                else (id(_selected_model(target)), frame.visiting)
+            )
+            if (descend is not None and not descend(target)) or marker in seen:
                 continue
-            seen.add(key)
+            seen.add(marker)
             frames.append(
                 _ReferenceFrame(
                     model=target,
@@ -1335,10 +1358,16 @@ def _model_structure_diagnostics(
 ) -> list[Diagnostic]:
     """Keep structural diagnostics depth-first without Python recursion."""
     diagnostics: list[Diagnostic] = []
-    emitted_cycles: set[tuple[str, int | None]] = set()
+    emitted_sources: set[tuple[int, int]] = set()
     for model, piece, target, closing in _iter_reference_edges(
         root=root, context=context
     ):
+        if target is not None and not closing:
+            continue
+        marker = id(_selected_model(model)), id(piece)
+        if marker in emitted_sources:
+            continue
+        emitted_sources.add(marker)
         line_number = model.source_line_for(piece)
         if target is None:
             _, suffix = split_reference(piece.reference)
@@ -1355,21 +1384,18 @@ def _model_structure_diagnostics(
                     )
                 )
         elif closing:
-            marker = normalize_ref(target.name), line_number
-            if marker not in emitted_cycles:
-                emitted_cycles.add(marker)
-                error = SubmodelCycleError(target.name)
-                diagnostics.append(
-                    Diagnostic(
-                        line_number=line_number,
-                        message=error.message,
-                        code=DiagnosticCode.MPD_CYCLE,
-                        path=path,
-                        section=model.name or None,
-                        offending_value=piece.reference,
-                        cause=error,
-                    )
+            error = SubmodelCycleError(target.name)
+            diagnostics.append(
+                Diagnostic(
+                    line_number=line_number,
+                    message=error.message,
+                    code=DiagnosticCode.MPD_CYCLE,
+                    path=path,
+                    section=model.name or None,
+                    offending_value=piece.reference,
+                    cause=error,
                 )
+            )
     return diagnostics
 
 
