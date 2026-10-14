@@ -577,6 +577,14 @@ excluded from repr, equality, and manifests. Strict manual subclass constructors
 must accept or forward this keyword when used with `dataclasses.replace`;
 existing positional Model parameters are unchanged.
 
+Raw models initialize this private field with a compact copy-lineage token.
+Shallow copies and dataclass replacements retain it, allowing the selected copy
+to supersede a same-named dependency from that lineage. Explicit model origins
+remain supported. Deep-copy and pickle preserve lineage sharing in the copied
+graph; the token itself does not retain a model or create a self-reference.
+Assigning `None` starts a new lineage. Constructor parameters and defaults are
+unchanged, and no additional subclass post-initialization hooks are invoked.
+
 Built-in traversal checks every composed placement, including overflow from
 finite inputs into empty submodels or submodels containing geometry without
 leaf parts.
@@ -607,6 +615,10 @@ loading's structural cycle diagnostics also use explicit stacks, allowing deep
 API and CLI comparisons without Python's recursive-call limit. Built-in comparison
 retains its normal cycle error, while custom source audits stop cyclic re-entry
 without replacing the override's occurrences.
+Leaf-piece iteration, recursive piece searches, and snapshot geometry flattening
+also use explicit stacks. Loading memoizes uniquely named source graphs and emits
+structural diagnostics once per source placement; ambiguous names retain
+ancestry-sensitive traversal and cached reference resolution.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 
@@ -638,6 +650,14 @@ root or selected section raises `ValueError`.
 To rebind existing sections explicitly, use
 `dataclasses.replace(document, model=new_model, _resolution=None)`; to rebuild
 their contents, use `new_model.instruction_document()`.
+Rebinding keeps the existing section content, steps, edits, and source locations.
+The retained document root corresponds to the new root by role; other retained
+sections correspond to the new resolver's canonical definitions by normalized
+name. Root ancestry follows that correspondence and actual new-root reachability.
+Only the selected section can supersede its corresponding definition during
+export. Actual retained placements still resolve through the new resolver, so
+identity-sensitive resolvers must recognize those placements. Renaming targets
+does not rewrite references, and incompatible spellings remain export errors.
 
 The `InstructionStep` constructor no longer accepts `_root`: its required
 keyword-only `_resolution` field is the sole resolution authority. The document's
@@ -661,6 +681,8 @@ models have no dependencies, and expanded models register encountered canonical
 instruction sections. Serialization closes their required dependencies separately
 from counting's cycle cuts, including retained root references. Editing those
 dictionaries does not change the root table.
+Their `iter_pieces()` and recursive `find_pieces()` inspect the same finite leaves
+as step occurrences, including retained ancestor references.
 Snapshot dependencies omit the section already being rendered, so self-references
 do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
 recursive references; public paired snapshot export rejects cycles and leaves
@@ -676,6 +698,12 @@ and instruction exports reject those conflicts with `DuplicateSubmodelError`.
 Resolver mappings requiring reference rewriting raise `ValueError` instead of
 publishing a misleading file. Export failures preserve existing outputs. These
 corrections keep package version and manifest schema v1 unchanged.
+Independent fresh definitions with the same normalized name remain conflicts,
+even when their serialized text is identical. `str(model)` is serialization and
+can raise the same errors as `to_ldraw()` or `save()`; use `repr()` for inspection.
+Each export invocation validates definitions once and reuses each step's required
+dependency closure across its artifacts. Preparation is not retained between
+exports, so later source edits are checked again.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that
