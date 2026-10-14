@@ -349,6 +349,32 @@ wheels = [
 ]
 
 [[package]]
+name = "griffe"
+version = "2.3.2"
+source = { registry = "https://pkgs.safetycli.com/repository/independent-3c890/project/python-ldraw/pypi/simple/" }
+dependencies = [
+    { name = "griffecli" },
+    { name = "griffelib" },
+]
+sdist = { url = "https://pkgs.safetycli.com/package/independent-3c890/pypi/packages/07/20/8446877884b2189cddf1304fd376d9bde2d1a6caf77e3980c5cdf5959245/griffe-2.3.2.tar.gz", hash = "sha256:8625bf98dbb02edb291aef77f2f1a17ae6c62d32a764f5bfed009e6010b2d538", size = 437566, upload-time = "2026-10-06T09:54:36.066Z" }
+wheels = [
+    { url = "https://pkgs.safetycli.com/package/independent-3c890/pypi/packages/10/09/385273046ef74d336e15cdd1069a9c0699483134b0616dceb4174d4d1213/griffe-2.3.2-py3-none-any.whl", hash = "sha256:31f5217d19c7e732893260d558f92298c4c9c9d2b50f930a1e6dec3f6feb63cb", size = 5081, upload-time = "2026-10-06T09:54:33.565Z" },
+]
+
+[[package]]
+name = "griffecli"
+version = "2.3.2"
+source = { registry = "https://pkgs.safetycli.com/repository/independent-3c890/project/python-ldraw/pypi/simple/" }
+dependencies = [
+    { name = "colorama" },
+    { name = "griffelib" },
+]
+sdist = { url = "https://pkgs.safetycli.com/package/independent-3c890/pypi/packages/92/9a/32ae6bc0adc178e22e567e810e9c2e50956652574b9f07cd438a35de88d8/griffecli-2.3.2.tar.gz", hash = "sha256:d9daf7aaef8ac38fb29680a3397cc66300f3fc17c68c909a26446f06df0b44dd", size = 59944, upload-time = "2026-10-06T09:54:38.05Z" }
+wheels = [
+    { url = "https://pkgs.safetycli.com/package/independent-3c890/pypi/packages/69/c0/f9bcf1852e66b826674d174c7a17f8208bd9f9ea42c8e1debd4ba4c482d2/griffecli-2.3.2-py3-none-any.whl", hash = "sha256:54770415ad6f4b650d1c7af606d5db85c8e75591114b4b714c081a29ff00d986", size = 11637, upload-time = "2026-10-06T09:54:34.575Z" },
+]
+
+[[package]]
 name = "griffelib"
 version = "2.3.2"
 source = { registry = "https://pkgs.safetycli.com/repository/independent-3c890/project/python-ldraw/pypi/simple/" }
@@ -1027,6 +1053,7 @@ visual-compare = [
 [package.dev-dependencies]
 dev = [
     { name = "deptry" },
+    { name = "griffe" },
     { name = "hypothesis" },
     { name = "lizard" },
     { name = "memory-profiler" },
@@ -1060,6 +1087,7 @@ provides-extras = ["visual-compare"]
 [package.metadata.requires-dev]
 dev = [
     { name = "deptry", specifier = ">=0.23.0" },
+    { name = "griffe", specifier = ">=2.3.2" },
     { name = "hypothesis", specifier = ">=6.130" },
     { name = "lizard", specifier = ">=1.23.0" },
     { name = "memory-profiler", specifier = ">=0.61.0" },

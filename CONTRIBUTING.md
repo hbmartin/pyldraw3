@@ -19,6 +19,67 @@ Default pytest discovery selects `tests/`. Integration tests require `--integrat
 
 Production functions have an 80-NLOC budget, measured by Lizard. `scripts/function_budget.json` records existing exceptions and their current ceilings. New exceptions and growth are rejected; remove an exception as soon as its function is within budget. Run `uv run python scripts/check_function_budget.py` alongside the existing complexity check.
 
+## API compatibility checks
+
+Use [Griffe](https://mkdocstrings.github.io/griffe/guide/users/checking/) to
+manually check for potential breaking changes in the Python API. Run these
+commands from the repository root. Activate your development environment,
+install the locked dependencies, and fetch any missing release tags:
+
+```bash
+source .venv/bin/activate
+uv sync --all-groups --locked
+git fetch --tags origin
+```
+
+The distribution is named `pyldraw3`, but its Python package is `ldraw`, which
+is the name to pass to Griffe. To compare two releases:
+
+```bash
+# Compare the newer release against the older release
+uv run --locked griffe check ldraw --no-inspection \
+  --against v1.6.0 --base-ref v1.7.0
+```
+
+`--against` identifies the older version; `--base-ref` identifies the newer
+version. Both accept Git tags, branches, or commits available locally. Griffe
+loads the requested revisions in temporary worktrees and cleans them up after
+the comparison, so you can stay on your current branch.
+
+Omit `--base-ref` to check the current working files, including uncommitted
+changes. Omit both references to compare the working files against the latest
+Git tag selected by Griffe:
+
+```bash
+# Compare current working files against a specific release
+uv run --locked griffe check ldraw --no-inspection \
+  --against v1.7.0
+
+# Compare current working files against the latest Git tag
+uv run --locked griffe check ldraw --no-inspection
+```
+
+For a completed comparison, exit code `0` means no breakages were detected;
+exit code `1` means potential breakages were reported. Review the findings to
+decide whether they represent compatibility changes you intend to support.
+Loading errors and missing references also produce a nonzero exit code, so
+check the diagnostic output if the comparison fails.
+
+To save a Markdown report, capture stderr as well as stdout because Griffe
+writes its findings to stderr:
+
+```bash
+uv run --locked griffe check ldraw --no-inspection \
+  --against v1.7.0 --format markdown > api-breakages.md 2>&1
+```
+
+`--no-inspection` keeps these checks static; no LDraw library download or
+generation is needed. Griffe checks source-level Python APIs using public-name
+conventions, including `__all__`. It does not produce a complete list of API
+additions, check runtime behavior or CLI options, or compare the generated
+`ldraw.library.*` APIs, which depend on the locally downloaded LDraw release.
+These commands are available for local review and are not a CI gate.
+
 ## Connection regression corpus
 
 The fixed manifest in `tests/snapshots/connections-2018-02-manifest.json` selects 200 parts across categories, including connector/socket regressions. Snapshots include feature identities, kinds, roles, transforms, profiles, confidence, and provenance; library roots are normalized. Numbers compare with relative tolerance `1e-9` and absolute tolerance `1e-7`, while other fields compare exactly.
