@@ -60,51 +60,16 @@ class ModelValidationContext:
         completed = self._completed_sections.get(scope)
         if completed is not None and completed <= self.validated_sections:
             return
-        pending = [(selected, frozenset[str](), False)]
         visited: set[int] = set()
-        expanded: set[int] = set()
-        outgoing: dict[int, tuple[Model, ...]] = {}
-        deferred: dict[int, frozenset[str]] = {}
-        retried: set[tuple[int, frozenset[str]]] = set()
-        while pending:
-            target, visiting, exiting = pending.pop()
-            section = _selected_model(target)
-            key = id(section)
-            if exiting:
-                deferred[key] = frozenset().union(
-                    *(
-                        deferred.get(id(_selected_model(child)), frozenset())
-                        for child in outgoing[key]
-                    )
-                )
-                continue
-            if key not in visited:
+        sources = (
+            _reachable_sections(root=root, context=self)
+            if reachable_only
+            else _declared_sections(model=selected)
+        )
+        for section in sources:
+            if (key := id(section)) not in visited:
                 visited.add(key)
                 yield section
-            if key in expanded and not _retry_deferred(
-                key=key, visiting=visiting, deferred=deferred, retried=retried
-            ):
-                continue
-            if reachable_only:
-                name = normalize_ref(section.name)
-                if name in visiting:
-                    deferred[key] = frozenset({name})
-                    continue
-                visiting = visiting | {name}
-            if key not in outgoing:
-                outgoing[key] = (
-                    tuple(
-                        target for _, target in self.edges(root=root, section=section)
-                    )
-                    if reachable_only
-                    else tuple(section.submodels.values())
-                )
-            expanded.add(key)
-            deferred[key] = frozenset()
-            pending.append((section, visiting, True))
-            pending.extend(
-                (target, visiting, False) for target in reversed(outgoing[key])
-            )
         self._completed_sections[scope] = frozenset(visited)
 
     def ensure_validated(self, *, root: Model, reachable_only: bool) -> None:
@@ -180,19 +145,83 @@ class ModelValidationContext:
         return self.targets[piece]
 
 
-def _retry_deferred(
+@dataclass(slots=True)
+class _DiscoveryFrame:
+    state: tuple[int, frozenset[str]]
+    visiting: frozenset[str]
+    children: Iterator[tuple[Piece, Model]]
+    blocked: bool = False
+
+
+def _discovery_frame(
     *,
-    key: int,
-    visiting: frozenset[str],
-    deferred: dict[int, frozenset[str]],
-    retried: set[tuple[int, frozenset[str]]],
-) -> bool:
-    """Revisit only newly unblocked cycle-sensitive routes, never ordinary paths."""
-    blockers = deferred.get(key, frozenset())
-    if blockers <= visiting or (retry := (key, blockers & visiting)) in retried:
-        return False
-    retried.add(retry)
-    return True
+    root: Model,
+    section: Model,
+    ancestry: frozenset[str],
+    context: ModelValidationContext,
+) -> _DiscoveryFrame:
+    return _DiscoveryFrame(
+        state=(id(section), ancestry),
+        visiting=ancestry | {normalize_ref(section.name)},
+        children=iter(context.edges(root=root, section=section)),
+    )
+
+
+def _reachable_sections(
+    *, root: Model, context: ModelValidationContext
+) -> Iterator[Model]:
+    """Reuse complete acyclic closures and exact states of blocked paths."""
+    selected = _selected_model(root)
+    yield selected
+    frames = [
+        _discovery_frame(
+            root=root, section=selected, ancestry=frozenset(), context=context
+        )
+    ]
+    complete: set[int] = set()
+    sensitive: set[tuple[int, frozenset[str]]] = set()
+    while frames:
+        frame = frames[-1]
+        if (edge := next(frame.children, None)) is None:
+            frames.pop()
+            if frame.blocked:
+                sensitive.add(frame.state)
+            else:
+                complete.add(frame.state[0])
+            if frames:
+                frames[-1].blocked |= frame.blocked
+            continue
+        target = _selected_model(edge[1])
+        # The consumer checks a newly seen closing section before we stop here.
+        yield target
+        if normalize_ref(target.name) in frame.visiting:
+            frame.blocked = True
+        elif id(target) in complete:
+            continue
+        elif (id(target), frame.visiting) in sensitive:
+            frame.blocked = True
+        else:
+            frames.append(
+                _discovery_frame(
+                    root=root,
+                    section=target,
+                    ancestry=frame.visiting,
+                    context=context,
+                )
+            )
+
+
+def _declared_sections(*, model: Model) -> Iterator[Model]:
+    """Walk declared tables without resolving references or following name cycles."""
+    pending = [model]
+    visited: set[int] = set()
+    while pending:
+        section = _selected_model(pending.pop())
+        if (key := id(section)) in visited:
+            continue
+        visited.add(key)
+        yield section
+        pending.extend(reversed(tuple(section.submodels.values())))
 
 
 def _optional_reference(*, root: Model, piece: Piece) -> Model | None:

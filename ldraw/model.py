@@ -589,7 +589,7 @@ class Model:
         if not self.submodels:
             return "\n".join(_serialized(obj) for obj in self.objects)
         sections: list[str] = []
-        for model in (self, *self.submodels.values()):
+        for model in _serialization_models(model=self):
             if not model.name:
                 raise SubmodelNameRequiredError
             sections.append(
@@ -624,6 +624,23 @@ def _serialized(obj: ParsedObject) -> str:
     ):
         raise StructuralCommentError(obj.text)
     return line
+
+
+def _serialization_models(*, model: Model) -> Iterator[Model]:
+    """Keep the selected section authoritative and reject conflicting dependencies."""
+    selected_key = normalize_ref(model.name)
+    seen = {selected_key: model}
+    yield model
+    for dependency in model.submodels.values():
+        key = normalize_ref(dependency.name)
+        if key == selected_key:
+            continue
+        if (previous := seen.get(key)) is not None:
+            if previous is not dependency:
+                raise DuplicateSubmodelError(dependency.name)
+            continue
+        seen[key] = dependency
+        yield dependency
 
 
 def _iter_model_pieces(
@@ -695,6 +712,7 @@ def _occurrences_at_origin(
     expand_submodels: bool,
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None,
+    cycle_leaf: bool = False,
 ) -> Iterator[ModelOccurrence]:
     """Share public and cycle-tolerant expansion's identity-origin setup."""
     return _iter_model_occurrences(
@@ -709,6 +727,7 @@ def _occurrences_at_origin(
         expand_submodels=expand_submodels,
         include_steps=include_steps,
         on_cycle=on_cycle,
+        cycle_leaf=cycle_leaf,
     )
 
 
@@ -821,6 +840,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - explicit traversal state
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None = None,
     context: ModelValidationContext | None = None,
+    cycle_leaf: bool = False,
 ) -> Iterator[ModelOccurrence]:
     """Compose the supplied parent transform and traverse resulting placements."""
     return _iter_occurrences_at_placements(
@@ -841,6 +861,7 @@ def _iter_model_occurrences(  # noqa: PLR0913 - explicit traversal state
         include_steps=include_steps,
         on_cycle=on_cycle,
         context=context,
+        cycle_leaf=cycle_leaf,
     )
 
 
@@ -937,6 +958,7 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None = None,
     context: ModelValidationContext | None = None,
+    cycle_leaf: bool = False,
 ) -> Iterator[ModelOccurrence]:
     """Expand world placements or emit leaves, sharing identity and cycle handling."""
     visiting = visiting | {normalize_ref(model.name)}
@@ -958,15 +980,21 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
         if expand_submodels:
             target = _resolve_reference(root=root, piece=piece, context=context)
         if target is not None:
-            target = _cycle_target(
-                source=model,
-                piece=piece,
-                target=target,
-                visiting=visiting,
-                on_cycle=on_cycle,
-            )
-            if target is None:
-                continue
+            if cycle_leaf and normalize_ref(target.name) in visiting:
+                if on_cycle is not None:
+                    on_cycle(model, piece, target)
+                target = None
+            else:
+                target = _cycle_target(
+                    source=model,
+                    piece=piece,
+                    target=target,
+                    visiting=visiting,
+                    on_cycle=on_cycle,
+                )
+                if target is None:
+                    continue
+        if target is not None:
             yield from _iter_model_occurrences(
                 root=root,
                 model=target,
@@ -980,6 +1008,7 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
                 include_steps=include_steps,
                 on_cycle=on_cycle,
                 context=context,
+                cycle_leaf=cycle_leaf,
             )
             continue
         yield ModelOccurrence(

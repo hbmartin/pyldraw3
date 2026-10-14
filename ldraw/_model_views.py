@@ -5,8 +5,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from copy import deepcopy
 from functools import cached_property
-from types import GetSetDescriptorType, MemberDescriptorType, MethodType
-from typing import TYPE_CHECKING, Any, SupportsIndex, cast
+from types import FunctionType, GetSetDescriptorType, MemberDescriptorType, MethodType
+from typing import TYPE_CHECKING, Any, Self, SupportsIndex, cast
 from weakref import ReferenceType, WeakKeyDictionary, ref
 
 if TYPE_CHECKING:
@@ -64,7 +64,11 @@ def _view_attribute(*, view: _ModelViewMixin, selected: Model, name: str) -> Any
         )
     if isinstance(descriptor, classmethod):
         return getattr(selected, name)
-    return _bound_descriptor(view=view, name=name, non_data=non_data)
+    return (
+        object.__getattribute__(view, name)
+        if type(descriptor) in {FunctionType, staticmethod}
+        else _bound_descriptor(view=view, name=name, non_data=non_data)
+    )
 
 
 def _bound_descriptor(*, view: _ModelViewMixin, name: str, non_data: bool) -> Any:  # noqa: ANN401 - descriptor values
@@ -85,7 +89,7 @@ class _ModelViewMixin:
         _view_root: Model
         _view_cache: dict[str, object]
 
-    def __init_subclass__(cls, **_kwargs: object) -> None:
+    def __init_subclass__(cls: type[Self], **_kwargs: object) -> None:
         """Do not register the internal adapter through user subclass hooks."""
 
     def __getattribute__(self, name: str) -> Any:  # noqa: ANN401 - proxy attributes
@@ -200,6 +204,25 @@ class _ModelViewMixin:
         return self.__reduce_ex__(4)
 
 
+class _ViewConstructorMeta(type):
+    def __init_subclass__(cls: type[_ViewConstructorMeta], **_kwargs: object) -> None:
+        """Suppress selected metaclass subclass hooks for the private dispatcher."""
+
+    def __call__(cls: _ViewConstructorMeta, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - arbitrary selected constructors
+        selected_class = type.__getattribute__(cls, "_view_constructor_class")
+        return selected_class(*args, **kwargs)
+
+
+def _constructor_metaclass(*, selected_class: type[Model]) -> type:
+    selected_meta = type(selected_class)
+    return type.__new__(
+        type(selected_meta),
+        f"_Live{selected_class.__name__}ViewMeta",
+        (_ViewConstructorMeta, selected_meta),
+        {"__module__": __name__},
+    )
+
+
 def _view_class(selected_class: type[Model]) -> type[Model]:
     """Keep generated types alive only while their users keep them alive."""
     if (cached := _VIEW_CLASSES.get(selected_class)) is not None and (
@@ -209,12 +232,13 @@ def _view_class(selected_class: type[Model]) -> type[Model]:
     view_class = cast(
         "type[Model]",
         type.__new__(
-            type(selected_class),
+            _constructor_metaclass(selected_class=selected_class),
             f"_Live{selected_class.__name__}View",
             (_ModelViewMixin, selected_class),
             {
                 "__module__": __name__,
                 "__slots__": ("_view_selected", "_view_root", "_view_cache"),
+                "_view_constructor_class": selected_class,
             },
         ),
     )

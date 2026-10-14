@@ -215,7 +215,7 @@ def test_required_metaclass_hooks_and_registries_do_not_run_for_adapters() -> No
     selected = Selected(name="sub.ldr")
     view = selected.submodel_view(selected.name)
     assert isinstance(view, Selected)
-    assert type(type(view)) is Registry
+    assert isinstance(type(view), Registry)
     assert Registry.entries == [("new", "Selected"), ("init", "Selected")]
     assert type(copy(view)) is type(view)
 
@@ -501,7 +501,7 @@ def test_manual_document_constructor_keeps_snapshot_compatibility(
 ) -> None:
     root = Model(name="main.ldr", objects=[Piece.place("3001")])
     document = replace(root.instruction_document())
-    assert document._resolution_context() is None  # noqa: SLF001
+    assert document._resolution_context() is not None  # noqa: SLF001
     path = tmp_path / "manual.mpd"
     _write_snapshot_mpd(
         document, section=document.root, step=document.root.steps[0], path=path

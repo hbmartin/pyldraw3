@@ -540,6 +540,9 @@ inherits the selected class, so `isinstance(view, SelectedClass)` and `super()`
 work, while `type(view)` can differ from `type(selected)`. `view.__class__`
 reports the selected class, allowing ordinary construction through
 `self.__class__`, `dataclasses.replace`, and familiar representations.
+Calling `type(view)(...)` also constructs an ordinary selected-class instance,
+honoring its constructor and metaclass call behavior once. A private dispatcher
+metaclass handles this construction; internal view allocation bypasses it.
 
 Inherited descriptors bind to the view, including cached methods,
 `singledispatchmethod`, `partialmethod`, and custom descriptors. Class factories
@@ -586,11 +589,12 @@ geometry is validated before occurrence preparation.
 Reachable source discovery stops active reference-name cycles even when a
 custom resolver creates fresh section objects on every call. Newly encountered
 cycle-closing sections still receive numeric checks. Distinct acyclic sections
-sharing a name are checked separately. Shared acyclic sections are expanded
-once during source discovery; cycle-closing encounters remain deferred so a
-later acyclic route can expose their descendants. Built-in comparison retains its normal
-cycle error, while custom source audits stop cyclic re-entry without replacing
-the override's occurrences.
+sharing a name are checked separately. Iterative source discovery expands a
+fully explored acyclic section once, without hitting Python's recursion limit.
+Paths stopped by a cycle are remembered with their exact normalized ancestry,
+so a later acyclic route can still expose their descendants. Built-in comparison
+retains its normal cycle error, while custom source audits stop cyclic re-entry
+without replacing the override's occurrences.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
 loading, since a raw Model does not retain a discarded source line's history.
 
@@ -615,10 +619,37 @@ sections, step inventories, manifests, and snapshots use the objects selected
 by a custom resolver even when the declared table holds a stale object with the
 same name. Declared section order is retained and external targets follow in
 discovery order; build a new document to discover changed resolver results.
+The document owns one resolution context, shared by its steps. Copies made
+with `dataclasses.replace` retain that context; replacing it binds new steps
+without modifying the original document. A context belonging to a different
+root or selected section raises `ValueError`.
+
+The `InstructionStep` constructor no longer accepts `_root`: its required
+keyword-only `_resolution` field is the sole resolution authority. The document's
+optional keyword-only `_resolution` field creates a context when omitted.
+Callouts retain their actual source placements in optional keyword-only
+`_pieces` metadata, excluded from representations, equality, and manifests.
+Manual callouts without that metadata match cumulative source references;
+another placement's alias cannot make an unresolved callout valid.
+
+Step occurrences and BOMs keep references back to the document root as
+unexpanded leaves. Other active-path cycles emit the closing reference once,
+preserving its full identity and composed transform. This lets step inspection
+and `max_parts` validation finish with cycle diagnostics. Ordinary model
+iteration and comparison retain their existing cycle errors.
+Temporary expansion models own their dependency dictionaries: unexpanded
+models have no dependencies, and expanded models register encountered canonical
+instruction sections. Editing those dictionaries does not change the root table.
 Snapshot dependencies omit the section already being rendered, so self-references
 do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
 recursive references; public paired snapshot export rejects cycles and leaves
 no partially published output.
+
+Model serialization emits the selected section once and collapses dependency
+aliases referring to the same object. Distinct dependency objects with conflicting
+normalized names raise `DuplicateSubmodelError`; raw names and reference spelling
+are preserved. These corrections keep package version and manifest schema v1
+unchanged.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that
