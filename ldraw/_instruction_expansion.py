@@ -5,10 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ldraw.model import Model
+from ldraw._instruction_common import _is_instruction_model
+from ldraw._model_cycles import _cycle_callback
+from ldraw.model import Model, _occurrences_at_origin
+from ldraw.utils import normalize_ref
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ldraw import _instruction_resolution
+    from ldraw.model import ModelOccurrence
     from ldraw.pieces import Piece
 
 
@@ -19,13 +25,29 @@ class _InstructionExpansion(Model):
     )
     expand: bool = field(kw_only=True, repr=False)
 
+    def iter_occurrences(
+        self, *, expand_submodels: bool = True, include_steps: bool = True
+    ) -> Iterator[ModelOccurrence]:
+        """Keep step expansion finite and retain closing references as leaves."""
+        return _occurrences_at_origin(
+            model=self,
+            expand_submodels=expand_submodels,
+            include_steps=include_steps,
+            on_cycle=_cycle_callback(self),
+            cycle_leaf=True,
+        )
+
     def submodel_for(self, piece: Piece) -> Model | None:
         """Expand instruction sections while keeping embedded DAT parts as leaves."""
         if not self.expand:
             return None
         target = self.resolution.resolve(piece)
-        return (
-            target
-            if target is not None and not target.name.casefold().endswith(".dat")
-            else None
-        )
+        if (
+            target is None
+            or not _is_instruction_model(target)
+            or normalize_ref(target.name) == normalize_ref(self.resolution.root.name)
+        ):
+            return None
+        if (key := normalize_ref(target.name)) != normalize_ref(self.name):
+            self.submodels.setdefault(key, self.resolution.canonical(target))
+        return target

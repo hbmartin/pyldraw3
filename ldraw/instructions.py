@@ -8,9 +8,10 @@ import shlex
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ldraw import _instruction_resolution
+from ldraw._instruction_common import _is_instruction_model
 from ldraw._model_validation import _resolve_reference
 from ldraw.bom import BomRow, bill_of_materials
 from ldraw.geometry import Identity, Matrix, Vector
@@ -160,6 +161,9 @@ class InstructionCallout:
     mode: CalloutMode
     references: tuple[str, ...]
     source_line: int | None
+    _pieces: tuple[Piece, ...] | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +194,14 @@ class InstructionStep:
     suppressed: bool
     source_start_line: int | None
     source_end_line: int | None
-    _root: Model = field(repr=False, compare=False)
     _model: Model = field(repr=False, compare=False)
     _cumulative_objects: tuple[ParsedObject, ...] = field(repr=False, compare=False)
     _ignored_pli: frozenset[int] = field(repr=False, compare=False)
     _ignored_bom: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_pli: frozenset[int] = field(repr=False, compare=False)
     _cumulative_ignored_bom: frozenset[int] = field(repr=False, compare=False)
-    _resolution: _instruction_resolution.InstructionResolution | None = field(
-        default=None, init=False, repr=False, compare=False
+    _resolution: _instruction_resolution.InstructionResolution = field(
+        kw_only=True, repr=False, compare=False
     )
 
     @property
@@ -275,20 +278,8 @@ class InstructionStep:
         objects: tuple[Piece, ...],
         expand_submodels: bool,
     ) -> tuple[ModelOccurrence, ...]:
-        from ldraw.model import Model  # noqa: PLC0415
-
-        view = (
-            self._resolution.expansion(
-                source=self._model, objects=objects, expand=expand_submodels
-            )
-            if self._resolution is not None
-            else Model(
-                name=self._model.name,
-                objects=list(objects),
-                submodels=_expandable_submodels(self._root, expand=expand_submodels),
-                _source_lines=self._model._source_lines,  # noqa: SLF001
-                _object_source_lines=self._model._object_source_lines,  # noqa: SLF001
-            )
+        view = self._resolution.expansion(
+            source=self._model, objects=objects, expand=expand_submodels
         )
         return tuple(
             view.iter_occurrences(
@@ -305,21 +296,11 @@ class InstructionStep:
         parts: Parts | None,
         expand_submodels: bool,
     ) -> list[BomRow]:
-        from ldraw.model import Model  # noqa: PLC0415
-
         included: list[ParsedObject] = [
             piece for piece in objects if id(piece) not in ignored
         ]
-        view = (
-            self._resolution.expansion(
-                source=self._model, objects=included, expand=expand_submodels
-            )
-            if self._resolution is not None
-            else Model(
-                name=self._model.name,
-                objects=included,
-                submodels=_expandable_submodels(self._root, expand=expand_submodels),
-            )
+        view = self._resolution.expansion(
+            source=self._model, objects=included, expand=expand_submodels
         )
         return bill_of_materials(view, parts=parts)
 
@@ -346,8 +327,32 @@ class InstructionDocument:
     model: Model = field(repr=False, compare=False)
     parts: Parts | None = field(default=None, repr=False, compare=False)
     _resolution: _instruction_resolution.InstructionResolution | None = field(
-        default=None, init=False, repr=False, compare=False
+        default=None, kw_only=True, repr=False, compare=False
     )
+
+    def __post_init__(self) -> None:
+        resolution = (
+            self._resolution
+            if self._resolution is not None
+            else _instruction_resolution.InstructionResolution(root=self.model)
+        )
+        resolution.bind_document(model=self.model)
+        bound = {
+            id(section): _section_with_resolution(
+                section=section, resolution=resolution
+            )
+            for section in (*self.sections, *self.orphan_sections, self.root)
+        }
+        object.__setattr__(self, "_resolution", resolution)
+        object.__setattr__(self, "root", bound[id(self.root)])
+        object.__setattr__(
+            self, "sections", tuple(bound[id(section)] for section in self.sections)
+        )
+        object.__setattr__(
+            self,
+            "orphan_sections",
+            tuple(bound[id(section)] for section in self.orphan_sections),
+        )
 
     @classmethod
     def from_model(
@@ -363,7 +368,6 @@ class InstructionDocument:
         )
         sections = tuple(
             _build_section(
-                root=model,
                 model=section_model,
                 is_root=index == 0,
                 reachable=True,
@@ -374,7 +378,6 @@ class InstructionDocument:
         reachable_keys = {normalize_ref(item.name) for item in reachable_models}
         orphan_sections = tuple(
             _build_section(
-                root=model,
                 model=item,
                 is_root=False,
                 reachable=False,
@@ -384,15 +387,14 @@ class InstructionDocument:
             if _is_instruction_model(item)
             and normalize_ref(item.name) not in reachable_keys
         )
-        document = cls(
+        return cls(
             root=sections[0],
             sections=sections,
             orphan_sections=orphan_sections,
             model=model,
             parts=parts,
+            _resolution=resolution,
         )
-        object.__setattr__(document, "_resolution", resolution)
-        return document
 
     def section(self, name: str) -> InstructionSection:
         """Return a reachable section by case-insensitive reference name."""
@@ -403,8 +405,24 @@ class InstructionDocument:
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
 
-    def _resolution_context(self) -> _model_validation.ModelValidationContext | None:
-        return self._resolution.context if self._resolution is not None else None
+    def _resolution_context(self) -> _model_validation.ModelValidationContext:
+        return cast(
+            "_instruction_resolution.InstructionResolution", self._resolution
+        ).context
+
+
+def _section_with_resolution(
+    *,
+    section: InstructionSection,
+    resolution: _instruction_resolution.InstructionResolution,
+) -> InstructionSection:
+    """Bind immutable steps without mutating their source document or context."""
+    if all(step._resolution is resolution for step in section.steps):  # noqa: SLF001
+        return section
+    return replace(
+        section,
+        steps=tuple(replace(step, _resolution=resolution) for step in section.steps),
+    )
 
 
 def _rotation_matrix(angles: tuple[float, float, float]) -> Matrix:
@@ -770,20 +788,6 @@ def _parse_arrow(
     )
 
 
-def _is_instruction_model(model: Model) -> bool:
-    return not model.name.casefold().endswith(".dat")
-
-
-def _expandable_submodels(root: Model, *, expand: bool) -> dict[str, Model]:
-    if not expand:
-        return {}
-    return {
-        key: model
-        for key, model in root.submodels.items()
-        if _is_instruction_model(model)
-    }
-
-
 def _reachable_instruction_models(
     root: Model, *, resolution: _instruction_resolution.InstructionResolution
 ) -> list[Model]:
@@ -826,7 +830,16 @@ def _references(
 class _CalloutState:
     mode: CalloutMode
     line: int | None
-    references: list[str] = field(default_factory=list)
+    pieces: list[Piece] = field(default_factory=list)
+
+    def snapshot(self) -> InstructionCallout:
+        """Retain actual source identities in each immutable callout fragment."""
+        return InstructionCallout(
+            mode=self.mode,
+            references=tuple(piece.reference for piece in self.pieces),
+            source_line=self.line,
+            _pieces=tuple(self.pieces),
+        )
 
 
 @dataclass(slots=True)
@@ -844,7 +857,6 @@ class _StepState:
 
 @dataclass(slots=True)
 class _SectionMachine:
-    root: Model
     model: Model
     is_root: bool
     reachable: bool
@@ -919,10 +931,7 @@ class _SectionMachine:
         ]
         callouts = [
             *self.state.callouts,
-            *(
-                InstructionCallout(item.mode, tuple(item.references), item.line)
-                for item in self.active_callouts
-            ),
+            *(item.snapshot() for item in self.active_callouts),
         ]
         self.steps.append(
             InstructionStep(
@@ -939,16 +948,15 @@ class _SectionMachine:
                 suppressed=self.state.suppressed,
                 source_start_line=min(lines, default=None),
                 source_end_line=max(lines, default=None),
-                _root=self.root,
                 _model=self.model,
                 _cumulative_objects=tuple(self.cumulative),
                 _ignored_pli=frozenset(self.state.ignored_pli),
                 _ignored_bom=frozenset(self.state.ignored_bom),
                 _cumulative_ignored_pli=frozenset(self.cumulative_pli),
                 _cumulative_ignored_bom=frozenset(self.cumulative_bom),
+                _resolution=self.resolution,
             )
         )
-        object.__setattr__(self.steps[-1], "_resolution", self.resolution)
         self.state = _StepState()
 
     def _add_object(
@@ -968,7 +976,7 @@ class _SectionMachine:
         if InventoryTarget.BOM in self.ignores or InventoryTarget.PART in self.ignores:
             self.state.ignored_bom.add(id(obj))
         for callout in self.active_callouts:
-            callout.references.append(obj.reference)
+            callout.pieces.append(obj)
 
     def _apply_step_directive(self, directive: InstructionDirective) -> bool:
         match directive.kind:
@@ -994,17 +1002,13 @@ class _SectionMachine:
         match directive.kind:
             case DirectiveKind.CALLOUT_BEGIN:
                 mode = CalloutMode(str(directive.value("mode")))
-                self.active_callouts.append(_CalloutState(mode, directive.source_line))
+                self.active_callouts.append(
+                    _CalloutState(mode=mode, line=directive.source_line)
+                )
             case DirectiveKind.CALLOUT_END:
                 if self.active_callouts:
                     completed = self.active_callouts.pop()
-                    self.state.callouts.append(
-                        InstructionCallout(
-                            completed.mode,
-                            tuple(completed.references),
-                            completed.line,
-                        )
-                    )
+                    self.state.callouts.append(completed.snapshot())
             case DirectiveKind.MULTI_STEP_BEGIN:
                 if self.active_group is None:
                     self.active_group = self.next_group
@@ -1023,14 +1027,12 @@ class _SectionMachine:
 
 def _build_section(
     *,
-    root: Model,
     model: Model,
     is_root: bool,
     reachable: bool,
     resolution: _instruction_resolution.InstructionResolution,
 ) -> InstructionSection:
     return _SectionMachine(
-        root=root,
         model=model,
         is_root=is_root,
         reachable=reachable,
@@ -1274,7 +1276,7 @@ def iter_instruction_issues(
         yield from _section_issues(section, document=document, max_parts=max_parts)
 
 
-def _section_issues(  # noqa: C901 - validation rule coordinator
+def _section_issues(
     section: InstructionSection,
     *,
     document: InstructionDocument,
@@ -1319,18 +1321,7 @@ def _section_issues(  # noqa: C901 - validation rule coordinator
                 stack=stack,
             )
         yield from _camera_issues(section.name, step)
-        for callout in step.callouts:
-            if not _resolvable_callout_references(
-                callout.references,
-                root=document.model,
-                context=document._resolution_context(),  # noqa: SLF001
-            ):
-                yield InstructionIssue(
-                    section.name,
-                    callout.source_line,
-                    "empty-callout",
-                    "callout contains no submodel reference",
-                )
+        yield from _callout_issues(section=section.name, step=step)
     for kind, line in reversed(stack):
         yield InstructionIssue(
             section.name,
@@ -1346,7 +1337,7 @@ def _section_issues(  # noqa: C901 - validation rule coordinator
             "model has multiple placements but no explicit STEP or ROTSTEP boundary",
             Severity.WARNING,
         )
-    yield from _reference_issues(section, document=document)
+    yield from _reference_issues(section=section, document=document)
     yield from _highlight_issues(section)
 
 
@@ -1470,30 +1461,43 @@ def _reference_issues(
             )
 
 
-def _resolvable_callout_references(
-    references: tuple[str, ...],
-    *,
-    root: Model,
-    context: _model_validation.ModelValidationContext | None = None,
-) -> bool:
-    root_key = normalize_ref(root.name)
-    for reference in references:
-        key = normalize_ref(reference)
-        target = root if key == root_key else root.submodels.get(key)
-        if context is not None and key != root_key:
-            target = next(
-                (
-                    target
-                    for piece, target in context.targets.items()
-                    if target is not None
-                    and key
-                    in {normalize_ref(piece.reference), normalize_ref(target.name)}
-                ),
-                None,
+def _callout_source_index(*, step: InstructionStep) -> dict[str, list[Piece]]:
+    index: dict[str, list[Piece]] = {}
+    for piece in step.cumulative_pieces:
+        index.setdefault(normalize_ref(piece.reference), []).append(piece)
+    return index
+
+
+def _callout_issues(
+    *, section: str, step: InstructionStep
+) -> Iterator[InstructionIssue]:
+    """Validate source placements rather than incidental resolved target names."""
+    index = (
+        _callout_source_index(step=step)
+        if any(callout._pieces is None for callout in step.callouts)  # noqa: SLF001
+        else {}
+    )
+    for callout in step.callouts:
+        pieces = (
+            callout._pieces  # noqa: SLF001
+            if callout._pieces is not None  # noqa: SLF001
+            else tuple(
+                piece
+                for reference in callout.references
+                for piece in index.get(normalize_ref(reference), ())
             )
-        if target is not None and _is_instruction_model(target):
-            return True
-    return False
+        )
+        if not any(
+            (target := step._resolution.resolve(piece)) is not None  # noqa: SLF001
+            and _is_instruction_model(target)
+            for piece in pieces
+        ):
+            yield InstructionIssue(
+                section=section,
+                line_number=callout.source_line,
+                code="empty-callout",
+                message="callout contains no submodel reference",
+            )
 
 
 def _cycle_issues(document: InstructionDocument) -> Iterator[InstructionIssue]:

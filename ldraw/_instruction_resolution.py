@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ldraw._model_views import _resolution_root, _selected_model
+from ldraw.utils import normalize_ref
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -29,10 +32,31 @@ class InstructionResolution:
     context: _model_validation.ModelValidationContext = field(
         default_factory=_new_context
     )
+    _models: dict[str, _model.Model] = field(
+        default_factory=dict, init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        self.canonical(self.root)
+
+    def bind_document(self, *, model: _model.Model) -> None:
+        """Reject attaching one document's resolution to a different source scope."""
+        if _resolution_root(model) is not _resolution_root(
+            self.root
+        ) or _selected_model(model) is not _selected_model(self.root):
+            message = "instruction resolution belongs to a different document root"
+            raise ValueError(message)
+
+    def canonical(self, target: _model.Model) -> _model.Model:
+        """Keep the first resolved section for serialized dependency names."""
+        return self._models.setdefault(normalize_ref(target.name), target)
 
     def resolve(self, piece: Piece) -> _model.Model | None:
         """Resolve each source placement against the original root once."""
-        return self.context.resolve(root=self.root, piece=piece)
+        target = self.context.resolve(root=self.root, piece=piece)
+        if target is not None:
+            self.canonical(target)
+        return target
 
     def expansion(
         self, *, source: _model.Model, objects: Iterable[ParsedObject], expand: bool
@@ -43,7 +67,6 @@ class InstructionResolution:
         return _InstructionExpansion(
             name=source.name,
             objects=list(objects),
-            submodels=self.root.submodels,
             _source_lines=source._source_lines,  # noqa: SLF001
             _object_source_lines=source._object_source_lines,  # noqa: SLF001
             resolution=self,
