@@ -569,6 +569,14 @@ normal copying and serialization hooks, including their failures; custom
 classes must be pickleable under Python's normal rules. Adapter types are
 cached weakly and are collectible when no live users retain them.
 
+`dataclasses.replace(view)` carries its selected source in the optional private
+keyword-only `Model._serialization_origin` field. A replacement can supersede
+that specific dependency during serialization, including through further
+replacements. Unrelated same-named dependencies still raise. This field is
+excluded from repr, equality, and manifests. Strict manual subclass constructors
+must accept or forward this keyword when used with `dataclasses.replace`;
+existing positional Model parameters are unchanged.
+
 Built-in traversal checks every composed placement, including overflow from
 finite inputs into empty submodels or submodels containing geometry without
 leaf parts.
@@ -589,10 +597,14 @@ geometry is validated before occurrence preparation.
 Reachable source discovery stops active reference-name cycles even when a
 custom resolver creates fresh section objects on every call. Newly encountered
 cycle-closing sections still receive numeric checks. Distinct acyclic sections
-sharing a name are checked separately. Iterative source discovery expands a
-fully explored acyclic section once, without hitting Python's recursion limit.
-Paths stopped by a cycle are remembered with their exact normalized ancestry,
-so a later acyclic route can still expose their descendants. Built-in comparison
+sharing a name are checked separately. Iterative source discovery first walks
+by identity while checking normalized-name uniqueness, so shared acyclic and
+cyclic graphs with unique names expand each source once. Distinct objects with
+the same normalized name switch discovery to ancestry-sensitive traversal,
+reusing cached edges and numeric checks. Later acyclic routes can still expose
+descendants hidden by a cycle. Occurrence expansion, comparison audits, and
+loading's structural cycle diagnostics also use explicit stacks, allowing deep
+API and CLI comparisons without Python's recursive-call limit. Built-in comparison
 retains its normal cycle error, while custom source audits stop cyclic re-entry
 without replacing the override's occurrences.
 Parsing-completeness checks additionally belong to the CLI's report-oriented
@@ -623,6 +635,9 @@ The document owns one resolution context, shared by its steps. Copies made
 with `dataclasses.replace` retain that context; replacing it binds new steps
 without modifying the original document. A context belonging to a different
 root or selected section raises `ValueError`.
+To rebind existing sections explicitly, use
+`dataclasses.replace(document, model=new_model, _resolution=None)`; to rebuild
+their contents, use `new_model.instruction_document()`.
 
 The `InstructionStep` constructor no longer accepts `_root`: its required
 keyword-only `_resolution` field is the sole resolution authority. The document's
@@ -630,26 +645,37 @@ optional keyword-only `_resolution` field creates a context when omitted.
 Callouts retain their actual source placements in optional keyword-only
 `_pieces` metadata, excluded from representations, equality, and manifests.
 Manual callouts without that metadata match cumulative source references;
-another placement's alias cannot make an unresolved callout valid.
+another placement's alias cannot make an unresolved callout valid. Edited public
+references remain authoritative: retained references keep their source identities,
+added references use the cumulative source index, and removed references are
+ignored by validation.
 
-Step occurrences and BOMs keep references back to the document root as
-unexpanded leaves. Other active-path cycles emit the closing reference once,
+Step occurrences and BOMs in root-reachable sections keep references back to
+the document root as unexpanded leaves. Orphan sections expand ordinary root
+placements. Other active-path cycles emit the closing reference once,
 preserving its full identity and composed transform. This lets step inspection
 and `max_parts` validation finish with cycle diagnostics. Ordinary model
 iteration and comparison retain their existing cycle errors.
 Temporary expansion models own their dependency dictionaries: unexpanded
 models have no dependencies, and expanded models register encountered canonical
-instruction sections. Editing those dictionaries does not change the root table.
+instruction sections. Serialization closes their required dependencies separately
+from counting's cycle cuts, including retained root references. Editing those
+dictionaries does not change the root table.
 Snapshot dependencies omit the section already being rendered, so self-references
 do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
 recursive references; public paired snapshot export rejects cycles and leaves
 no partially published output.
 
 Model serialization emits the selected section once and collapses dependency
-aliases referring to the same object. Distinct dependency objects with conflicting
+aliases referring to the same source, including a view and its raw section.
+Distinct dependency objects with conflicting
 normalized names raise `DuplicateSubmodelError`; raw names and reference spelling
-are preserved. These corrections keep package version and manifest schema v1
-unchanged.
+are preserved. Instruction counts remain authoritative when custom resolvers
+choose different definitions for the same name. Temporary-model serialization
+and instruction exports reject those conflicts with `DuplicateSubmodelError`.
+Resolver mappings requiring reference rewriting raise `ValueError` instead of
+publishing a misleading file. Export failures preserve existing outputs. These
+corrections keep package version and manifest schema v1 unchanged.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that

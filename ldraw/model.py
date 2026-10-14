@@ -211,6 +211,9 @@ class Model:
     submodels: dict[str, Model] = field(default_factory=dict)
     _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
     _object_source_lines: dict[int, int] = field(default_factory=dict, repr=False)
+    _serialization_origin: Model | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
     _is_submodel_view: bool = field(default=False, init=False, repr=False)
 
     def _header(self) -> Iterable[Comment | MetaCommand]:
@@ -626,20 +629,36 @@ def _serialized(obj: ParsedObject) -> str:
     return line
 
 
+def _serialization_origins(model: Model) -> set[int]:
+    """Identify only the selected source and its explicit replacement ancestry."""
+    origins: set[int] = set()
+    origin: Model | None = _selected_model(model)
+    while origin is not None:
+        origin = _selected_model(origin)
+        if id(origin) in origins:
+            break
+        origins.add(id(origin))
+        origin = origin._serialization_origin  # noqa: SLF001
+    return origins
+
+
 def _serialization_models(*, model: Model) -> Iterator[Model]:
     """Keep the selected section authoritative and reject conflicting dependencies."""
     selected_key = normalize_ref(model.name)
-    seen = {selected_key: model}
+    selected = _selected_model(model)
+    origins = _serialization_origins(model)
+    seen = {selected_key: selected}
     yield model
     for dependency in model.submodels.values():
         key = normalize_ref(dependency.name)
-        if key == selected_key:
+        source = _selected_model(dependency)
+        if key == selected_key and id(source) in origins:
             continue
         if (previous := seen.get(key)) is not None:
-            if previous is not dependency:
+            if previous is not source:
                 raise DuplicateSubmodelError(dependency.name)
             continue
-        seen[key] = dependency
+        seen[key] = source
         yield dependency
 
 
@@ -706,13 +725,14 @@ def _iter_occurrences_skip_cycles(
     )
 
 
-def _occurrences_at_origin(
+def _occurrences_at_origin(  # noqa: PLR0913 - traversal flags and initial ancestry
     *,
     model: Model,
     expand_submodels: bool,
     include_steps: bool,
     on_cycle: Callable[[Model, Piece, Model], None] | None,
     cycle_leaf: bool = False,
+    visiting: frozenset[str] = frozenset(),
 ) -> Iterator[ModelOccurrence]:
     """Share public and cycle-tolerant expansion's identity-origin setup."""
     return _iter_model_occurrences(
@@ -721,7 +741,7 @@ def _occurrences_at_origin(
         position=Vector(0, 0, 0),
         matrix=Identity(),
         inherited_colour=None,
-        visiting=frozenset(),
+        visiting=visiting,
         inherited_step=None,
         path=(),
         expand_submodels=expand_submodels,
@@ -768,62 +788,69 @@ def _iter_root_placements(
             yield piece, None, *context.placement(model=model, piece=piece)
 
 
+@dataclass(slots=True)
+class _AuditFrame:
+    model: Model
+    edges: Iterator[tuple[Piece, Model]]
+    position: Vector
+    matrix: Matrix
+    visiting: frozenset[str]
+    at_origin: bool = False
+
+
 def _audit_inventory_transforms(
     model: Model, *, context: ModelValidationContext
 ) -> None:
-    """Audit source compositions without replacing a custom traversal's leaves."""
+    """Audit composed submodel edges with an explicit depth-first stack."""
     if not model.submodels and not context.has_external_resolution():
-        # Source validation already checks root placements. The built-in resolver
-        # can only re-enter this root, where the numeric audit stops the cycle.
         return
-
-    def walk(
-        *,
-        section: Model,
-        position: Vector,
-        matrix: Matrix,
-        at_origin: bool,
-        visiting: frozenset[str],
-    ) -> None:
-        visiting = visiting | {normalize_ref(section.name)}
-        for piece, resolved in context.edges(root=model, section=section):
-            effective = context.placement(model=section, piece=piece)
-            world_position, world_matrix = (
-                effective
-                if at_origin
-                else _compose_placement(
-                    model=section,
-                    piece=piece,
+    selected = _selected_model(model)
+    frames = [
+        _AuditFrame(
+            model=selected,
+            edges=iter(context.edges(root=model, section=selected)),
+            position=Vector(x=0, y=0, z=0),
+            matrix=Identity(),
+            visiting=frozenset({normalize_ref(selected.name)}),
+            at_origin=True,
+        )
+    ]
+    while frames:
+        frame = frames[-1]
+        if (edge := next(frame.edges, None)) is None:
+            frames.pop()
+            continue
+        piece, resolved = edge
+        effective = context.placement(model=frame.model, piece=piece)
+        position, matrix = (
+            effective
+            if frame.at_origin
+            else _compose_placement(
+                model=frame.model,
+                piece=piece,
+                position=frame.position,
+                matrix=frame.matrix,
+                effective=effective,
+                context=context,
+            )
+        )
+        target = _cycle_target(
+            source=frame.model,
+            piece=piece,
+            target=resolved,
+            visiting=frame.visiting,
+            on_cycle=_ignore_cycle,
+        )
+        if target is not None:
+            frames.append(
+                _AuditFrame(
+                    model=target,
+                    edges=iter(context.edges(root=model, section=target)),
                     position=position,
                     matrix=matrix,
-                    effective=effective,
-                    context=context,
+                    visiting=frame.visiting | {normalize_ref(target.name)},
                 )
             )
-            target = _cycle_target(
-                source=section,
-                piece=piece,
-                target=resolved,
-                visiting=visiting,
-                on_cycle=_ignore_cycle,
-            )
-            if target is None:
-                continue
-            walk(
-                section=target,
-                position=world_position,
-                matrix=world_matrix,
-                at_origin=False,
-                visiting=visiting,
-            )
-
-    walk(
-        section=_selected_model(model),
-        position=Vector(0, 0, 0),
-        matrix=Identity(),
-        at_origin=True,
-        visiting=frozenset(),
-    )
 
 
 def _iter_model_occurrences(  # noqa: PLR0913 - explicit traversal state
@@ -928,21 +955,85 @@ def _ignore_cycle(source: Model, piece: Piece, target: Model) -> None:
     """Stop cyclic audit re-entry without classifying source structure."""
 
 
-def _cycle_target(
+def _cycle_target(  # noqa: PLR0913 - cycle callback and instruction leaf policy
     *,
     source: Model,
     piece: Piece,
     target: Model,
     visiting: frozenset[str],
     on_cycle: Callable[[Model, Piece, Model], None] | None,
+    cycle_leaf: bool = False,
 ) -> Model | None:
     """Share cycle handling between occurrence expansion and numeric audits."""
     if normalize_ref(target.name) not in visiting:
         return target
-    if on_cycle is None:
+    if on_cycle is not None:
+        on_cycle(source, piece, target)
+    elif not cycle_leaf:
         raise SubmodelCycleError(target.name)
-    on_cycle(source, piece, target)
     return None
+
+
+@dataclass(slots=True)
+class _OccurrenceFrame:
+    model: Model
+    placements: Iterator[tuple[Piece, int | None, Vector, Matrix]]
+    colour: Colour | None
+    visiting: frozenset[str]
+    step: int | None
+    path: tuple[OccurrencePathItem, ...]
+
+
+def _placement_state(
+    *,
+    frame: _OccurrenceFrame,
+    piece: Piece,
+    source_step: int | None,
+) -> tuple[int | None, Colour, tuple[OccurrencePathItem, ...]]:
+    """Prepare inherited metadata shared by leaves and submodel placements."""
+    step = frame.step if frame.step is not None else source_step
+    colour = _effective_colour(piece.colour, frame.colour)
+    path = (
+        *frame.path,
+        OccurrencePathItem(
+            model=frame.model,
+            piece=piece,
+            source_line=frame.model.source_line_for(piece),
+            local_step=source_step,
+            effective_step=step,
+        ),
+    )
+    return step, colour, path
+
+
+def _descendant_frame(  # noqa: PLR0913 - explicit traversal state
+    *,
+    parent: _OccurrenceFrame,
+    target: Model,
+    position: Vector,
+    matrix: Matrix,
+    include_steps: bool,
+    context: ModelValidationContext | None,
+    colour: Colour,
+    step: int | None,
+    path: tuple[OccurrencePathItem, ...],
+) -> _OccurrenceFrame:
+    return _OccurrenceFrame(
+        model=target,
+        placements=iter(
+            _iter_composed_placements(
+                model=target,
+                position=position,
+                matrix=matrix,
+                include_steps=include_steps,
+                context=context,
+            )
+        ),
+        colour=colour,
+        visiting=parent.visiting | {normalize_ref(target.name)},
+        step=step,
+        path=path,
+    )
 
 
 def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
@@ -960,70 +1051,70 @@ def _iter_occurrences_at_placements(  # noqa: PLR0913 - explicit traversal state
     context: ModelValidationContext | None = None,
     cycle_leaf: bool = False,
 ) -> Iterator[ModelOccurrence]:
-    """Expand world placements or emit leaves, sharing identity and cycle handling."""
-    visiting = visiting | {normalize_ref(model.name)}
-    for piece, source_step, position, matrix in placements:
-        occurrence_step = inherited_step if inherited_step is not None else source_step
-        colour = _effective_colour(piece.colour, inherited_colour)
-        source_line = model.source_line_for(piece)
-        occurrence_path = (
-            *path,
-            OccurrencePathItem(
-                model=model,
-                piece=piece,
-                source_line=source_line,
-                local_step=source_step,
-                effective_step=occurrence_step,
-            ),
+    """Expand world placements iteratively, preserving depth-first event order."""
+    frames = [
+        _OccurrenceFrame(
+            model=model,
+            placements=iter(placements),
+            colour=inherited_colour,
+            visiting=visiting | {normalize_ref(model.name)},
+            step=inherited_step,
+            path=path,
         )
-        target = None
+    ]
+    while frames:
+        frame = frames[-1]
+        if (placement := next(frame.placements, None)) is None:
+            frames.pop()
+            continue
+        piece, source_step, position, matrix = placement
+        step, colour, event_path = _placement_state(
+            frame=frame,
+            piece=piece,
+            source_step=source_step,
+        )
+        resolved = target = None
         if expand_submodels:
-            target = _resolve_reference(root=root, piece=piece, context=context)
-        if target is not None:
-            if cycle_leaf and normalize_ref(target.name) in visiting:
-                if on_cycle is not None:
-                    on_cycle(model, piece, target)
-                target = None
-            else:
-                target = _cycle_target(
-                    source=model,
-                    piece=piece,
-                    target=target,
-                    visiting=visiting,
-                    on_cycle=on_cycle,
-                )
-                if target is None:
-                    continue
-        if target is not None:
-            yield from _iter_model_occurrences(
-                root=root,
-                model=target,
-                position=position,
-                matrix=matrix,
-                inherited_colour=colour,
-                visiting=visiting,
-                inherited_step=occurrence_step,
-                path=occurrence_path,
-                expand_submodels=expand_submodels,
-                include_steps=include_steps,
+            resolved = _resolve_reference(root=root, piece=piece, context=context)
+        if resolved is not None:
+            target = _cycle_target(
+                source=frame.model,
+                piece=piece,
+                target=resolved,
+                visiting=frame.visiting,
                 on_cycle=on_cycle,
-                context=context,
                 cycle_leaf=cycle_leaf,
             )
+        if resolved is not None and target is None and not cycle_leaf:
             continue
-        yield ModelOccurrence(
-            piece=piece,
-            part_code=_default_leaf_identity(piece),
-            reference=piece.reference,
-            colour=colour,
-            position=position,
-            matrix=matrix,
-            source_model=model,
-            source_line=source_line,
-            step=occurrence_step,
-            source_step=source_step,
-            path=occurrence_path,
-        )
+        if target is not None:
+            frames.append(
+                _descendant_frame(
+                    parent=frame,
+                    target=target,
+                    position=position,
+                    matrix=matrix,
+                    include_steps=include_steps,
+                    context=context,
+                    colour=colour,
+                    step=step,
+                    path=event_path,
+                )
+            )
+        else:
+            yield ModelOccurrence(
+                piece=piece,
+                part_code=_default_leaf_identity(piece),
+                reference=piece.reference,
+                colour=colour,
+                position=position,
+                matrix=matrix,
+                source_model=frame.model,
+                source_line=event_path[-1].source_line,
+                step=step,
+                source_step=source_step,
+                path=event_path,
+            )
 
 
 def _iter_piece_steps(
@@ -1178,59 +1269,107 @@ def _parse_objects_report(
     return objects, source_lines, object_source_lines, diagnostics, complete
 
 
+@dataclass(slots=True)
+class _ReferenceFrame:
+    model: Model
+    pieces: Iterator[Piece]
+    visiting: frozenset[str]
+
+
+def _iter_reference_edges(
+    *,
+    root: Model,
+    context: ModelValidationContext | None = None,
+    descend: Callable[[Model], bool] | None = None,
+    unique_names: bool = False,
+) -> Iterator[tuple[Model, Piece, Model | None, bool]]:
+    """Inspect source edges iteratively, retaining unresolved and closing edges."""
+    selected = _selected_model(root)
+    frames = [
+        _ReferenceFrame(
+            model=selected,
+            pieces=iter(selected.pieces),
+            visiting=frozenset({normalize_ref(selected.name)}),
+        )
+    ]
+    seen = {normalize_ref(selected.name)}
+    while frames:
+        frame = frames[-1]
+        if (piece := next(frame.pieces, None)) is None:
+            frames.pop()
+            continue
+        target = _resolve_reference(root=root, piece=piece, context=context)
+        closing = (
+            target is not None
+            and _cycle_target(
+                source=frame.model,
+                piece=piece,
+                target=target,
+                visiting=frame.visiting,
+                on_cycle=_ignore_cycle,
+            )
+            is None
+        )
+        yield frame.model, piece, target, closing
+        if target is not None and not closing:
+            key = normalize_ref(target.name)
+            if (descend is not None and not descend(target)) or (
+                unique_names and key in seen
+            ):
+                continue
+            seen.add(key)
+            frames.append(
+                _ReferenceFrame(
+                    model=target,
+                    pieces=iter(target.pieces),
+                    visiting=frame.visiting | {normalize_ref(target.name)},
+                )
+            )
+
+
 def _model_structure_diagnostics(
     root: Model,
     *,
     path: Path | None,
     context: ModelValidationContext | None = None,
 ) -> list[Diagnostic]:
+    """Keep structural diagnostics depth-first without Python recursion."""
     diagnostics: list[Diagnostic] = []
     emitted_cycles: set[tuple[str, int | None]] = set()
-
-    def walk(model: Model, visiting: tuple[str, ...]) -> None:
-        key = normalize_ref(model.name)
-        next_visiting = (*visiting, key)
-        for piece in model.pieces:
-            target = _resolve_reference(root=root, piece=piece, context=context)
-            line_number = model.source_line_for(piece)
-            if target is None:
-                _, suffix = split_reference(piece.reference)
-                if suffix.casefold() in SUBMODEL_SUFFIXES:
-                    # Sibling-file references are legal LDraw multi-file
-                    # layout, so an unresolved one is only a warning.
-                    diagnostics.append(
-                        Diagnostic(
-                            line_number=line_number,
-                            message=f"unresolved submodel {piece.reference}",
-                            severity=Severity.WARNING,
-                            code=DiagnosticCode.MPD_UNRESOLVED_SUBMODEL,
-                            path=path,
-                            section=model.name or None,
-                            offending_value=piece.reference,
-                        ),
+    for model, piece, target, closing in _iter_reference_edges(
+        root=root, context=context
+    ):
+        line_number = model.source_line_for(piece)
+        if target is None:
+            _, suffix = split_reference(piece.reference)
+            if suffix.casefold() in SUBMODEL_SUFFIXES:
+                diagnostics.append(
+                    Diagnostic(
+                        line_number=line_number,
+                        message=f"unresolved submodel {piece.reference}",
+                        severity=Severity.WARNING,
+                        code=DiagnosticCode.MPD_UNRESOLVED_SUBMODEL,
+                        path=path,
+                        section=model.name or None,
+                        offending_value=piece.reference,
                     )
-                continue
-            target_key = normalize_ref(target.name)
-            if target_key in next_visiting:
-                marker = (target_key, line_number)
-                if marker not in emitted_cycles:
-                    emitted_cycles.add(marker)
-                    error = SubmodelCycleError(target.name)
-                    diagnostics.append(
-                        Diagnostic(
-                            line_number=line_number,
-                            message=error.message,
-                            code=DiagnosticCode.MPD_CYCLE,
-                            path=path,
-                            section=model.name or None,
-                            offending_value=piece.reference,
-                            cause=error,
-                        ),
+                )
+        elif closing:
+            marker = normalize_ref(target.name), line_number
+            if marker not in emitted_cycles:
+                emitted_cycles.add(marker)
+                error = SubmodelCycleError(target.name)
+                diagnostics.append(
+                    Diagnostic(
+                        line_number=line_number,
+                        message=error.message,
+                        code=DiagnosticCode.MPD_CYCLE,
+                        path=path,
+                        section=model.name or None,
+                        offending_value=piece.reference,
+                        cause=error,
                     )
-                continue
-            walk(target, next_visiting)
-
-    walk(root, ())
+                )
     return diagnostics
 
 

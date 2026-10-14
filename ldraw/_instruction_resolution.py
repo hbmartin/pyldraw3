@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ldraw._instruction_common import _is_instruction_model
 from ldraw._model_views import _resolution_root, _selected_model
 from ldraw.utils import normalize_ref
 
@@ -32,12 +33,10 @@ class InstructionResolution:
     context: _model_validation.ModelValidationContext = field(
         default_factory=_new_context
     )
-    _models: dict[str, _model.Model] = field(
-        default_factory=dict, init=False, repr=False
+    _reachable_sources: set[int] = field(default_factory=set, init=False, repr=False)
+    _reachable_models: list[_model.Model] | None = field(
+        default=None, init=False, repr=False
     )
-
-    def __post_init__(self) -> None:
-        self.canonical(self.root)
 
     def bind_document(self, *, model: _model.Model) -> None:
         """Reject attaching one document's resolution to a different source scope."""
@@ -47,16 +46,60 @@ class InstructionResolution:
             message = "instruction resolution belongs to a different document root"
             raise ValueError(message)
 
-    def canonical(self, target: _model.Model) -> _model.Model:
-        """Keep the first resolved section for serialized dependency names."""
-        return self._models.setdefault(normalize_ref(target.name), target)
-
     def resolve(self, piece: Piece) -> _model.Model | None:
-        """Resolve each source placement against the original root once."""
-        target = self.context.resolve(root=self.root, piece=piece)
-        if target is not None:
-            self.canonical(target)
-        return target
+        """Resolve once; canonical definitions belong to discovery and export."""
+        return self.context.resolve(root=self.root, piece=piece)
+
+    def reachable_models(self) -> list[_model.Model]:
+        """Record root reachability while keeping declaration and discovery order."""
+        if self._reachable_models is not None:
+            return self._reachable_models
+        pending = [self.root]
+        discovered = {normalize_ref(self.root.name): self.root}
+        self._reachable_sources.add(id(_selected_model(self.root)))
+        index = 0
+        while index < len(pending):
+            current = pending[index]
+            index += 1
+            for piece in current.pieces:
+                target = self.resolve(piece)
+                if target is None or not _is_instruction_model(target):
+                    continue
+                self._reachable_sources.add(id(_selected_model(target)))
+                if (key := normalize_ref(target.name)) not in discovered:
+                    discovered[key] = target
+                    pending.append(target)
+        ordered = dict.fromkeys(
+            (
+                normalize_ref(self.root.name),
+                *(normalize_ref(model.name) for model in self.root.submodels.values()),
+                *discovered,
+            )
+        )
+        self._reachable_models = [
+            discovered[key] for key in ordered if key in discovered
+        ]
+        return self._reachable_models
+
+    def ancestry(self, source: _model.Model) -> frozenset[str]:
+        """Keep the owning root an ancestor only for root-reachable sections."""
+        self.reachable_models()
+        return (
+            frozenset({normalize_ref(self.root.name)})
+            if id(_selected_model(source)) in self._reachable_sources
+            else frozenset()
+        )
+
+    def dependencies(
+        self,
+        *,
+        source: _model.Model,
+        objects: Iterable[ParsedObject],
+    ) -> dict[str, _model.Model]:
+        """Reject ambiguous bindings before materializing serialized dependencies."""
+        from ldraw._instruction_export import instruction_dependencies  # noqa: PLC0415 - runtime model cycle
+
+        return instruction_dependencies(resolution=self, source=source, objects=objects)
 
     def expansion(
         self, *, source: _model.Model, objects: Iterable[ParsedObject], expand: bool
@@ -71,4 +114,5 @@ class InstructionResolution:
             _object_source_lines=source._object_source_lines,  # noqa: SLF001
             resolution=self,
             expand=expand,
+            _serialization_origin=source,
         )
