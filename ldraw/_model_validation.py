@@ -9,7 +9,7 @@ from ldraw._model_views import _resolution_root, _selected_model
 from ldraw.utils import normalize_ref, split_ldraw_reference
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from ldraw.geometry import Matrix, Vector
     from ldraw.model import Model
@@ -167,7 +167,38 @@ def _discovery_frame(
     )
 
 
+def _unique_sections(
+    *, root: Model, context: ModelValidationContext
+) -> Generator[Model, None, bool]:
+    """Explore by identity until normalized names cease to identify one source."""
+    pending = [_selected_model(root)]
+    names: dict[str, Model] = {}
+    expanded: set[int] = set()
+    while pending:
+        section = _selected_model(pending.pop())
+        yield section
+        key = normalize_ref(section.name)
+        if (previous := names.get(key)) is not None and previous is not section:
+            return False
+        names[key] = section
+        if (identity := id(section)) in expanded:
+            continue
+        expanded.add(identity)
+        pending.extend(
+            target for _, target in reversed(context.edges(root=root, section=section))
+        )
+    return True
+
+
 def _reachable_sections(
+    *, root: Model, context: ModelValidationContext
+) -> Iterator[Model]:
+    """Keep unique-name cycles linear and ambiguous names ancestry-sensitive."""
+    if not (yield from _unique_sections(root=root, context=context)):
+        yield from _ancestry_sections(root=root, context=context)
+
+
+def _ancestry_sections(
     *, root: Model, context: ModelValidationContext
 ) -> Iterator[Model]:
     """Reuse complete acyclic closures and exact states of blocked paths."""

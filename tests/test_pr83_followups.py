@@ -22,7 +22,7 @@ from ldraw.errors import DuplicateSubmodelError, SubmodelCycleError
 from ldraw.geometry import Vector
 from ldraw.instructions import InstructionDocument, iter_instruction_issues
 from ldraw.lines import MetaCommand
-from ldraw.model import Model, parse_model
+from ldraw.model import Model, parse_model, parse_model_result
 from ldraw.pieces import Piece
 from ldraw.utils import normalize_ref
 from ldraw.validation import _piece_analysis
@@ -108,13 +108,16 @@ def test_discovery_rejects_nan_after_blockers_change() -> None:
 def test_discovery_matches_exhaustive_oracle(seed: int) -> None:
     randomizer = random.Random(seed)
     for _ in range(4_000):
-        size = randomizer.randrange(6, 12)
+        size = randomizer.randrange(start=6, stop=12)
         names = [
             "root.ldr",
             *(f"{randomizer.choice('abcde')}.ldr" for _ in range(size - 1)),
         ]
         edges = [
-            [randomizer.randrange(1, size) for _ in range(randomizer.randrange(1, 4))]
+            [
+                randomizer.randrange(start=1, stop=size)
+                for _ in range(randomizer.randrange(start=1, stop=4))
+            ]
             for _ in range(size)
         ]
         nodes = resolved_graph(names=names, edges=edges)
@@ -532,11 +535,10 @@ def test_serialization_keeps_selected_section_once_and_collapses_aliases() -> No
         text = model.to_ldraw()
         assert text.count("0 FILE Sub.LDR") == 1
         assert text.count("0 FILE leaf.ldr") == 1
-        assert (
-            parse_model(text).complete
-            if hasattr(parse_model(text), "complete")
-            else True
-        )
+        report = parse_model_result(text)
+        assert report.complete
+        assert report.model is not None
+        assert report.model.name == model.name
     changed = replace(view, objects=[Piece.place("3002")])
     parsed = parse_model(changed.to_ldraw())
     assert parsed.pieces[0].part == "3002"

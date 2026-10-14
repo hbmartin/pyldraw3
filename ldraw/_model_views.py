@@ -66,7 +66,7 @@ def _view_attribute(*, view: _ModelViewMixin, selected: Model, name: str) -> Any
         return getattr(selected, name)
     return (
         object.__getattribute__(view, name)
-        if type(descriptor) in {FunctionType, staticmethod}
+        if type(descriptor) is FunctionType or type(descriptor) is staticmethod
         else _bound_descriptor(view=view, name=name, non_data=non_data)
     )
 
@@ -99,8 +99,8 @@ class _ModelViewMixin:
             return object.__getattribute__(self, "_view_cache")
         selected = object.__getattribute__(self, "_view_selected")
         match name:
-            case "__class__":
-                return type(selected)
+            case "__class__" | "_serialization_origin":
+                return type(selected) if name == "__class__" else selected
             case "submodels" | "submodel_for":
                 return getattr(object.__getattribute__(self, "_view_root"), name)
             case "_is_submodel_view":
@@ -114,6 +114,7 @@ class _ModelViewMixin:
             "__class__",
             "__dict__",
             "_is_submodel_view",
+            "_serialization_origin",
         }:
             message = (
                 "a live model view always has selected-section scope"
@@ -148,6 +149,7 @@ class _ModelViewMixin:
             "__class__",
             "__dict__",
             "_is_submodel_view",
+            "_serialization_origin",
         }:
             message = "cannot delete a live model view binding"
             raise AttributeError(message)

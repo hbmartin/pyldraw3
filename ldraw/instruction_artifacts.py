@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw.errors import PartError, SubmodelCycleError
@@ -28,6 +28,7 @@ from ldraw.utils import normalize_ref
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ldraw._instruction_resolution import InstructionResolution
     from ldraw.colour import Colour
     from ldraw.instructions import (
         CameraState,
@@ -55,6 +56,7 @@ def instruction_manifest(
     generated_files: Iterable[str] = (),
 ) -> dict[str, object]:
     """Return a deterministic schema-v1 instruction manifest."""
+    document._validate_export()  # noqa: SLF001
     paths = artifact_paths or {}
     return {
         "schema_version": SCHEMA_VERSION,
@@ -87,8 +89,8 @@ def write_instruction_manifest(
     if output.exists() and not force:
         msg = f"Output already exists: {output}"
         raise FileExistsError(msg)
-    output.parent.mkdir(parents=True, exist_ok=True)
     manifest = instruction_manifest(document, parts=parts, source=source)
+    output.parent.mkdir(parents=True, exist_ok=True)
     temporary_dir = Path(
         tempfile.mkdtemp(
             prefix=f".{output.name}.",
@@ -113,6 +115,7 @@ def write_instruction_snapshots(  # noqa: PLR0913 - artifact options are explici
     force: bool = False,
 ) -> Path:
     """Write MPD and flattened-LDR snapshots plus a manifest."""
+    document._validate_export()  # noqa: SLF001
     selected = (
         document.sections if section_name is None else (document.section(section_name),)
     )
@@ -388,30 +391,6 @@ def _snapshot_objects(objects: Iterable[ParsedObject]) -> list[ParsedObject]:
     return [obj for obj in objects if not _is_instruction_directive(obj)]
 
 
-def _dependency_closure(
-    root: Model,
-    objects: Iterable[ParsedObject],
-    *,
-    section_name: str,
-    context: ModelValidationContext | None = None,
-) -> list[Model]:
-    result: list[Model] = []
-    seen = {normalize_ref(section_name)}
-    pending = [obj for obj in objects if isinstance(obj, Piece)]
-    while pending:
-        piece = pending.pop(0)
-        target = _resolve_reference(root=root, piece=piece, context=context)
-        if target is None:
-            continue
-        key = normalize_ref(target.name)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(target)
-        pending.extend(obj for obj in target.objects if isinstance(obj, Piece))
-    return result
-
-
 def _write_snapshot_mpd(
     document: InstructionDocument,
     *,
@@ -420,11 +399,10 @@ def _write_snapshot_mpd(
     path: Path,
 ) -> None:
     root_objects = _snapshot_objects(step.cumulative_objects)
-    dependencies = _dependency_closure(
-        root=document.model,
-        objects=root_objects,
-        section_name=section.name,
-        context=document._resolution_context(),  # noqa: SLF001
+    dependencies = (
+        cast("InstructionResolution", document._resolution)  # noqa: SLF001
+        .dependencies(source=section.model, objects=root_objects)
+        .values()
     )
     sections = [(section.name, root_objects)] + [
         (dependency.name, _snapshot_objects(dependency.objects))
@@ -450,6 +428,9 @@ def _write_snapshot_ldr(
     step: InstructionStep,
     path: Path,
 ) -> list[str]:
+    cast("InstructionResolution", document._resolution).dependencies(  # noqa: SLF001
+        source=section.model, objects=step.cumulative_objects
+    )
     embedded_parts: dict[str, Model] = {}
     flattened = list(
         _flatten_objects(

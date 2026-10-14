@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from ldraw._instruction_common import _is_instruction_model
 from ldraw._model_cycles import _cycle_callback
+from ldraw._model_views import _selected_model
+from ldraw.errors import DuplicateSubmodelError
 from ldraw.model import Model, _occurrences_at_origin
 from ldraw.utils import normalize_ref
 
@@ -29,12 +31,16 @@ class _InstructionExpansion(Model):
         self, *, expand_submodels: bool = True, include_steps: bool = True
     ) -> Iterator[ModelOccurrence]:
         """Keep step expansion finite and retain closing references as leaves."""
+        source = (
+            self if self._serialization_origin is None else self._serialization_origin
+        )
         return _occurrences_at_origin(
             model=self,
             expand_submodels=expand_submodels,
             include_steps=include_steps,
             on_cycle=_cycle_callback(self),
             cycle_leaf=True,
+            visiting=self.resolution.ancestry(source),
         )
 
     def submodel_for(self, piece: Piece) -> Model | None:
@@ -42,12 +48,24 @@ class _InstructionExpansion(Model):
         if not self.expand:
             return None
         target = self.resolution.resolve(piece)
-        if (
-            target is None
-            or not _is_instruction_model(target)
-            or normalize_ref(target.name) == normalize_ref(self.resolution.root.name)
-        ):
+        if target is None or not _is_instruction_model(target):
             return None
         if (key := normalize_ref(target.name)) != normalize_ref(self.name):
-            self.submodels.setdefault(key, self.resolution.canonical(target))
+            self.submodels.setdefault(key, target)
         return target
+
+    def to_ldraw(self) -> str:
+        """Close dependencies and reject lossy bindings before serialization."""
+        if self.expand:
+            dependencies = self.resolution.dependencies(
+                source=self, objects=self.objects
+            )
+            for key, target in dependencies.items():
+                if (
+                    previous := self.submodels.get(key)
+                ) is not None and _selected_model(previous) is not _selected_model(
+                    target
+                ):
+                    raise DuplicateSubmodelError(target.name)
+                self.submodels.setdefault(key, target)
+        return super(_InstructionExpansion, self).to_ldraw()

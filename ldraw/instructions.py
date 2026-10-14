@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import shlex
+from collections import Counter, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
@@ -302,7 +303,9 @@ class InstructionStep:
         view = self._resolution.expansion(
             source=self._model, objects=included, expand=expand_submodels
         )
-        return bill_of_materials(view, parts=parts)
+        return bill_of_materials(
+            occurrences=view.iter_occurrences(include_steps=False), parts=parts
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,12 +340,13 @@ class InstructionDocument:
             else _instruction_resolution.InstructionResolution(root=self.model)
         )
         resolution.bind_document(model=self.model)
-        bound = {
-            id(section): _section_with_resolution(
-                section=section, resolution=resolution
-            )
-            for section in (*self.sections, *self.orphan_sections, self.root)
-        }
+        resolution.reachable_models()
+        bound = {}
+        for section in (*self.sections, *self.orphan_sections, self.root):
+            if id(section) not in bound:
+                bound[id(section)] = _section_with_resolution(
+                    section=section, resolution=resolution
+                )
         object.__setattr__(self, "_resolution", resolution)
         object.__setattr__(self, "root", bound[id(self.root)])
         object.__setattr__(
@@ -404,6 +408,12 @@ class InstructionDocument:
                 return section
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
+
+    def _validate_export(self) -> None:
+        """Validate definitions while keeping counts available for custom resolvers."""
+        cast(
+            "_instruction_resolution.InstructionResolution", self._resolution
+        ).dependencies(source=self.root.model, objects=self.root.model.objects)
 
     def _resolution_context(self) -> _model_validation.ModelValidationContext:
         return cast(
@@ -791,28 +801,8 @@ def _parse_arrow(
 def _reachable_instruction_models(
     root: Model, *, resolution: _instruction_resolution.InstructionResolution
 ) -> list[Model]:
-    pending = [root]
-    discovered = {normalize_ref(root.name): root}
-    index = 0
-    while index < len(pending):
-        current = pending[index]
-        index += 1
-        for piece in current.pieces:
-            target = resolution.resolve(piece)
-            if target is None or not _is_instruction_model(target):
-                continue
-            key = normalize_ref(target.name)
-            if key not in discovered:
-                discovered[key] = target
-                pending.append(target)
-    ordered = dict.fromkeys(
-        (
-            normalize_ref(root.name),
-            *(normalize_ref(model.name) for model in root.submodels.values()),
-            *discovered,
-        )
-    )
-    return [discovered[key] for key in ordered if key in discovered]
+    resolution.bind_document(model=root)
+    return resolution.reachable_models()
 
 
 def _references(
@@ -1468,29 +1458,53 @@ def _callout_source_index(*, step: InstructionStep) -> dict[str, list[Piece]]:
     return index
 
 
+def _needs_callout_index(callout: InstructionCallout) -> bool:
+    if callout._pieces is None:  # noqa: SLF001
+        return True
+    requested = Counter(normalize_ref(reference) for reference in callout.references)
+    retained = Counter(normalize_ref(piece.reference) for piece in callout._pieces)  # noqa: SLF001
+    return bool(requested - retained)
+
+
+def _callout_pieces(
+    *,
+    callout: InstructionCallout,
+    index: dict[str, list[Piece]],
+) -> Iterator[Piece]:
+    """Honor edited references while keeping unchanged placement identities."""
+    retained: dict[str, deque[Piece]] = {}
+    for piece in callout._pieces or ():  # noqa: SLF001
+        retained.setdefault(normalize_ref(piece.reference), deque()).append(piece)
+    used: set[Piece] = set()
+    for reference in callout.references:
+        key = normalize_ref(reference)
+        if queue := retained.get(key):
+            piece = queue.popleft()
+            used.add(piece)
+            yield piece
+        else:
+            for piece in index.get(key, ()):
+                if piece not in used:
+                    used.add(piece)
+                    yield piece
+
+
 def _callout_issues(
-    *, section: str, step: InstructionStep
+    *,
+    section: str,
+    step: InstructionStep,
 ) -> Iterator[InstructionIssue]:
-    """Validate source placements rather than incidental resolved target names."""
+    """Validate current references against retained or indexed actual sources."""
     index = (
         _callout_source_index(step=step)
-        if any(callout._pieces is None for callout in step.callouts)  # noqa: SLF001
+        if any(_needs_callout_index(callout) for callout in step.callouts)
         else {}
     )
     for callout in step.callouts:
-        pieces = (
-            callout._pieces  # noqa: SLF001
-            if callout._pieces is not None  # noqa: SLF001
-            else tuple(
-                piece
-                for reference in callout.references
-                for piece in index.get(normalize_ref(reference), ())
-            )
-        )
         if not any(
             (target := step._resolution.resolve(piece)) is not None  # noqa: SLF001
             and _is_instruction_model(target)
-            for piece in pieces
+            for piece in _callout_pieces(callout=callout, index=index)
         ):
             yield InstructionIssue(
                 section=section,
@@ -1501,38 +1515,26 @@ def _callout_issues(
 
 
 def _cycle_issues(document: InstructionDocument) -> Iterator[InstructionIssue]:
-    root = document.model
-    visited: set[str] = set()
-    active: set[str] = set()
+    from ldraw.model import _iter_reference_edges  # noqa: PLC0415 - model/instruction cycle
+
     reported: set[tuple[str, str]] = set()
-
-    def visit(model: Model) -> Iterator[InstructionIssue]:
-        key = normalize_ref(model.name)
-        visited.add(key)
-        active.add(key)
-        for piece in model.pieces:
-            target = _resolve_reference(
-                root=root,
-                piece=piece,
-                context=document._resolution_context(),  # noqa: SLF001
+    for source, piece, target, closing in _iter_reference_edges(
+        root=document.model,
+        context=document._resolution_context(),  # noqa: SLF001
+        descend=_is_instruction_model,
+        unique_names=True,
+    ):
+        if target is None or not _is_instruction_model(target) or not closing:
+            continue
+        edge = normalize_ref(source.name), normalize_ref(target.name)
+        if edge not in reported:
+            reported.add(edge)
+            yield InstructionIssue(
+                section=source.name,
+                line_number=source.source_line_for(piece),
+                code="cyclic-submodel",
+                message=f"submodel reference cycle reaches {target.name}",
             )
-            if target is None or not _is_instruction_model(target):
-                continue
-            target_key = normalize_ref(target.name)
-            edge = (key, target_key)
-            if target_key in active and edge not in reported:
-                reported.add(edge)
-                yield InstructionIssue(
-                    model.name,
-                    model.source_line_for(piece),
-                    "cyclic-submodel",
-                    f"submodel reference cycle reaches {target.name}",
-                )
-            elif target_key not in visited:
-                yield from visit(target)
-        active.remove(key)
-
-    yield from visit(root)
 
 
 def _highlight_issues(section: InstructionSection) -> Iterator[InstructionIssue]:
