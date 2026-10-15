@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ldraw._model_views import _selected_model
 from ldraw.errors import DuplicateSubmodelError
@@ -14,23 +14,38 @@ if TYPE_CHECKING:
 
 
 class _SourceOrigin:
-    """Carry copy lineage without retaining a model or introducing a cycle."""
+    """Read legacy opaque-token pickles; new models use primitive records."""
 
     __slots__ = ()
 
 
-def _serialization_origins(model: Model) -> set[int]:
-    """Collect explicit source ancestry and the terminal raw-copy token."""
-    origins: set[int] = set()
-    origin: Model | _SourceOrigin | None = model
+def _new_origin(value: object) -> dict[str, object]:
+    """Record an immediate predecessor without opaque pickle dependencies."""
+    if value is None or isinstance(value, dict | _SourceOrigin):
+        return {"parent": value if isinstance(value, dict) else None}
+    from ldraw.model import Model  # noqa: PLC0415 - runtime model cycle
+
+    parent = value if isinstance(value, Model) else None
+    return {"parent": parent}
+
+
+def _serialization_origins(model: Model) -> dict[int, object]:
+    """Collect directional model and primitive-record ancestry without looping."""
+    origins: dict[int, object] = {}
+    origin: object = model
     while origin is not None:
         if isinstance(origin, _SourceOrigin):
-            origins.add(id(origin))
             break
-        origin = _selected_model(origin)
+        if isinstance(origin, dict):
+            if id(origin) in origins:
+                break
+            origins[id(origin)] = origin
+            origin = origin.get("parent")
+            continue
+        origin = _selected_model(cast("Model", origin))
         if id(origin) in origins:
             break
-        origins.add(id(origin))
+        origins[id(origin)] = origin
         origin = origin._serialization_origin  # noqa: SLF001
     return origins
 
@@ -43,21 +58,25 @@ class _DefinitionRegistry:
     aliases: tuple[Model, ...] = ()
     names: dict[str, Model] = field(init=False)
     _key: str = field(init=False)
-    _origins: set[int] = field(init=False)
+    _origins: dict[int, object] = field(init=False)
 
     def __post_init__(self) -> None:
         self._key = normalize_ref(self.selected.name)
         self.names = {self._key: _selected_model(self.selected)}
         self._origins = _serialization_origins(self.selected)
-        for alias in self.aliases:
-            self._origins.update(_serialization_origins(alias))
+        self._origins.update(
+            (id(_selected_model(alias)), _selected_model(alias))
+            for alias in self.aliases
+        )
 
     def register(self, target: Model) -> bool:
         """Register one exact definition; return whether it is newly encountered."""
         key = normalize_ref(target.name)
         source = _selected_model(target)
-        if key == self._key and self._origins.intersection(
-            _serialization_origins(source)
+        origin = source._serialization_origin  # noqa: SLF001
+        if key == self._key and (
+            id(source) in self._origins
+            or (isinstance(origin, dict) and id(origin) in self._origins)
         ):
             source = _selected_model(self.selected)
         if (previous := self.names.get(key)) is not None:

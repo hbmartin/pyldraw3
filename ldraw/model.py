@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Self
 
+from ldraw._model_copy import _copy_model, _origin_assignment, _restore_model_state
 from ldraw._model_cycles import _cycle_callback, _iter_cycle_tolerant_occurrences
 from ldraw._model_definitions import _DefinitionRegistry, _SourceOrigin
+from ldraw._model_structure import iter_structure_edges
 from ldraw._model_validation import ModelValidationContext, _resolve_reference
 from ldraw._model_views import _model_view, _resolution_root, _selected_model
 from ldraw.diagnostics import Diagnostic, DiagnosticCode, Severity
@@ -212,20 +214,27 @@ class Model:
     submodels: dict[str, Model] = field(default_factory=dict)
     _source_lines: dict[Piece, int] = field(default_factory=dict, repr=False)
     _object_source_lines: dict[int, int] = field(default_factory=dict, repr=False)
-    _serialization_origin: Model | _SourceOrigin | None = field(
+    _serialization_origin: Model | dict[str, object] | _SourceOrigin | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
     _is_submodel_view: bool = field(default=False, init=False, repr=False)
 
     def __setattr__(self, name: str, value: object) -> None:
         """Initialize private copy lineage without changing constructor hooks."""
-        object.__setattr__(
-            self,
+        super(Model, self).__setattr__(
             name,
-            _SourceOrigin()
-            if name == "_serialization_origin" and value is None
+            _origin_assignment(model=self, value=value)
+            if name == "_serialization_origin"
             else value,
         )
+
+    def __copy__(self) -> Self:
+        if copier := getattr(super(Model, self), "__copy__", None):
+            return copier()
+        return _copy_model(self)
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401 - arbitrary subclass state
+        _restore_model_state(model=self, state=state)
 
     def _serialization_aliases(self) -> tuple[Model, ...]:
         """Additional selected definitions recognized by private expansion models."""
@@ -604,22 +613,9 @@ class Model:
 
     def to_ldraw(self) -> str:
         """Serialize the model (and any submodels) to LDraw text."""
-        if not self.submodels:
-            return "\n".join(_serialized(obj) for obj in self.objects)
-        sections: list[str] = []
-        for model in _serialization_models(model=self):
-            if not model.name:
-                raise SubmodelNameRequiredError
-            sections.append(
-                "\n".join(
-                    (
-                        f"0 FILE {model.name}",
-                        *(_serialized(obj) for obj in model.objects),
-                        "0 NOFILE",
-                    ),
-                ),
-            )
-        return "\n".join(sections)
+        return _models_ldraw(
+            models=_serialization_models(model=self), mpd=bool(self.submodels)
+        )
 
     def __str__(self) -> str:
         return self.to_ldraw()
@@ -654,6 +650,26 @@ def _serialization_models(*, model: Model) -> Iterator[Model]:
     for dependency in model.submodels.values():
         if registry.register(dependency):
             yield dependency
+
+
+def _models_ldraw(*, models: Iterable[Model], mpd: bool) -> str:
+    """Emit definitions already validated by their collecting registry."""
+    sections: list[str] = []
+    for model in models:
+        if not mpd:
+            return "\n".join(_serialized(obj) for obj in model.objects)
+        if not model.name:
+            raise SubmodelNameRequiredError
+        sections.append(
+            "\n".join(
+                (
+                    f"0 FILE {model.name}",
+                    *(_serialized(obj) for obj in model.objects),
+                    "0 NOFILE",
+                ),
+            ),
+        )
+    return "\n".join(sections)
 
 
 def _iter_model_pieces(
@@ -1007,7 +1023,7 @@ def _placement_state(
 ) -> tuple[int | None, Colour, tuple[OccurrencePathItem, ...]]:
     """Prepare inherited metadata shared by leaves and submodel placements."""
     step = frame.step if frame.step is not None else source_step
-    colour = _effective_colour(piece.colour, frame.colour)
+    colour = _effective_colour(colour=piece.colour, inherited=frame.colour)
     path = (
         *frame.path,
         OccurrencePathItem(
@@ -1149,7 +1165,7 @@ def _iter_piece_steps(
             yield obj, step if include_steps else None
 
 
-def _effective_colour(colour: Colour, inherited: Colour | None) -> Colour:
+def _effective_colour(*, colour: Colour, inherited: Colour | None) -> Colour:
     if colour.code == MAIN_COLOUR_CODE and inherited is not None:
         return inherited
     return colour
@@ -1296,58 +1312,9 @@ def _iter_reference_edges(
     root: Model,
     context: ModelValidationContext | None = None,
     descend: Callable[[Model], bool] | None = None,
-    unique_names: bool = False,
 ) -> Iterator[tuple[Model, Piece, Model | None, bool]]:
-    """Inspect source edges iteratively, retaining unresolved and closing edges."""
-    selected = _selected_model(root)
-    cache = context if context is not None else ModelValidationContext()
-    by_identity = not unique_names and cache.unique_names(root=root)
-    frames = [
-        _ReferenceFrame(
-            model=selected,
-            pieces=iter(selected.pieces),
-            visiting=frozenset({normalize_ref(selected.name)}),
-        )
-    ]
-    seen: set[str | int | tuple[int, frozenset[str]]] = set()
-    while frames:
-        frame = frames[-1]
-        if (piece := next(frame.pieces, None)) is None:
-            frames.pop()
-            continue
-        target = cache.resolve(root=root, piece=piece)
-        closing = (
-            target is not None
-            and _cycle_target(
-                source=frame.model,
-                piece=piece,
-                target=target,
-                visiting=frame.visiting,
-                on_cycle=None,
-                cycle_leaf=True,
-            )
-            is None
-        )
-        yield frame.model, piece, target, closing
-        if target is not None and not closing:
-            key = normalize_ref(target.name)
-            marker = (
-                key
-                if unique_names
-                else id(_selected_model(target))
-                if by_identity
-                else (id(_selected_model(target)), frame.visiting)
-            )
-            if (descend is not None and not descend(target)) or marker in seen:
-                continue
-            seen.add(marker)
-            frames.append(
-                _ReferenceFrame(
-                    model=target,
-                    pieces=iter(target.pieces),
-                    visiting=frame.visiting | {normalize_ref(target.name)},
-                )
-            )
+    """Inspect each source placement and mark all cyclic edges in stable order."""
+    return iter_structure_edges(root=root, context=context, descend=descend)
 
 
 def _model_structure_diagnostics(

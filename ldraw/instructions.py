@@ -25,7 +25,7 @@ from ldraw.validation import Severity
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
-    from ldraw import _instruction_export, _model_validation
+    from ldraw import _model_validation
     from ldraw.model import Model, ModelOccurrence
     from ldraw.part import ParsedObject
     from ldraw.parts import Parts
@@ -340,7 +340,7 @@ class InstructionDocument:
             else _instruction_resolution.InstructionResolution(root=self.model)
         )
         resolution.bind_document(model=self.model)
-        resolution.bind_sources(
+        resolution = resolution.for_sources(
             selected=self.root.model,
             sources=(
                 section.model
@@ -414,19 +414,6 @@ class InstructionDocument:
                 return section
         msg = f"No reachable instruction section named {name!r}"
         raise KeyError(msg)
-
-    def _validate_export(
-        self, *, preparation: _instruction_export._ExportPreparation | None = None
-    ) -> None:
-        """Validate definitions while keeping counts available for custom resolvers."""
-        if preparation is not None:
-            preparation.dependencies(
-                source=self.root.model, objects=self.root.model.objects
-            )
-            return
-        cast(
-            "_instruction_resolution.InstructionResolution", self._resolution
-        ).dependencies(source=self.root.model, objects=self.root.model.objects)
 
     def _resolution_context(self) -> _model_validation.ModelValidationContext:
         return cast(
@@ -1521,24 +1508,19 @@ def _callout_issues(
 def _cycle_issues(document: InstructionDocument) -> Iterator[InstructionIssue]:
     from ldraw.model import _iter_reference_edges  # noqa: PLC0415 - model/instruction cycle
 
-    reported: set[tuple[str, str]] = set()
     for source, piece, target, closing in _iter_reference_edges(
         root=document.model,
         context=document._resolution_context(),  # noqa: SLF001
         descend=_is_instruction_model,
-        unique_names=True,
     ):
         if target is None or not _is_instruction_model(target) or not closing:
             continue
-        edge = normalize_ref(source.name), normalize_ref(target.name)
-        if edge not in reported:
-            reported.add(edge)
-            yield InstructionIssue(
-                section=source.name,
-                line_number=source.source_line_for(piece),
-                code="cyclic-submodel",
-                message=f"submodel reference cycle reaches {target.name}",
-            )
+        yield InstructionIssue(
+            section=source.name,
+            line_number=source.source_line_for(piece),
+            code="cyclic-submodel",
+            message=f"submodel reference cycle reaches {target.name}",
+        )
 
 
 def _highlight_issues(section: InstructionSection) -> Iterator[InstructionIssue]:

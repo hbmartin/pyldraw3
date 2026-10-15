@@ -317,6 +317,13 @@ diagnostics. The instruction CLI adds catalog-backed inspection, combined
 LDraw/instruction validation, JSON export, and paired cumulative snapshots.
 It does not perform page layout or PDF/image rendering.
 
+Selecting `section_name` for paired snapshot export scopes both files and the
+manifest to that section and its required dependencies. The manifest uses the
+selected section as `root_section`, keeps dependency metadata without extra
+snapshot files, and omits unrelated sections. Unrelated definition conflicts
+cannot block the selected export; conflicts in its dependency closure still
+raise. Standalone manifests and unfiltered snapshots retain whole-document scope.
+
 ### Querying and Validating from the CLI
 
 The parts catalog and validator are available without writing Python:
@@ -577,11 +584,15 @@ excluded from repr, equality, and manifests. Strict manual subclass constructors
 must accept or forward this keyword when used with `dataclasses.replace`;
 existing positional Model parameters are unchanged.
 
-Raw models initialize this private field with a compact copy-lineage token.
-Shallow copies and dataclass replacements retain it, allowing the selected copy
-to supersede a same-named dependency from that lineage. Explicit model origins
-remain supported. Deep-copy and pickle preserve lineage sharing in the copied
-graph; the token itself does not retain a model or create a self-reference.
+Raw models initialize this private field with a directional record made from
+ordinary dictionaries. Shallow copies and dataclass replacements create a child
+record pointing to the immediate source. A selected copy can supersede a
+same-named ancestor, while sibling copies remain conflicting definitions.
+Explicit model origins remain supported. Deep-copy and pickle preserve the
+record relationships within the copied graph. Raw records contain no model
+self-reference, remain JSON-compatible when the other dataclass data is
+JSON-compatible, and introduce no private token-class dependency in new pickles.
+Legacy opaque-token state is accepted without inferring directional ancestry.
 Assigning `None` starts a new lineage. Constructor parameters and defaults are
 unchanged, and no additional subclass post-initialization hooks are invoked.
 
@@ -644,9 +655,11 @@ by a custom resolver even when the declared table holds a stale object with the
 same name. Declared section order is retained and external targets follow in
 discovery order; build a new document to discover changed resolver results.
 The document owns one resolution context, shared by its steps. Copies made
-with `dataclasses.replace` retain that context; replacing it binds new steps
-without modifying the original document. A context belonging to a different
-root or selected section raises `ValueError`.
+with `dataclasses.replace` receive independent correspondence maps while reusing
+authoritative resolver results. Binding new roles never modifies another
+document. Source bindings retain and compare the actual source object; copy
+ancestry does not confer instruction reachability. A context belonging to a
+different root or selected section raises `ValueError`.
 To rebind existing sections explicitly, use
 `dataclasses.replace(document, model=new_model, _resolution=None)`; to rebuild
 their contents, use `new_model.instruction_document()`.
@@ -683,6 +696,12 @@ from counting's cycle cuts, including retained root references. Editing those
 dictionaries does not change the root table.
 Their `iter_pieces()` and recursive `find_pieces()` inspect the same finite leaves
 as step occurrences, including retained ancestor references.
+Structural diagnostics report every cycle-participating source placement once,
+including self-references, in declaration/discovery and source-object order.
+Shared sections use cached identity edges and iterative strongly connected
+component analysis. Ambiguous names retain ancestry-sensitive checks with
+acyclic-closure reuse; arbitrary ambiguous cyclic custom graphs are not promised
+linear discovery time.
 Snapshot dependencies omit the section already being rendered, so self-references
 do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
 recursive references; public paired snapshot export rejects cycles and leaves
@@ -701,9 +720,12 @@ corrections keep package version and manifest schema v1 unchanged.
 Independent fresh definitions with the same normalized name remain conflicts,
 even when their serialized text is identical. `str(model)` is serialization and
 can raise the same errors as `to_ldraw()` or `save()`; use `repr()` for inspection.
-Each export invocation validates definitions once and reuses each step's required
-dependency closure across its artifacts. Preparation is not retained between
-exports, so later source edits are checked again.
+Each export invocation validates its requested scope once and computes step
+dependency closures lazily, reusing them across MPD and LDR artifacts. Standalone
+manifests validate bindings without computing a closure for every step.
+Preparation is not retained between exports, so later source edits are checked
+again. These private lineage records do not establish a cross-version pickle
+compatibility guarantee.
 
 Connection-corpus verification hashes effective ZIP content: exact repeated
 filenames use the last entry, matching extraction, while distinct names that
