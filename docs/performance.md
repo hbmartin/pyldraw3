@@ -49,3 +49,32 @@ uv run pytest benchmarks/test_model.py --benchmark-only --benchmark-json=results
 
 Results depend on the host and environment. CI retains timing data through the
 benchmark workflow and downloads the same dated library.
+
+## Instruction construction and structural discovery
+
+Measured locally on macOS ARM64, CPython 3.13.14, comparing `b685879` with
+these fixes using identical workloads. Timings are medians of nine batches of
+ten operations; model construction is outside the timed operations. No external
+parts library is needed.
+
+| Operation | Before median | After median | Improvement |
+| --- | ---: | ---: | ---: |
+| Build instructions: 50 submodels, 501 steps | 6.65 ms | 4.74 ms | 28.8% |
+| Analyze 5,001 uniquely named sections | 18.40 ms | 16.62 ms | 9.7% |
+
+Initial instruction construction previously allocated 501 replacement steps
+and 51 replacement sections; it now retains the initially built instances.
+A separate `tracemalloc` run measured peak document-construction allocation
+falling from 1,007,713 to 889,066 bytes (11.8%). Document replacements still
+receive independent correspondence maps and rebind steps when required.
+Structural discovery skips ambiguity-specific adjacency construction for unique
+names, while retaining the identity graph needed for cycle reporting.
+
+Run the persistent timing workloads with:
+
+```bash
+uv run pytest benchmarks/test_instruction_workloads.py --benchmark-only --benchmark-json=instructions-results.json
+```
+
+Timing changes are local observations; unit tests verify document ownership,
+instance retention, and graph behavior without wall-clock thresholds.

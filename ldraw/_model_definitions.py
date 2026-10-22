@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
+from uuid import uuid4
 
 from ldraw._model_views import _selected_model
 from ldraw.errors import DuplicateSubmodelError
@@ -19,35 +20,102 @@ class _SourceOrigin:
     __slots__ = ()
 
 
+class _Origin(TypedDict):
+    version: Literal[2]
+    family: dict[str, object]
+    path: str
+    parent: Model | None
+    legacy: bool
+
+
+def _root_origin(*, parent: Model | None = None, legacy: bool = False) -> _Origin:
+    return {"version": 2, "family": {}, "path": "", "parent": parent, "legacy": legacy}
+
+
+def _child_origin(origin: _Origin) -> _Origin:
+    return {**origin, "path": f"{origin['path']}{uuid4().hex}/"}
+
+
+def _flat_origin(value: dict[str, object]) -> _Origin:
+    """Migrate shared directional records in place, without recursive descent."""
+    pending: list[dict[str, object]] = []
+    seen: set[int] = set()
+    current: object = value
+    while isinstance(current, dict) and current.get("version") != 2:
+        if id(current) in seen:
+            current = None
+            break
+        seen.add(id(current))
+        pending.append(current)
+        current = current.get("parent")
+    origin = (
+        cast("_Origin", current)
+        if isinstance(current, dict)
+        else cast("_Origin", _new_origin(current))
+    )
+    while pending:
+        record = pending.pop()
+        replacement = _child_origin(origin)
+        record.clear()
+        record.update(replacement)
+        origin = cast("_Origin", record)
+    return cast("_Origin", value)
+
+
 def _new_origin(value: object) -> dict[str, object]:
-    """Record an immediate predecessor without opaque pickle dependencies."""
-    if value is None or isinstance(value, dict | _SourceOrigin):
-        return {"parent": value if isinstance(value, dict) else None}
+    """Extend a flat branch label; explicit model origins stay live."""
+    match value:
+        case dict():
+            origin = _child_origin(_flat_origin(value))
+        case _SourceOrigin():
+            origin = _root_origin(legacy=True)
+        case None:
+            origin = _root_origin()
+        case _:
+            origin = _explicit_origin(value)
+    return dict(origin)
+
+
+def _explicit_origin(value: object) -> _Origin:
     from ldraw.model import Model  # noqa: PLC0415 - runtime model cycle
 
-    parent = value if isinstance(value, Model) else None
-    return {"parent": parent}
+    return _root_origin(parent=value if isinstance(value, Model) else None)
 
 
 def _serialization_origins(model: Model) -> dict[int, object]:
-    """Collect directional model and primitive-record ancestry without looping."""
+    """Visit explicit model links, never the history encoded in branch labels."""
     origins: dict[int, object] = {}
     origin: object = model
     while origin is not None:
-        if isinstance(origin, _SourceOrigin):
-            break
-        if isinstance(origin, dict):
-            if id(origin) in origins:
-                break
-            origins[id(origin)] = origin
-            origin = origin.get("parent")
-            continue
-        origin = _selected_model(cast("Model", origin))
         if id(origin) in origins:
             break
-        origins[id(origin)] = origin
-        origin = origin._serialization_origin  # noqa: SLF001
+        match origin:
+            case _SourceOrigin():
+                origins[id(origin)] = _root_origin(legacy=True)
+                break
+            case dict():
+                record = _flat_origin(origin)
+                origins[id(origin)] = record
+                origin = record["parent"]
+            case _:
+                origin = _selected_model(cast("Model", origin))
+                if id(origin) in origins:
+                    break
+                origins[id(origin)] = origin
+                origin = getattr(origin, "_serialization_origin", None)
     return origins
+
+
+def _ancestor(*, origin: object, records: dict[int, object]) -> bool:
+    if not isinstance(origin, dict):
+        return False
+    candidate = _flat_origin(origin)
+    return any(
+        isinstance(record, dict)
+        and record["family"] is candidate["family"]
+        and cast("str", record["path"]).startswith(candidate["path"])
+        for record in records.values()
+    )
 
 
 @dataclass(slots=True)
@@ -73,15 +141,24 @@ class _DefinitionRegistry:
         """Register one exact definition; return whether it is newly encountered."""
         key = normalize_ref(target.name)
         source = _selected_model(target)
-        origin = source._serialization_origin  # noqa: SLF001
+        origin = getattr(source, "_serialization_origin", None)
         if key == self._key and (
             id(source) in self._origins
-            or (isinstance(origin, dict) and id(origin) in self._origins)
+            or _ancestor(origin=origin, records=self._origins)
         ):
             source = _selected_model(self.selected)
         if (previous := self.names.get(key)) is not None:
             if previous is not source:
-                raise DuplicateSubmodelError(target.name)
+                error = DuplicateSubmodelError(target.name)
+                if isinstance(origin, _SourceOrigin) or any(
+                    isinstance(record, dict) and record.get("legacy")
+                    for record in (*self._origins.values(), origin)
+                ):
+                    error.add_note(
+                        "Legacy pickle tokens do not establish directional ancestry; "
+                        "rebuild from LDraw or supply an explicit model origin."
+                    )
+                raise error
             return False
         self.names[key] = source
         return True

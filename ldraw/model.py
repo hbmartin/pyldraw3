@@ -5,9 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, SupportsIndex
 
-from ldraw._model_copy import _copy_model, _origin_assignment, _restore_model_state
+from ldraw._model_copy import (
+    _copy_model,
+    _origin_assignment,
+    _pickle_reduction,
+    _restore_model_state,
+)
 from ldraw._model_cycles import _cycle_callback, _iter_cycle_tolerant_occurrences
 from ldraw._model_definitions import _DefinitionRegistry, _SourceOrigin
 from ldraw._model_structure import iter_structure_edges
@@ -232,6 +237,14 @@ class Model:
         if copier := getattr(super(Model, self), "__copy__", None):
             return copier()
         return _copy_model(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        if copier := getattr(super(Model, self), "__deepcopy__", None):
+            return copier(memo)
+        return _copy_model(self, memo=memo)
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> Any:  # noqa: ANN401 - standard reduction protocol
+        return _pickle_reduction(super(Model, self).__reduce_ex__(protocol))
 
     def __setstate__(self, state: Any) -> None:  # noqa: ANN401 - arbitrary subclass state
         _restore_model_state(model=self, state=state)
@@ -613,6 +626,8 @@ class Model:
 
     def to_ldraw(self) -> str:
         """Serialize the model (and any submodels) to LDraw text."""
+        if not self.submodels:
+            return "\n".join(_serialized(obj) for obj in self.objects)
         return _models_ldraw(
             models=_serialization_models(model=self), mpd=bool(self.submodels)
         )

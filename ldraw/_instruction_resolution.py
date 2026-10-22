@@ -40,6 +40,7 @@ class InstructionResolution:
     _sources: dict[int, tuple[_model.Model, _model.Model]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _owned: bool = field(default=False, init=False, repr=False)
 
     def bind_document(self, *, model: _model.Model) -> None:
         """Reject attaching one document's resolution to a different source scope."""
@@ -78,10 +79,13 @@ class InstructionResolution:
     def for_sources(
         self, *, selected: _model.Model, sources: Iterable[_model.Model]
     ) -> InstructionResolution:
-        """Fork correspondence ownership while retaining authoritative resolutions."""
-        resolution = InstructionResolution(root=self.root, context=self.context)
-        resolution._reachable_models = self.reachable_models()
-        resolution._reachable_sources = self._reachable_sources.copy()
+        """Adopt a fresh context once; fork correspondence maps for later owners."""
+        resolution = self
+        if self._owned or self._sources:
+            resolution = InstructionResolution(root=self.root, context=self.context)
+            resolution._reachable_models = self.reachable_models()
+            resolution._reachable_sources = self._reachable_sources.copy()
+        resolution._owned = True
         resolution.bind_sources(selected=selected, sources=sources)
         return resolution
 

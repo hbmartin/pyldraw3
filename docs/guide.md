@@ -584,17 +584,31 @@ excluded from repr, equality, and manifests. Strict manual subclass constructors
 must accept or forward this keyword when used with `dataclasses.replace`;
 existing positional Model parameters are unchanged.
 
-Raw models initialize this private field with a directional record made from
-ordinary dictionaries. Shallow copies and dataclass replacements create a child
-record pointing to the immediate source. A selected copy can supersede a
-same-named ancestor, while sibling copies remain conflicting definitions.
-Explicit model origins remain supported. Deep-copy and pickle preserve the
-record relationships within the copied graph. Raw records contain no model
-self-reference, remain JSON-compatible when the other dataclass data is
+Raw models initialize this private field with a versioned, flat record made
+from ordinary dictionaries. Each family has a shared dictionary anchor and each
+branch has a delimited unique path. Shallow copies and dataclass replacements
+extend that path. A selected copy can supersede every same-named ancestor, while
+sibling copies remain conflicting definitions. Ancestry checks compare family
+identity and branch prefixes without walking predecessor records. Label storage
+and derivation cost still grow with ancestry length; there is no retention cutoff.
+Serialization of models without submodels does not inspect lineage.
+
+Explicit model origins remain live and cycle-safe. Ordinary copies retain no
+predecessor model or record. Deep-copy and pickle preserve family sharing within
+the copied graph; separately copied graphs remain independent. Raw records have
+constant nesting depth, remain JSON-compatible when the other dataclass data is
 JSON-compatible, and introduce no private token-class dependency in new pickles.
-Legacy opaque-token state is accepted without inferring directional ancestry.
-Assigning `None` starts a new lineage. Constructor parameters and defaults are
-unchanged, and no additional subclass post-initialization hooks are invoked.
+Copying and restoration honor subclass state hooks and setters, including hooks
+before or after `Model` in the method resolution order.
+
+Older directional dictionary records are migrated iteratively while retaining
+shared relationships. Legacy opaque-token state can still be loaded, but a shared
+token does not prove an ancestor relationship. Identical self-table entries remain
+usable; distinct same-named definitions requiring that inference raise
+`DuplicateSubmodelError` with a legacy-ancestry note. Rebuild those models from
+LDraw or supply an explicit model origin. Assigning `None` starts a new lineage.
+Constructor parameters and defaults are unchanged, and no additional subclass
+post-initialization hooks are invoked.
 
 Built-in traversal checks every composed placement, including overflow from
 finite inputs into empty submodels or submodels containing geometry without
@@ -656,8 +670,10 @@ same name. Declared section order is retained and external targets follow in
 discovery order; build a new document to discover changed resolver results.
 The document owns one resolution context, shared by its steps. Copies made
 with `dataclasses.replace` receive independent correspondence maps while reusing
-authoritative resolver results. Binding new roles never modifies another
-document. Source bindings retain and compare the actual source object; copy
+authoritative resolver results. A fresh document retains its initially built steps
+and sections; later documents receive their own correspondence maps. Binding new
+roles never modifies another document. Source bindings retain and compare the
+actual source object; copy
 ancestry does not confer instruction reachability. A context belonging to a
 different root or selected section raises `ValueError`.
 To rebind existing sections explicitly, use
@@ -702,6 +718,8 @@ Shared sections use cached identity edges and iterative strongly connected
 component analysis. Ambiguous names retain ancestry-sensitive checks with
 acyclic-closure reuse; arbitrary ambiguous cyclic custom graphs are not promised
 linear discovery time.
+Temporary expansion models retain their traversal source separately from
+serialization ancestry: changing one responsibility does not redefine the other.
 Snapshot dependencies omit the section already being rendered, so self-references
 do not produce duplicate `0 FILE` blocks. The private MPD writer preserves
 recursive references; public paired snapshot export rejects cycles and leaves
@@ -723,6 +741,9 @@ can raise the same errors as `to_ldraw()` or `save()`; use `repr()` for inspecti
 Each export invocation validates its requested scope once and computes step
 dependency closures lazily, reusing them across MPD and LDR artifacts. Standalone
 manifests validate bindings without computing a closure for every step.
+Whole-document exports also validate an explicitly replaced root even when it is
+absent from the section inventory. Scoped manifest `is_root` flags identify the
+export root, including when it differs from the original document root.
 Preparation is not retained between exports, so later source edits are checked
 again. These private lineage records do not establish a cross-version pickle
 compatibility guarantee.

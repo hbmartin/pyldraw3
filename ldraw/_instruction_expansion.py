@@ -65,8 +65,7 @@ class _InstructionExpansion(Model):
             return super(_InstructionExpansion, self).to_ldraw()
         state = _ExportState(source=self, aliases=self._serialization_aliases())
         for target in self.submodels.values():
-            if state.registry.register(target):
-                state.dependencies[normalize_ref(target.name)] = target
+            state.add(target)
         dependencies = instruction_dependencies(
             resolution=self.resolution,
             source=self,

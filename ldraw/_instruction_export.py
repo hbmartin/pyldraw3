@@ -124,10 +124,12 @@ class _ExportPreparation:
         selected = self.document.sections if self.selected is None else self.selected
         resolution = self.document._resolution  # noqa: SLF001
         assert resolution is not None  # noqa: S101 - initialized document invariant
-        source = selected[0].model
+        source = (
+            self.document.root.model if self.selected is None else selected[0].model
+        )
         state = _ExportState(source=source, aliases=resolution.equivalents(source))
         self.sections = selected
-        pending = selected
+        pending = (*selected, self.document.root) if self.selected is None else selected
         while pending:
             _collect_dependencies(
                 resolution=resolution, state=state, objects=_section_objects(pending)
