@@ -79,18 +79,19 @@ def _prepared_manifest(  # noqa: PLR0913 - explicit artifact context
 ) -> dict[str, object]:
     """Build a manifest after its caller has completed export preparation."""
     paths = artifact_paths or {}
+    root = (
+        document.root.name
+        if preparation.selected is None
+        else preparation.selected[0].name
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generator": {"name": PACKAGE_NAME, "version": _package_version()},
         "source": None if source is None else str(source),
-        "root_section": (
-            document.root.name
-            if preparation.selected is None
-            else preparation.selected[0].name
-        ),
+        "root_section": root,
         "generated_files": list(generated_files),
         "sections": [
-            _section_manifest(section, parts=parts, artifact_paths=paths)
+            _section_manifest(section, parts=parts, artifact_paths=paths, root=root)
             for section in preparation.sections
         ],
         "orphan_sections": (
@@ -219,10 +220,11 @@ def _section_manifest(
     *,
     parts: Parts,
     artifact_paths: dict[tuple[str, int], dict[str, str]],
+    root: str,
 ) -> dict[str, object]:
     return {
         "name": section.name,
-        "is_root": section.is_root,
+        "is_root": normalize_ref(section.name) == normalize_ref(root),
         "references": list(section.references),
         "steps": [
             _step_manifest(

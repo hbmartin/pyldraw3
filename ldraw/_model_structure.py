@@ -24,9 +24,12 @@ def _source_edges(
     *, root: Model, context: ModelValidationContext
 ) -> tuple[dict[int, Model], list[_Edge]]:
     """Reuse acyclic closures even when unrelated sections have ambiguous names."""
+    expanded: set[int] = set()
     discovered = {
         id(_selected_model(section)): _selected_model(section)
-        for section in _reachable_sections(root=root, context=context)
+        for section in _reachable_sections(
+            root=root, context=context, expanded=expanded
+        )
     }
     order = dict.fromkeys(
         (
@@ -42,7 +45,7 @@ def _source_edges(
     edges = [
         (source, piece, context.resolve(root=root, piece=piece))
         for identity, source in sources.items()
-        if identity in context._edges  # noqa: SLF001 - shared invocation discovery
+        if identity in expanded
         for piece in source.pieces
     ]
     return sources, edges
@@ -121,15 +124,8 @@ class _AmbiguousGraph:
 
 
 def _ambiguous_graph(
-    *, sources: dict[int, Model], edges: list[_Edge]
+    *, sources: dict[int, Model], edges: list[_Edge], duplicates: set[str]
 ) -> _AmbiguousGraph:
-    duplicates = {
-        name
-        for name, count in Counter(
-            normalize_ref(s.name) for s in sources.values()
-        ).items()
-        if count > 1
-    }
     outgoing: dict[int, list[_Edge]] = {key: [] for key in sources}
     incoming: dict[int, list[int]] = {key: [] for key in sources}
     sensitive: set[int] = set()
@@ -185,9 +181,16 @@ def _ambiguous_cycles(
     *, root: Model, sources: dict[int, Model], edges: list[_Edge]
 ) -> set[_Marker]:
     """Memoize name-closing path summaries, preserving every participating edge."""
-    graph = _ambiguous_graph(sources=sources, edges=edges)
-    if not graph.duplicates:
+    duplicates = {
+        name
+        for name, count in Counter(
+            normalize_ref(s.name) for s in sources.values()
+        ).items()
+        if count > 1
+    }
+    if not duplicates:
         return set()
+    graph = _ambiguous_graph(sources=sources, edges=edges, duplicates=duplicates)
     selected = _selected_model(root)
     frames = [
         _CycleFrame(

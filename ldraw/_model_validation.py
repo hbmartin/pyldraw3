@@ -168,7 +168,10 @@ def _discovery_frame(
     section: Model,
     ancestry: frozenset[str],
     context: ModelValidationContext,
+    expanded: set[int] | None = None,
 ) -> _DiscoveryFrame:
+    if expanded is not None:
+        expanded.add(id(section))
     return _DiscoveryFrame(
         state=(id(section), ancestry),
         visiting=ancestry | {normalize_ref(section.name)},
@@ -177,12 +180,12 @@ def _discovery_frame(
 
 
 def _unique_sections(
-    *, root: Model, context: ModelValidationContext
+    *, root: Model, context: ModelValidationContext, expanded: set[int] | None = None
 ) -> Generator[Model, None, bool]:
     """Explore by identity until normalized names cease to identify one source."""
     pending = [_selected_model(root)]
     names: dict[str, Model] = {}
-    expanded: set[int] = set()
+    visited: set[int] = set()
     while pending:
         section = _selected_model(pending.pop())
         yield section
@@ -190,9 +193,11 @@ def _unique_sections(
         if (previous := names.get(key)) is not None and previous is not section:
             return False
         names[key] = section
-        if (identity := id(section)) in expanded:
+        if (identity := id(section)) in visited:
             continue
-        expanded.add(identity)
+        visited.add(identity)
+        if expanded is not None:
+            expanded.add(identity)
         pending.extend(
             target for _, target in reversed(context.edges(root=root, section=section))
         )
@@ -200,22 +205,26 @@ def _unique_sections(
 
 
 def _reachable_sections(
-    *, root: Model, context: ModelValidationContext
+    *, root: Model, context: ModelValidationContext, expanded: set[int] | None = None
 ) -> Iterator[Model]:
     """Keep unique-name cycles linear and ambiguous names ancestry-sensitive."""
-    if not (yield from _unique_sections(root=root, context=context)):
-        yield from _ancestry_sections(root=root, context=context)
+    if not (yield from _unique_sections(root=root, context=context, expanded=expanded)):
+        yield from _ancestry_sections(root=root, context=context, expanded=expanded)
 
 
 def _ancestry_sections(
-    *, root: Model, context: ModelValidationContext
+    *, root: Model, context: ModelValidationContext, expanded: set[int] | None = None
 ) -> Iterator[Model]:
     """Reuse complete acyclic closures and exact states of blocked paths."""
     selected = _selected_model(root)
     yield selected
     frames = [
         _discovery_frame(
-            root=root, section=selected, ancestry=frozenset(), context=context
+            root=root,
+            section=selected,
+            ancestry=frozenset(),
+            context=context,
+            expanded=expanded,
         )
     ]
     complete: set[int] = set()
@@ -247,6 +256,7 @@ def _ancestry_sections(
                     section=target,
                     ancestry=frame.visiting,
                     context=context,
+                    expanded=expanded,
                 )
             )
 
